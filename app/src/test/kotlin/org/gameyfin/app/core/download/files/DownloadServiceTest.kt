@@ -10,18 +10,27 @@ import org.gameyfin.app.core.metrics.DownloadMetrics
 import org.gameyfin.app.core.plugins.management.GameyfinPluginDescriptor
 import org.gameyfin.app.core.plugins.management.GameyfinPluginManager
 import org.gameyfin.app.games.entities.Game
+import org.gameyfin.app.games.entities.GameMetadata
+import org.gameyfin.app.games.entities.GameVariant
+import org.gameyfin.app.games.entities.VariantContent
+import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.pluginapi.download.Download
+import org.gameyfin.pluginapi.download.FileDownload
 import org.gameyfin.pluginapi.download.DownloadProvider
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import org.pf4j.PluginWrapper
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.time.Instant
 import kotlin.io.path.Path
+import kotlin.io.path.createFile
+import kotlin.io.path.writeText
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -147,6 +156,25 @@ class DownloadServiceTest {
         assertEquals(expectedDownload, result)
         verify(exactly = 0) { provider1.download(any()) }
         verify(exactly = 1) { provider2.download(any()) }
+    }
+
+    @Test
+    fun `estimateDownloadSize should include required content with selected optional content`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+
+        val result = service.estimateDownloadSize(game, 10L, listOf(21L))
+
+        assertEquals(8L, result)
+    }
+
+    @Test
+    fun `getDownload should zip selected variant content`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+
+        val result = service.getDownload(game, TestProvider::class.java.name, 10L, listOf(21L))
+
+        assertTrue(result is FileDownload)
+        assertEquals("zip", (result as FileDownload).fileExtension)
     }
 
     @Test
@@ -428,5 +456,55 @@ class DownloadServiceTest {
             every { this@mockk.id } returns id
             every { this@mockk.title } returns title
         }
+    }
+
+    private fun createVariantGame(tempDir: java.nio.file.Path): Game {
+        val basePath = tempDir.resolve("base.bin").createFile()
+        val dlcPath = tempDir.resolve("dlc.bin").createFile()
+        basePath.writeText("12345")
+        dlcPath.writeText("123")
+
+        val library = Library(id = 1L, name = "Library")
+        val game = Game(
+            id = 1L,
+            createdAt = Instant.now(),
+            updatedAt = Instant.now(),
+            library = library,
+            title = "Test Game",
+            metadata = GameMetadata(path = basePath.toString())
+        )
+        val variant = GameVariant(
+            id = 10L,
+            game = game,
+            name = "Normal",
+            version = "1.0",
+            path = basePath.toString(),
+            fileSize = 5L,
+            isDefault = true
+        )
+        variant.contents.addAll(
+            listOf(
+                VariantContent(
+                    id = 20L,
+                    variant = variant,
+                    name = "Base game",
+                    path = basePath.toString(),
+                    fileSize = 5L,
+                    required = true,
+                    defaultSelected = true
+                ),
+                VariantContent(
+                    id = 21L,
+                    variant = variant,
+                    name = "DLC",
+                    path = dlcPath.toString(),
+                    fileSize = 3L,
+                    required = false,
+                    defaultSelected = false
+                )
+            )
+        )
+        game.variants.add(variant)
+        return game
     }
 }

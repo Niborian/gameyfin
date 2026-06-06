@@ -24,6 +24,7 @@ export default function SearchView() {
     const knownFeatures = useSnapshot(gameState).knownFeatures;
     const knownPerspectives = useSnapshot(gameState).knownPerspectives;
     const knownKeywords = useSnapshot(gameState).knownKeywords;
+    const knownVariantTags = useSnapshot(gameState).knownVariantTags;
     const libraries = useSnapshot(libraryState).libraries;
 
     const [searchParams, setSearchParams] = useSearchParams();
@@ -41,6 +42,7 @@ export default function SearchView() {
     const [selectedFeatures, setSelectedFeatures] = useState<Set<string>>(new Set());
     const [selectedPerspectives, setSelectedPerspectives] = useState<Set<string>>(new Set());
     const [selectedKeywords, setSelectedKeywords] = useState<Set<string>>(new Set());
+    const [selectedVariantTags, setSelectedVariantTags] = useState<Set<string>>(new Set());
     const [minRating, setMinRating] = useState<number>(1); // Minimum rating filter
 
     // Load initial filter values from URL parameters on component mount
@@ -57,6 +59,7 @@ export default function SearchView() {
         const features = searchParams.getAll("feature");
         const perspectives = searchParams.getAll("perspective");
         const keywords = searchParams.getAll("keyword");
+        const variantTags = searchParams.getAll("variantTag");
         const sort = searchParams.get("sort") || "title_asc";
         const minRatingParam = parseInt(searchParams.get("minRating") || "1", 10);
         const filtersParam = searchParams.get("filters");
@@ -69,6 +72,7 @@ export default function SearchView() {
         setSelectedFeatures(new Set(features));
         setSelectedPerspectives(new Set(perspectives));
         setSelectedKeywords(new Set(keywords));
+        setSelectedVariantTags(new Set(variantTags));
         setSortBy(sort);
         setMinRating(isNaN(minRatingParam) ? 1 : minRatingParam);
         setShowFilters(filtersParam === "1");
@@ -123,6 +127,11 @@ export default function SearchView() {
                 newParams.append("keyword", keyword);
             });
         }
+        if (selectedVariantTags.size > 0) {
+            selectedVariantTags.forEach(tag => {
+                newParams.append("variantTag", tag);
+            });
+        }
         // Add minRating param if not default
         if (minRating > 1) {
             newParams.set("minRating", minRating.toString());
@@ -138,7 +147,7 @@ export default function SearchView() {
 
         setSearchParams(newParams, {replace: true});
     }, [searchTerm, selectedLibraries, selectedDevelopers, selectedGenres,
-        selectedThemes, selectedFeatures, selectedPerspectives, selectedKeywords, sortBy, minRating, showFilters]);
+        selectedThemes, selectedFeatures, selectedPerspectives, selectedKeywords, selectedVariantTags, sortBy, minRating, showFilters]);
 
     // Sorting function (refactored to use sortKey and sortDirection)
     function sortGames(games: GameDto[]): GameDto[] {
@@ -179,7 +188,7 @@ export default function SearchView() {
         games, searchTerm,
         selectedLibraries, selectedDevelopers,
         selectedGenres, selectedThemes,
-        selectedFeatures, selectedPerspectives, selectedKeywords, sortBy, minRating
+        selectedFeatures, selectedPerspectives, selectedKeywords, selectedVariantTags, sortBy, minRating
     ]);
 
     function filterGames(): GameDto[] {
@@ -237,6 +246,17 @@ export default function SearchView() {
         if (selectedKeywords.size > 0) {
             filtered = filtered.filter(game =>
                 game.keywords?.some(keyword => selectedKeywords.has(keyword))
+            );
+        }
+
+        if (selectedVariantTags.size > 0) {
+            filtered = filtered.filter(game =>
+                (game.variants ?? []).some((variant: any) =>
+                    variant.tags?.some((tag: string) => selectedVariantTags.has(tag)) ||
+                    variant.contents?.some((content: any) =>
+                        content.tags?.some((tag: string) => selectedVariantTags.has(tag))
+                    )
+                )
             );
         }
 
@@ -322,6 +342,7 @@ export default function SearchView() {
                                 setSelectedFeatures(new Set());
                                 setSelectedPerspectives(new Set());
                                 setSelectedKeywords(new Set());
+                                setSelectedVariantTags(new Set());
                                 setMinRating(1);
                             }}
                             aria-label="Clear All Filters"
@@ -447,6 +468,19 @@ export default function SearchView() {
             >
                 {Array.from(knownKeywords).map((keyword) => (
                     <SelectItem key={keyword}>{keyword}</SelectItem>
+                ))}
+            </Select>
+            <Select
+                size="sm"
+                selectionMode="multiple"
+                label="Variant Tags"
+                placeholder="Filter by variant tag"
+                selectedKeys={selectedVariantTags}
+                //@ts-ignore
+                onSelectionChange={setSelectedVariantTags}
+            >
+                {Array.from(knownVariantTags).map((tag) => (
+                    <SelectItem key={tag}>{tag}</SelectItem>
                 ))}
             </Select>
         </div>

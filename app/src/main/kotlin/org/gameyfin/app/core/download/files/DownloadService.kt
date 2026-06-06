@@ -11,13 +11,29 @@ import org.gameyfin.app.core.metrics.DownloadMetrics
 import org.gameyfin.app.core.plugins.management.GameyfinPluginDescriptor
 import org.gameyfin.app.core.plugins.management.GameyfinPluginManager
 import org.gameyfin.app.games.entities.Game
+import org.gameyfin.app.games.entities.GameVariant
+import org.gameyfin.app.games.entities.VariantContent
 import org.gameyfin.pluginapi.download.Download
+import org.gameyfin.pluginapi.download.FileDownload
 import org.gameyfin.pluginapi.download.DownloadProvider
 import org.springframework.stereotype.Service
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import kotlin.io.path.Path
+import java.io.PipedInputStream
+import java.io.PipedOutputStream
+import java.nio.file.FileVisitResult
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.BasicFileAttributes
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+import kotlin.io.path.extension
+import kotlin.io.path.fileSize
+import kotlin.io.path.isDirectory
+import kotlin.io.path.name
 import kotlin.time.DurationUnit
 import kotlin.time.measureTime
 
@@ -56,7 +72,134 @@ class DownloadService(
         val provider = downloadPlugins.firstOrNull { it.javaClass.name == provider }
             ?: throw IllegalArgumentException("Download provider $provider not found")
 
-        return provider.download(Path(path))
+        return provider.download(Path.of(path))
+    }
+
+    fun getDownload(game: Game, provider: String, variantId: Long?, contentIds: List<Long>?): Download {
+        val variant = selectVariant(game, variantId)
+        val selectedContents = selectContents(variant, contentIds)
+
+        if (selectedContents.size == 1 && selectedContents.single().path == variant.path) {
+            return getDownload(variant.path, provider)
+        }
+
+        return FileDownload(
+            data = streamSelectedContentsAsZip(selectedContents),
+            fileExtension = "zip",
+            size = null
+        )
+    }
+
+    fun estimateDownloadSize(game: Game, variantId: Long?, contentIds: List<Long>?): Long {
+        val variant = selectVariant(game, variantId)
+        return selectContents(variant, contentIds).sumOf { it.fileSize ?: calculatePathSize(Path.of(it.path)) }
+    }
+
+    private fun selectVariant(game: Game, variantId: Long?): GameVariant {
+        if (game.variants.isEmpty()) {
+            throw IllegalStateException("Game '${game.id}' has no downloadable variants")
+        }
+
+        return if (variantId != null) {
+            game.variants.firstOrNull { it.id == variantId }
+                ?: throw IllegalArgumentException("Variant $variantId not found for game ${game.id}")
+        } else {
+            game.variants.firstOrNull { it.isDefault }
+                ?: game.variants.firstOrNull { it.name.equals("Normal", ignoreCase = true) && it.isLatestForVariant }
+                ?: game.variants.first()
+        }
+    }
+
+    private fun selectContents(variant: GameVariant, contentIds: List<Long>?): List<VariantContent> {
+        val selected = if (contentIds.isNullOrEmpty()) {
+            variant.contents.filter { it.required || it.defaultSelected }
+        } else {
+            val selectedIds = contentIds.toSet()
+            variant.contents.filter { it.id in selectedIds || it.required }
+        }
+
+        return selected.ifEmpty {
+            listOf(
+                VariantContent(
+                    variant = variant,
+                    name = "Base game",
+                    path = variant.path,
+                    fileSize = variant.fileSize,
+                    required = true,
+                    defaultSelected = true
+                )
+            )
+        }
+    }
+
+    private fun streamSelectedContentsAsZip(contents: List<VariantContent>): InputStream {
+        val pipeIn = PipedInputStream(512 * 1024)
+        val pipeOut = PipedOutputStream(pipeIn)
+
+        Thread.ofVirtual().start {
+            try {
+                ZipOutputStream(pipeOut).use { zip ->
+                    contents.forEach { content ->
+                        val path = Path.of(content.path)
+                        val entryRoot = safeZipEntryName(content.name.ifBlank { path.name })
+                        if (path.isDirectory()) {
+                            zipDirectory(zip, path, entryRoot)
+                        } else {
+                            zipFile(zip, path, entryRoot, includeFileName = content.name == path.name)
+                        }
+                    }
+                }
+            } catch (_: IOException) {
+            } finally {
+                try {
+                    pipeOut.close()
+                } catch (_: IOException) {
+                }
+            }
+        }
+
+        return pipeIn
+    }
+
+    private fun zipDirectory(zip: ZipOutputStream, root: Path, entryRoot: String) {
+        Files.walkFileTree(root, object : SimpleFileVisitor<Path>() {
+            override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                val entry = ZipEntry("$entryRoot/${root.relativize(file).toString().replace('\\', '/')}")
+                zip.putNextEntry(entry)
+                Files.newInputStream(file, StandardOpenOption.READ).use { input ->
+                    input.copyTo(zip, 512 * 1024)
+                }
+                zip.closeEntry()
+                return FileVisitResult.CONTINUE
+            }
+        })
+    }
+
+    private fun zipFile(zip: ZipOutputStream, file: Path, entryRoot: String, includeFileName: Boolean) {
+        val entryName = if (includeFileName) entryRoot else "$entryRoot.${file.extension}"
+        zip.putNextEntry(ZipEntry(entryName))
+        Files.newInputStream(file, StandardOpenOption.READ).use { input ->
+            input.copyTo(zip, 512 * 1024)
+        }
+        zip.closeEntry()
+    }
+
+    private fun calculatePathSize(path: Path): Long {
+        return try {
+            if (path.isDirectory()) {
+                Files.walk(path).use { stream ->
+                    stream.filter { Files.isRegularFile(it) }.mapToLong { Files.size(it) }.sum()
+                }
+            } else {
+                path.fileSize()
+            }
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
+    private fun safeZipEntryName(name: String): String {
+        return name.replace(Regex("""[\\/:*?"<>|]"""), "_").ifBlank { "content" }
     }
 
     fun processDownload(

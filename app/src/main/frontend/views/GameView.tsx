@@ -4,7 +4,19 @@ import {useNavigate, useParams} from "react-router";
 import {GameCover} from "Frontend/components/general/covers/GameCover";
 import ComboButton, {ComboButtonOption} from "Frontend/components/general/input/ComboButton";
 import ImageCarousel from "Frontend/components/general/covers/ImageCarousel";
-import {Accordion, AccordionItem, addToast, Button, Chip, Link, Tooltip, useDisclosure} from "@heroui/react";
+import {
+    Accordion,
+    AccordionItem,
+    addToast,
+    Button,
+    Checkbox,
+    Chip,
+    Link,
+    Select,
+    SelectItem,
+    Tooltip,
+    useDisclosure
+} from "@heroui/react";
 import {humanFileSize, isAdmin, starRatingAsString} from "Frontend/util/utils";
 import {DownloadEndpoint} from "Frontend/endpoints/endpoints";
 import {gameState} from "Frontend/state/GameState";
@@ -27,6 +39,9 @@ import remarkBreaks from "remark-breaks";
 import ChipList from "Frontend/components/general/ChipList";
 import {collectionState} from "Frontend/state/CollectionState";
 import {GameMetadataAdminDto} from "Frontend/dtos/GameDtos";
+import GameVariantDto from "Frontend/generated/org/gameyfin/app/games/dto/GameVariantDto";
+import VariantContentDto from "Frontend/generated/org/gameyfin/app/games/dto/VariantContentDto";
+import VariantLinkStatus from "Frontend/generated/org/gameyfin/app/games/entities/VariantLinkStatus";
 
 export default function GameView() {
     const {gameId} = useParams();
@@ -42,6 +57,27 @@ export default function GameView() {
     const collections = useSnapshot(collectionState).state;
 
     const [downloadOptions, setDownloadOptions] = useState<Record<string, ComboButtonOption>>();
+    const [selectedVariantId, setSelectedVariantId] = useState<number>();
+    const [selectedContentIds, setSelectedContentIds] = useState<Set<number>>(new Set());
+
+    const variants = (game?.variants ?? []) as GameVariantDto[];
+    const selectedVariant = variants.find((variant) => variant.id === selectedVariantId)
+        ?? variants.find((variant) => variant.default)
+        ?? variants[0];
+    const selectedContents = selectedVariant?.contents?.filter((content) =>
+        content.required || selectedContentIds.has(content.id)
+    ) ?? [];
+    const estimatedDownloadSize = selectedContents.length > 0
+        ? selectedContents.reduce((total, content) => total + (content.fileSize ?? 0), 0)
+        : selectedVariant?.fileSize ?? game?.metadata.fileSize ?? 0;
+
+    useEffect(() => {
+        if (!game || variants.length === 0) return;
+
+        const defaultVariant = variants.find((variant) => variant.default) ?? variants[0];
+        setSelectedVariantId(defaultVariant.id);
+        setSelectedContentIds(defaultContentIds(defaultVariant));
+    }, [game?.id, variants.length]);
 
     useEffect(() => {
         DownloadProviderEndpoint.getProviders().then((providers) => {
@@ -50,14 +86,21 @@ export default function GameView() {
                     label: provider.name,
                     description: provider.shortDescription ?? provider.description,
                     action: () => {
-                        if (gameId) DownloadEndpoint.downloadGame(parseInt(gameId), provider.key);
+                        if (gameId) {
+                            DownloadEndpoint.downloadGame(
+                                parseInt(gameId),
+                                provider.key,
+                                selectedVariant?.id,
+                                selectedContents.map((content) => content.id)
+                            );
+                        }
                     },
                 };
                 return acc;
             }, {} as Record<string, ComboButtonOption>);
             setDownloadOptions(options);
         });
-    }, [gameId]);
+    }, [gameId, selectedVariantId, selectedContentIds]);
 
     useEffect(() => {
         if (state.isLoaded && (!gameId || !state.state[parseInt(gameId)])) {
@@ -83,6 +126,34 @@ export default function GameView() {
             title: "Game deleted",
             description: `${game.title} removed from Gameyfin!`,
             color: "success"
+        });
+    }
+
+    function defaultContentIds(variant: GameVariantDto): Set<number> {
+        return new Set(
+            (variant.contents ?? [])
+                .filter((content) => content.required || content.defaultSelected)
+                .map((content) => content.id)
+        );
+    }
+
+    function onVariantChange(keys: any) {
+        const selectedKey = Array.from(keys)[0] as string | undefined;
+        const nextVariant = variants.find((variant) => variant.id.toString() === selectedKey);
+        if (!nextVariant) return;
+
+        setSelectedVariantId(nextVariant.id);
+        setSelectedContentIds(defaultContentIds(nextVariant));
+    }
+
+    function setContentSelected(content: VariantContentDto, selected: boolean) {
+        if (content.required) return;
+
+        setSelectedContentIds((current) => {
+            const next = new Set(current);
+            if (selected) next.add(content.id);
+            else next.delete(content.id);
+            return next;
         });
     }
 
@@ -167,12 +238,60 @@ export default function GameView() {
                                 </Button>
                             </Tooltip>
                         </div>}
-                        {downloadOptions && <ComboButton description={humanFileSize(game.metadata.fileSize)}
+                        {downloadOptions && <ComboButton description={humanFileSize(estimatedDownloadSize)}
                                                          options={downloadOptions}
                                                          preferredOptionKey="preferred-download-method"
                         />}
                     </div>
                 </div>
+                {selectedVariant && <div className="flex flex-col gap-3 max-w-3xl">
+                    <div className="flex flex-row gap-3 items-end">
+                        <Select
+                            size="sm"
+                            label="Version"
+                            className="max-w-xs"
+                            selectedKeys={[selectedVariant.id.toString()]}
+                            disallowEmptySelection
+                            onSelectionChange={onVariantChange}
+                        >
+                            {variants.map((variant) => (
+                                <SelectItem key={variant.id}>
+                                    {`${variant.name} ${variant.version}${variant.latestForVariant ? " (latest)" : ""}`}
+                                </SelectItem>
+                            ))}
+                        </Select>
+                        <div className="flex flex-col gap-1">
+                            <p className="text-default-500 text-sm">
+                                Estimated download: {humanFileSize(estimatedDownloadSize)}
+                            </p>
+                            <div className="flex flex-row gap-1">
+                                {selectedVariant.tags.map((tag) =>
+                                    <Chip key={tag} size="sm" variant="flat">{tag}</Chip>
+                                )}
+                                {isAdmin(auth) && selectedVariant.linkStatus === VariantLinkStatus.COPIED_FALLBACK &&
+                                    <Tooltip content={selectedVariant.linkFallbackReason ?? "Hardlink failed; copied instead"}>
+                                        <Chip size="sm" color="warning" variant="flat">copied fallback</Chip>
+                                    </Tooltip>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                    {selectedVariant.contents.length > 1 &&
+                        <div className="flex flex-wrap gap-3">
+                            {selectedVariant.contents.map((content) => (
+                                <Checkbox
+                                    key={content.id}
+                                    size="sm"
+                                    isSelected={content.required || selectedContentIds.has(content.id)}
+                                    isDisabled={content.required}
+                                    onValueChange={(selected) => setContentSelected(content, selected)}
+                                >
+                                    {content.name} ({humanFileSize(content.fileSize)})
+                                </Checkbox>
+                            ))}
+                        </div>
+                    }
+                </div>}
                 <div className="flex flex-col gap-8">
                     {game.comment &&
                         <Accordion variant="splitted"

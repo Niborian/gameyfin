@@ -15,12 +15,13 @@ class IgnoredPath(
 
     @OneToOne(cascade = [CascadeType.ALL], orphanRemoval = true, fetch = FetchType.EAGER)
     @JoinColumn(nullable = false)
-    val source: IgnoredPathSource
+    var source: IgnoredPathSource
 ) {
     fun getType(): IgnoredPathSourceType {
         return when (source) {
             is IgnoredPathPluginSource -> IgnoredPathSourceType.PLUGIN
             is IgnoredPathUserSource -> IgnoredPathSourceType.USER
+            is IgnoredPathGroupedVariantSource -> IgnoredPathSourceType.GROUPED_VARIANT
             else -> error("Unknown IgnoredPathSource type")
         }
     }
@@ -28,7 +29,8 @@ class IgnoredPath(
 
 enum class IgnoredPathSourceType {
     PLUGIN,
-    USER
+    USER,
+    GROUPED_VARIANT
 }
 
 @Entity
@@ -50,3 +52,6 @@ class IgnoredPathUserSource(
     @ManyToOne
     val user: User
 ) : IgnoredPathSource()
+
+@Entity
+class IgnoredPathGroupedVariantSource : IgnoredPathSource()

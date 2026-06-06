@@ -12,6 +12,7 @@ data class IgnoredPathDto(
 
 enum class IgnoredPathSourceTypeDto {
     PLUGIN,
-    USER
+    USER,
+    GROUPED_VARIANT
 }
 

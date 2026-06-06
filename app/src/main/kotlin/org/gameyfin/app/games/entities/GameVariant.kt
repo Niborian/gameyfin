@@ -38,6 +38,8 @@ class GameVariant(
 
     var isLatestForVariant: Boolean = false,
 
+    var scanManaged: Boolean = true,
+
     @Enumerated(EnumType.STRING)
     var linkStatus: VariantLinkStatus = VariantLinkStatus.DIRECT,
 

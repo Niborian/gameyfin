@@ -2,6 +2,7 @@ import React, {useEffect, useMemo, useState} from "react";
 import {
     addToast,
     Button,
+    Checkbox,
     Chip,
     Input,
     Select,
@@ -28,6 +29,9 @@ type Draft = {
     contentName: string;
     contentType: VariantContentType;
     tags: string;
+    required: boolean;
+    defaultSelected: boolean;
+    swapped: boolean;
 };
 
 const contentTypes = [
@@ -78,7 +82,10 @@ export default function VariantGroupingSuggestions() {
                     version: suggestion.suggestedVariantVersion,
                     contentName: "Base game",
                     contentType: VariantContentType.BASE,
-                    tags: ""
+                    tags: "",
+                    required: true,
+                    defaultSelected: true,
+                    swapped: false
                 }
             ])));
         } catch (error) {
@@ -105,24 +112,29 @@ export default function VariantGroupingSuggestions() {
     async function groupSuggestion(suggestion: GameGroupingSuggestionDto) {
         const draft = drafts[suggestion.sourceGameId];
         if (!draft) return;
+        const targetGameId = draft.swapped ? suggestion.sourceGameId : suggestion.targetGameId;
+        const sourceGameId = draft.swapped ? suggestion.targetGameId : suggestion.sourceGameId;
+        const sourceLabel = draft.swapped
+            ? suggestion.targetTitle ?? suggestion.targetPath
+            : suggestion.sourceTitle ?? suggestion.sourcePath;
 
         const request: GroupGameAsVariantRequestDto = {
-            sourceGameId: suggestion.sourceGameId,
+            sourceGameId: sourceGameId,
             variantName: draft.variantName,
             version: draft.version,
             contentName: draft.contentName,
             contentType: draft.contentType,
-            required: true,
-            defaultSelected: true,
+            required: draft.required,
+            defaultSelected: draft.required || draft.defaultSelected,
             tags: draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean)
         };
 
-        setGroupingSourceId(suggestion.sourceGameId);
+        setGroupingSourceId(sourceGameId);
         try {
-            await GameEndpoint.groupGameAsVariant(suggestion.targetGameId, request);
+            await GameEndpoint.groupGameAsVariant(targetGameId, request);
             addToast({
                 title: "Grouped variant",
-                description: `${suggestion.sourceTitle ?? suggestion.sourcePath} is now a ${draft.variantName} variant.`,
+                description: `${sourceLabel} is now grouped under ${draft.variantName} ${draft.version}.`,
                 color: "success"
             });
             await refreshSuggestions();
@@ -148,6 +160,7 @@ export default function VariantGroupingSuggestions() {
                     <p className="font-semibold">Variant grouping suggestions</p>
                     <p className="text-sm text-default-500">
                         Group duplicate game entries as variants without moving or copying their files.
+                        Use swap when the base archive should be the target and the folder should be added as patch/DLC/mod content.
                     </p>
                 </div>
                 <div className="flex flex-row gap-2 items-end">
@@ -185,18 +198,23 @@ export default function VariantGroupingSuggestions() {
                 >
                     {(suggestion) => {
                         const draft = drafts[suggestion.sourceGameId];
+                        const sourceTitle = draft?.swapped ? suggestion.targetTitle : suggestion.sourceTitle;
+                        const sourcePath = draft?.swapped ? suggestion.targetPath : suggestion.sourcePath;
+                        const targetTitle = draft?.swapped ? suggestion.sourceTitle : suggestion.targetTitle;
+                        const targetPath = draft?.swapped ? suggestion.sourcePath : suggestion.targetPath;
+                        const effectiveSourceId = draft?.swapped ? suggestion.targetGameId : suggestion.sourceGameId;
                         return (
                             <TableRow key={`${suggestion.targetGameId}-${suggestion.sourceGameId}`}>
                                 <TableCell>
                                     <div className="flex flex-col">
-                                        <span>{suggestion.sourceTitle ?? "Unknown title"}</span>
-                                        <span className="text-xs text-default-500 break-all">{suggestion.sourcePath}</span>
+                                        <span>{sourceTitle ?? "Unknown title"}</span>
+                                        <span className="text-xs text-default-500 break-all">{sourcePath}</span>
                                     </div>
                                 </TableCell>
                                 <TableCell>
                                     <div className="flex flex-col">
-                                        <span>{suggestion.targetTitle ?? "Unknown title"}</span>
-                                        <span className="text-xs text-default-500 break-all">{suggestion.targetPath}</span>
+                                        <span>{targetTitle ?? "Unknown title"}</span>
+                                        <span className="text-xs text-default-500 break-all">{targetPath}</span>
                                     </div>
                                 </TableCell>
                                 <TableCell>
@@ -220,7 +238,13 @@ export default function VariantGroupingSuggestions() {
                                                     selectedKeys={[draft.contentType]}
                                                     onSelectionChange={(keys) => {
                                                         const key = Array.from(keys)[0]?.toString() as VariantContentType | undefined;
-                                                        if (key) updateDraft(suggestion.sourceGameId, {contentType: key});
+                                                        if (key) {
+                                                            updateDraft(suggestion.sourceGameId, {
+                                                                contentType: key,
+                                                                required: key === VariantContentType.BASE,
+                                                                defaultSelected: key === VariantContentType.BASE
+                                                            });
+                                                        }
                                                     }}>
                                                 {contentTypes.map((type) => (
                                                     <SelectItem key={type}>{type.replaceAll("_", " ")}</SelectItem>
@@ -230,18 +254,45 @@ export default function VariantGroupingSuggestions() {
                                                    value={draft.tags}
                                                    onValueChange={(value) => updateDraft(suggestion.sourceGameId, {tags: value})}
                                                    className="xl:col-span-2"/>
+                                            <div className="flex flex-row gap-4 xl:col-span-2">
+                                                <Checkbox
+                                                    isSelected={draft.required}
+                                                    onValueChange={(selected) => updateDraft(suggestion.sourceGameId, {
+                                                        required: selected,
+                                                        defaultSelected: selected || draft.defaultSelected
+                                                    })}
+                                                >
+                                                    Required
+                                                </Checkbox>
+                                                <Checkbox
+                                                    isSelected={draft.required || draft.defaultSelected}
+                                                    isDisabled={draft.required}
+                                                    onValueChange={(selected) => updateDraft(suggestion.sourceGameId, {defaultSelected: selected})}
+                                                >
+                                                    Default selected
+                                                </Checkbox>
+                                            </div>
                                         </div>
                                     )}
                                 </TableCell>
                                 <TableCell>
-                                    <Button
-                                        color="primary"
-                                        isLoading={groupingSourceId === suggestion.sourceGameId}
-                                        isDisabled={!draft?.variantName || !draft?.version || !draft?.contentName}
-                                        onPress={() => groupSuggestion(suggestion)}
-                                    >
-                                        Group
-                                    </Button>
+                                    <div className="flex flex-col gap-2">
+                                        <Button
+                                            size="sm"
+                                            variant="flat"
+                                            onPress={() => updateDraft(suggestion.sourceGameId, {swapped: !draft?.swapped})}
+                                        >
+                                            Swap source/target
+                                        </Button>
+                                        <Button
+                                            color="primary"
+                                            isLoading={groupingSourceId === effectiveSourceId}
+                                            isDisabled={!draft?.variantName || !draft?.version || !draft?.contentName}
+                                            onPress={() => groupSuggestion(suggestion)}
+                                        >
+                                            Group
+                                        </Button>
+                                    </div>
                                 </TableCell>
                             </TableRow>
                         );

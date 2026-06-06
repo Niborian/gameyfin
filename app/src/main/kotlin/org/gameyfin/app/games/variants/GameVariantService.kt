@@ -31,6 +31,9 @@ class GameVariantService(
 
         discovery.variants.forEach { parsed ->
             val key = VariantKey(parsed.name, parsed.version)
+            val unmanagedVariantForPath = game.variants.firstOrNull { !it.scanManaged && it.path == parsed.path.toString() }
+            if (unmanagedVariantForPath != null) return@forEach
+
             val existing = game.variants.firstOrNull { VariantKey(it.name, it.version) == key }
                 ?: GameVariant(game = game, path = parsed.path.toString()).also { game.variants.add(it) }
 

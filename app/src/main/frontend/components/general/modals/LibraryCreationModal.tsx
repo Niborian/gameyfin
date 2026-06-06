@@ -16,6 +16,7 @@ import {LibraryEndpoint} from "Frontend/generated/endpoints";
 import Input from "Frontend/components/general/input/Input";
 import * as Yup from "yup";
 import DirectoryMappingInput from "Frontend/components/general/input/DirectoryMappingInput";
+import SelectInput from "Frontend/components/general/input/SelectInput";
 import ArrayInputAutocomplete from "Frontend/components/general/input/ArrayInputAutocomplete";
 import {useSnapshot} from "valtio/react";
 import {platformState} from "Frontend/state/PlatformState";
@@ -55,7 +56,8 @@ export default function LibraryCreationModal({
                             initialValues={{
                                 name: "",
                                 directories: [],
-                                platforms: []
+                                platforms: [],
+                                storageMode: "DIRECT"
                             }}
                             validationSchema={Yup.object({
                                 name: Yup.string()
@@ -87,6 +89,12 @@ export default function LibraryCreationModal({
                                                                     name="platforms"
                                                                     label="Platforms"
                                                                     placeholder="Platform(s) of the games in this library (leave empty for all platforms)"
+                                            />
+                                            <SelectInput
+                                                name="storageMode"
+                                                label="Storage Mode"
+                                                values={["DIRECT", "HARDLINK_MIRROR"]}
+                                                description="Hardlink mirror keeps source paths untouched and falls back to copying if hardlinks are not supported."
                                             />
                                             <DirectoryMappingInput name="directories"/>
                                         </div>

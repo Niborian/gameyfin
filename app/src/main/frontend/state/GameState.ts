@@ -22,6 +22,7 @@ type GameState = {
     knownKeywords: Set<string>;
     knownFeatures: Set<string>;
     knownPerspectives: Set<string>;
+    knownVariantTags: Set<string>;
 };
 
 export const gameState = proxy<GameState>({
@@ -116,6 +117,18 @@ export const gameState = proxy<GameState>({
         return new Set<string>(
             this.games
                 .flatMap((game: GameDto) => game.perspectives ? game.perspectives : [])
+                .sort()
+        );
+    },
+    get knownVariantTags() {
+        return new Set<string>(
+            this.games
+                .flatMap((game: GameDto) => [
+                    ...(game.variants ?? []).flatMap((variant: any) => variant.tags ?? []),
+                    ...(game.variants ?? []).flatMap((variant: any) =>
+                        (variant.contents ?? []).flatMap((content: any) => content.tags ?? [])
+                    )
+                ])
                 .sort()
         );
     }

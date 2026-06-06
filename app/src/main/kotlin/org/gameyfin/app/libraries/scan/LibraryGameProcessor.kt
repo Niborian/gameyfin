@@ -4,6 +4,8 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import org.gameyfin.app.core.filesystem.FilesystemService
 import org.gameyfin.app.games.GameService
 import org.gameyfin.app.games.entities.Game
+import org.gameyfin.app.games.variants.GameVariantDiscoveryService
+import org.gameyfin.app.games.variants.GameVariantService
 import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.app.media.ImageService
 import org.springframework.stereotype.Service
@@ -15,7 +17,9 @@ import java.nio.file.Path
 class LibraryGameProcessor(
     private val gameService: GameService,
     private val imageService: ImageService,
-    private val filesystemService: FilesystemService
+    private val filesystemService: FilesystemService,
+    private val gameVariantDiscoveryService: GameVariantDiscoveryService,
+    private val gameVariantService: GameVariantService
 ) {
     companion object {
         private val log = KotlinLogging.logger {}
@@ -25,8 +29,10 @@ class LibraryGameProcessor(
     fun processNewGame(path: Path, library: Library): Game? {
         var game: Game? = null
         try {
+            val discovery = gameVariantDiscoveryService.discover(path)
+
             // Match metadata and build a Game entity (not persisted yet)
-            game = gameService.matchFromFile(path, library) ?: return null
+            game = gameService.matchFromFile(discovery.gamePath, library) ?: return null
 
             // Download all referenced images (idempotent and deduplicated in ImageService)
             downloadImagesForGame(game)
@@ -36,7 +42,7 @@ class LibraryGameProcessor(
 
             // Persist the game
             val persisted = gameService.create(listOf(game)).first()
-            return persisted
+            return gameVariantService.syncVariants(persisted, discovery, library)
         } catch (e: Exception) {
             log.error { "Failed to process new game at '$path': ${e.message}" }
             log.debug(e) {}
@@ -51,6 +57,7 @@ class LibraryGameProcessor(
         // Note: GameService.update will load and save the managed entity inside this same transaction
         var updated: Game? = null
         try {
+            val discovery = gameVariantDiscoveryService.discover(Path.of(game.metadata.path))
             updated = gameService.updateMetadata(game)
             if (updated != null) {
                 // Download any images now associated with the game
@@ -59,7 +66,9 @@ class LibraryGameProcessor(
                 updated.metadata.fileSize = filesystemService.calculateFileSize(updated.metadata.path)
                 // No explicit save needed; entity is managed in this transaction and will be flushed on commit
             }
-            return updated
+            val gameToSync = updated ?: game
+            val synced = gameVariantService.syncVariants(gameToSync, discovery, game.library)
+            return updated?.let { synced }
         } catch (e: Exception) {
             log.error { "Failed to update game '${game.id}': ${e.message}" }
             log.debug(e) {}

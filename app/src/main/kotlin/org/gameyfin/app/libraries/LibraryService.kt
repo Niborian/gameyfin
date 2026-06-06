@@ -103,7 +103,8 @@ class LibraryService(
         var newLibrary = Library(
             name = library.name,
             directories = directories,
-            platforms = library.platforms.toMutableList()
+            platforms = library.platforms.toMutableList(),
+            storageMode = library.storageMode
         )
 
         newLibrary = libraryRepository.save(newLibrary)
@@ -168,6 +169,8 @@ class LibraryService(
             library.platforms.clear()
             library.platforms.addAll(it)
         }
+
+        libraryUpdateDto.storageMode?.let { library.storageMode = it }
 
         // Only allow updating USER sourced ignored paths; preserve PLUGIN sourced ones
         libraryUpdateDto.ignoredPaths

@@ -3,6 +3,7 @@ package org.gameyfin.app.libraries
 import io.mockk.*
 import org.gameyfin.app.core.security.isCurrentUserAdmin
 import org.gameyfin.app.libraries.dto.*
+import org.gameyfin.app.libraries.entities.LibraryStorageMode
 import org.gameyfin.app.libraries.enums.ScanType
 import org.gameyfin.pluginapi.gamemetadata.Platform
 import org.junit.jupiter.api.AfterEach
@@ -269,6 +270,7 @@ class LibraryEndpointTest {
             name = name,
             directories = emptyList(),
             platforms = emptyList(),
+            storageMode = LibraryStorageMode.DIRECT,
             gameIds = emptyList(),
             stats = LibraryStatsDto(0, 0),
             ignoredPaths = emptyList(),

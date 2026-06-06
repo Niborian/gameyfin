@@ -1,6 +1,7 @@
 package org.gameyfin.app.libraries.dto
 
 import com.fasterxml.jackson.annotation.JsonInclude
+import org.gameyfin.app.libraries.entities.LibraryStorageMode
 import org.gameyfin.pluginapi.gamemetadata.Platform
 import java.time.Instant
 
@@ -28,6 +29,7 @@ data class LibraryAdminDto(
     override val createdAt: Instant?,
     val directories: List<DirectoryMappingDto>,
     val platforms: List<Platform>,
+    val storageMode: LibraryStorageMode,
     override val gameIds: List<Long>?,
     val stats: LibraryStatsDto?,
     val ignoredPaths: List<IgnoredPathDto>?,

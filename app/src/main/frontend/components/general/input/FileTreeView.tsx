@@ -20,7 +20,13 @@ interface ITreeNode<M extends IFlatMetadata = IFlatMetadata> {
     metadata?: M;
 }
 
-export default function FileTreeView({onPathChange}: { onPathChange: (file: string) => void }) {
+export default function FileTreeView({
+                                         onPathChange,
+                                         includeFiles = false
+                                     }: {
+    onPathChange: (file: string) => void,
+    includeFiles?: boolean
+}) {
     const rootNode: INode = {
         id: "root",
         name: "",
@@ -37,7 +43,7 @@ export default function FileTreeView({onPathChange}: { onPathChange: (file: stri
             setHostOSType(response);
         })
 
-        FilesystemEndpoint.listSubDirectories("").then(
+        listFiles("").then(
             result => {
                 if (result === undefined) return;
                 const nodes = fileDtosToTree(result as FileDto[]);
@@ -73,15 +79,21 @@ export default function FileTreeView({onPathChange}: { onPathChange: (file: stri
     async function onLoadData({element}: { element: INode }) {
         const absolutePath = getAbsolutePath(element);
 
-        let subDirectories = await FilesystemEndpoint.listSubDirectories(absolutePath);
-        if (subDirectories === undefined) return;
+        let children = await listFiles(absolutePath);
+        if (children === undefined) return;
 
-        const newNodes = fileDtosToNodes(subDirectories as FileDto[]);
+        const newNodes = fileDtosToNodes(children as FileDto[]);
         const updatedTree = updateTreeWithNewNodes(fileTree!, element.id, newNodes);
 
         setFileTree(updatedTree);
         setFlattenedFileTree(flattenTree(updatedTree));
         onPathChange(absolutePath);
+    }
+
+    async function listFiles(path: string) {
+        return includeFiles
+            ? FilesystemEndpoint.listContents(path)
+            : FilesystemEndpoint.listSubDirectories(path);
     }
 
     function updateTreeWithNewNodes(tree: ITreeNode, nodeId: NodeId, newNodes: ITreeNode[]): ITreeNode {
@@ -114,7 +126,10 @@ export default function FileTreeView({onPathChange}: { onPathChange: (file: stri
             id: fileDto.hash,
             name: fileDto.name || "",
             isBranch: fileDto.type === FileType.DIRECTORY,
-            children: []
+            children: [],
+            metadata: {
+                path: fileDto.path
+            }
         }));
     }
 
@@ -133,7 +148,12 @@ export default function FileTreeView({onPathChange}: { onPathChange: (file: stri
                                    level,
                                }) => (
                     <IconContext.Provider value={{size: 32, weight: "regular"}}>
-                        <div {...getNodeProps()}
+                        <div {...getNodeProps({
+                            onClick: () => {
+                                const selectedPath = (element.metadata as any)?.path ?? getAbsolutePath(element);
+                                onPathChange(selectedPath);
+                            }
+                        })}
                              className={`
                              flex flex-row items-center gap-2 w-full
                              rounded-md cursor-pointer

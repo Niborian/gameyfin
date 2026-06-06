@@ -2,8 +2,8 @@ import LibraryDto from "Frontend/generated/org/gameyfin/app/libraries/dto/Librar
 import GameDto from "Frontend/generated/org/gameyfin/app/games/dto/GameDto";
 import {
     Button,
+    Chip,
     Input,
-    Link,
     Pagination,
     Select,
     SelectItem,
@@ -22,13 +22,16 @@ import {useSnapshot} from "valtio/react";
 import {gameState} from "Frontend/state/GameState";
 import {GameEndpoint} from "Frontend/generated/endpoints";
 import GameUpdateDto from "Frontend/generated/org/gameyfin/app/games/dto/GameUpdateDto";
-import {useMemo, useState} from "react";
+import {useEffect, useMemo, useState} from "react";
 import EditGameMetadataModal from "Frontend/components/general/modals/EditGameMetadataModal";
 import MatchGameModal from "Frontend/components/general/modals/MatchGameModal";
 import {GameAdminDto} from "Frontend/dtos/GameDtos";
 import MetadataCompletenessIndicator from "Frontend/components/general/MetadataCompletenessIndicator";
 import {metadataCompleteness} from "Frontend/util/utils";
 import ChipList from "Frontend/components/general/ChipList";
+import VariantManagerModal from "Frontend/components/general/modals/VariantManagerModal";
+import GameGroupingSuggestionDto
+    from "Frontend/generated/org/gameyfin/app/games/dto/GameGroupingSuggestionDto";
 
 interface LibraryManagementGamesProps {
     library: LibraryDto;
@@ -40,21 +43,36 @@ export default function LibraryManagementGames({library}: LibraryManagementGames
     const state = useSnapshot(gameState);
     const games = state.gamesByLibraryId[library.id] ? state.gamesByLibraryId[library.id] : [];
     const [searchTerm, setSearchTerm] = useState("");
-    const [filter, setFilter] = useState<"all" | "confirmed" | "nonConfirmed">("all");
+    const [filter, setFilter] = useState<"all" | "confirmed" | "nonConfirmed" | "duplicates">("all");
     const [sortDescriptor, setSortDescriptor] = useState<SortDescriptor>({column: "title", direction: "ascending"});
+    const [suggestions, setSuggestions] = useState<GameGroupingSuggestionDto[]>([]);
 
     const [selectedGame, setSelectedGame] = useState<GameAdminDto>(games[0] as GameAdminDto);
     const editGameModal = useDisclosure();
     const matchGameModal = useDisclosure();
+    const variantManagerModal = useDisclosure();
 
     const [page, setPage] = useState(1);
+
+    const duplicateGameIds = useMemo(() => {
+        return new Set(suggestions.flatMap((suggestion) => [suggestion.targetGameId, suggestion.sourceGameId]));
+    }, [suggestions]);
+
+    const suggestionCounts = useMemo(() => {
+        return suggestions.reduce((counts, suggestion) => {
+            counts[suggestion.targetGameId] = (counts[suggestion.targetGameId] ?? 0) + 1;
+            counts[suggestion.sourceGameId] = (counts[suggestion.sourceGameId] ?? 0) + 1;
+            return counts;
+        }, {} as Record<number, number>);
+    }, [suggestions]);
+
     const pages = useMemo(() => {
         return Math.ceil(getFilteredGames().length / rowsPerPage);
-    }, [games, filter]);
+    }, [games, filter, searchTerm, suggestions]);
 
     const filteredItems = useMemo(() => {
         return getFilteredGames();
-    }, [games, filter, searchTerm]);
+    }, [games, filter, searchTerm, suggestions]);
 
     const sortedItems = useMemo(() => {
         return (filteredItems as GameAdminDto[]).slice().sort((a, b) => {
@@ -91,6 +109,13 @@ export default function LibraryManagementGames({library}: LibraryManagementGames
         return sortedItems.slice(start, end);
     }, [page, sortedItems]);
 
+    useEffect(() => {
+        void refreshSuggestions();
+    }, [library.id, games.length]);
+
+    async function refreshSuggestions() {
+        setSuggestions(await GameEndpoint.getGroupingSuggestions(library.id));
+    }
 
     function getFilteredGames() {
         let filteredGames = (games as GameAdminDto[]).filter((game) =>
@@ -104,6 +129,8 @@ export default function LibraryManagementGames({library}: LibraryManagementGames
             return filteredGames.filter(g => g.metadata.matchConfirmed);
         } else if (filter === "nonConfirmed") {
             return filteredGames.filter(g => !g.metadata.matchConfirmed);
+        } else if (filter === "duplicates") {
+            return filteredGames.filter(g => duplicateGameIds.has(g.id));
         }
 
         return filteredGames;
@@ -120,6 +147,11 @@ export default function LibraryManagementGames({library}: LibraryManagementGames
 
     async function deleteGame(game: GameDto) {
         await GameEndpoint.deleteGame(game.id);
+    }
+
+    function openVariantManager(game: GameAdminDto) {
+        setSelectedGame(game);
+        variantManagerModal.onOpen();
     }
 
     return selectedGame && <div className="flex flex-col gap-4">
@@ -140,6 +172,7 @@ export default function LibraryManagementGames({library}: LibraryManagementGames
                 className="w-64"
             >
                 <SelectItem key="all">Show all</SelectItem>
+                <SelectItem key="duplicates">Show potential duplicates</SelectItem>
                 <SelectItem key="confirmed">Show only confirmed</SelectItem>
                 <SelectItem key="nonConfirmed">Show only non confirmed</SelectItem>
             </Select>
@@ -173,14 +206,25 @@ export default function LibraryManagementGames({library}: LibraryManagementGames
             </TableHeader>
             <TableBody emptyContent="Your filter did not match any games." items={pagedItems}>
                 {(item: GameAdminDto) => (
-                    <TableRow key={item.id}>
+                    <TableRow key={item.id} className="cursor-pointer" onClick={() => openVariantManager(item)}>
                         <TableCell>
-                            <Link href={`/game/${item.id}`}
-                                  color="foreground"
-                                  className="text-sm"
-                                  underline="hover">
-                                {item.title} ({item.release ? new Date(item.release).getFullYear() : "unknown"})
-                            </Link>
+                            <div className="flex flex-row gap-2 items-center">
+                                <button
+                                    type="button"
+                                    className="text-sm text-left hover:underline"
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                        openVariantManager(item);
+                                    }}
+                                >
+                                    {item.title} ({item.release ? new Date(item.release).getFullYear() : "unknown"})
+                                </button>
+                                {(suggestionCounts[item.id] ?? 0) > 0 && (
+                                    <Chip size="sm" color="warning" variant="flat">
+                                        {suggestionCounts[item.id]} suggestion{suggestionCounts[item.id] === 1 ? "" : "s"}
+                                    </Chip>
+                                )}
+                            </div>
                         </TableCell>
                         <TableCell>
                             <ChipList items={item.platforms} maxVisible={1} defaultContent="Unspecified"/>
@@ -198,7 +242,7 @@ export default function LibraryManagementGames({library}: LibraryManagementGames
                             <MetadataCompletenessIndicator game={item}/>
                         </TableCell>
                         <TableCell>
-                            <div className="flex flex-row gap-2">
+                            <div className="flex flex-row gap-2" onClick={(event) => event.stopPropagation()}>
                                 <Button isIconOnly size="sm" onPress={() => toggleMatchConfirmed(item)}>
                                     {item.metadata.matchConfirmed ?
                                         <Tooltip content="Unconfirm match">
@@ -245,5 +289,13 @@ export default function LibraryManagementGames({library}: LibraryManagementGames
                         initialSearchTerm={selectedGame.title}
                         isOpen={matchGameModal.isOpen}
                         onOpenChange={matchGameModal.onOpenChange}/>
+        <VariantManagerModal
+            game={selectedGame}
+            libraryGames={games as GameAdminDto[]}
+            suggestions={suggestions}
+            isOpen={variantManagerModal.isOpen}
+            onOpenChange={variantManagerModal.onOpenChange}
+            onChanged={refreshSuggestions}
+        />
     </div>;
 }

@@ -36,7 +36,8 @@ class FilesystemService(
                 FileDto(
                     it.root.toString(),
                     if (it.isDirectory()) FileType.DIRECTORY else FileType.FILE,
-                    it.hashCode()
+                    it.hashCode(),
+                    it.toString()
                 )
             }
 
@@ -157,7 +158,7 @@ class FilesystemService(
 
     private fun safeReadDirectoryContents(path: String): List<FileDto> {
         return safeReadDirectoryContents(Path(path))
-            .map { FileDto(it.name, if (it.isDirectory()) FileType.DIRECTORY else FileType.FILE, it.hashCode()) }
+            .map { FileDto(it.name, if (it.isDirectory()) FileType.DIRECTORY else FileType.FILE, it.hashCode(), it.toString()) }
     }
 
     private fun safeReadDirectoryContents(path: Path): List<Path> {

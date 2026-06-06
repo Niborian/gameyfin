@@ -1,6 +1,8 @@
 package org.gameyfin.app.games.variants
 
 import org.gameyfin.app.core.filesystem.FilesystemService
+import org.gameyfin.app.games.dto.AttachVariantContentEntryDto
+import org.gameyfin.app.games.dto.AttachVariantContentRequestDto
 import org.gameyfin.app.games.dto.GameGroupingSuggestionDto
 import org.gameyfin.app.games.dto.GroupGameAsVariantRequestDto
 import org.gameyfin.app.games.entities.Game
@@ -111,6 +113,59 @@ class GameVariantGroupingService(
         )
     }
 
+    @Transactional
+    fun attachVariantContent(targetGameId: Long, request: AttachVariantContentRequestDto): Game {
+        val target = gameRepository.findByIdOrNull(targetGameId)
+            ?: throw IllegalArgumentException("Target game $targetGameId not found")
+        require(request.entries.isNotEmpty()) { "At least one content entry is required" }
+
+        val sourceRootPath = request.sourceRootPath.ifBlank { request.entries.first().path }
+        val duplicateSource = findAttachSource(target, request.sourceGameId, sourceRootPath)
+
+        val sourceWasRemoved = duplicateSource != null
+        if (duplicateSource != null) {
+            removeSourceGame(target, duplicateSource)
+            addGroupedIgnoredPath(target.library, duplicateSource.metadata.path)
+        }
+
+        if (!sourceWasRemoved && sourceRootPath != target.metadata.path && target.variants.none { it.path == sourceRootPath }) {
+            addGroupedIgnoredPath(target.library, sourceRootPath)
+        }
+
+        if (request.targetVariantId == null &&
+            request.entries.size == 1 &&
+            request.entries.single().contentType == VariantContentType.BASE
+        ) {
+            val entry = request.entries.single()
+            addOrUpdateExternalVariant(
+                target,
+                ExternalVariantMetadata(
+                    name = request.variantName?.ifBlank { null } ?: "Normal",
+                    version = request.version?.ifBlank { null } ?: extractVersion(entry.path) ?: "0",
+                    path = entry.path,
+                    fileSize = filesystemService.calculateFileSize(entry.path),
+                    tags = normalizeTags(entry.tags),
+                    steamAppId = null,
+                    launchArgs = null,
+                    patchInfo = null,
+                    contentName = entry.contentName.ifBlank { "Base game" },
+                    contentType = VariantContentType.BASE,
+                    required = true,
+                    defaultSelected = true
+                )
+            )
+            refreshVariantFlags(target)
+            return gameRepository.save(target)
+        }
+
+        val variant = resolveAttachVariant(target, request, sourceRootPath)
+        request.entries.forEach { entry -> addContentEntry(variant, entry) }
+        variant.scanManaged = false
+        refreshVariantFlags(target)
+
+        return gameRepository.save(target)
+    }
+
     private fun groupManagedSourceIntoTarget(
         target: Game,
         source: Game,
@@ -161,6 +216,29 @@ class GameVariantGroupingService(
         refreshVariantFlags(target)
 
         return gameRepository.save(target)
+    }
+
+    private fun findAttachSource(target: Game, sourceGameId: Long?, sourceRootPath: String): Game? {
+        val source = sourceGameId?.let { id ->
+            gameRepository.findByIdOrNull(id)
+                ?: throw IllegalArgumentException("Source game $id not found")
+        } ?: target.library.id?.let { libraryId ->
+            gameRepository.findAllByLibraryId(libraryId)
+                .firstOrNull { it.id != target.id && it.metadata.path == sourceRootPath }
+        }
+
+        if (source != null) {
+            require(source.id != target.id) { "Source and target game must be different" }
+            require(source.library.id == target.library.id) { "Source and target game must be in the same library" }
+        }
+
+        return source
+    }
+
+    private fun removeSourceGame(target: Game, source: Game) {
+        target.library.games.removeIf { it.id == source.id }
+        gameRepository.delete(source)
+        gameRepository.flush()
     }
 
     private fun addOrUpdateExternalVariant(target: Game, metadata: ExternalVariantMetadata) {
@@ -228,6 +306,81 @@ class GameVariantGroupingService(
         content.defaultSelected = metadata.defaultSelected
         content.tags.clear()
         content.tags.addAll(metadata.tags)
+    }
+
+    private fun resolveAttachVariant(
+        target: Game,
+        request: AttachVariantContentRequestDto,
+        sourceRootPath: String
+    ): GameVariant {
+        request.targetVariantId?.let { targetVariantId ->
+            return target.variants.firstOrNull { it.id == targetVariantId }
+                ?: throw IllegalArgumentException("Variant $targetVariantId not found for game ${target.id}")
+        }
+
+        val requestedName = request.variantName?.ifBlank { null }
+        val requestedVersion = request.version?.ifBlank { null }
+        if (requestedName != null && requestedVersion != null) {
+            return target.variants.firstOrNull { it.name == requestedName && it.version == requestedVersion }
+                ?: createBaseVariant(
+                    target,
+                    ExternalVariantMetadata(
+                        name = requestedName,
+                        version = requestedVersion,
+                        path = sourceRootPath,
+                        fileSize = filesystemService.calculateFileSize(sourceRootPath),
+                        tags = emptySet(),
+                        steamAppId = null,
+                        launchArgs = null,
+                        patchInfo = null,
+                        contentName = "Base game",
+                        contentType = VariantContentType.BASE,
+                        required = true,
+                        defaultSelected = true
+                    )
+                )
+        }
+
+        return target.variants.firstOrNull { it.isDefault }
+            ?: target.variants.firstOrNull()
+            ?: createBaseVariant(
+                target,
+                ExternalVariantMetadata(
+                    name = "Normal",
+                    version = extractVersion(target.metadata.path) ?: "0",
+                    path = target.metadata.path,
+                    fileSize = filesystemService.calculateFileSize(target.metadata.path),
+                    tags = emptySet(),
+                    steamAppId = null,
+                    launchArgs = null,
+                    patchInfo = null,
+                    contentName = "Base game",
+                    contentType = VariantContentType.BASE,
+                    required = true,
+                    defaultSelected = true
+                )
+            )
+    }
+
+    private fun addContentEntry(variant: GameVariant, entry: AttachVariantContentEntryDto) {
+        val normalizedTags = normalizeTags(entry.tags)
+        val content = variant.contents.firstOrNull { it.path == entry.path }
+            ?: variant.contents.firstOrNull { it.type == entry.contentType && it.name == entry.contentName }
+            ?: VariantContent(
+                variant = variant,
+                type = entry.contentType,
+                name = entry.contentName,
+                path = entry.path
+            ).also { variant.contents.add(it) }
+
+        content.type = entry.contentType
+        content.name = entry.contentName.ifBlank { Path.of(entry.path).fileName.toString() }
+        content.path = entry.path
+        content.fileSize = filesystemService.calculateFileSize(entry.path)
+        content.required = entry.required || entry.contentType == VariantContentType.BASE
+        content.defaultSelected = content.required || entry.defaultSelected
+        content.tags.clear()
+        content.tags.addAll(normalizedTags)
     }
 
     private fun createBaseVariant(target: Game, metadata: ExternalVariantMetadata): GameVariant {
@@ -401,6 +554,13 @@ class GameVariantGroupingService(
             .lowercase()
             .replace(Regex("""[^a-z0-9]+"""), " ")
             .trim()
+    }
+
+    private fun normalizeTags(tags: Set<String>?): Set<String> {
+        return tags.orEmpty()
+            .map { it.trim().lowercase() }
+            .filter { it.isNotBlank() }
+            .toSet()
     }
 
     private fun releaseYear(game: Game): Int? {

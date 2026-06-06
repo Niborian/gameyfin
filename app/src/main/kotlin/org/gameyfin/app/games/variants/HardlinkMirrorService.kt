@@ -19,7 +19,7 @@ import kotlin.io.path.name
 
 @Service
 class HardlinkMirrorService(
-    @param:Value($$"${spring.content.fs.filesystem-root:./data/}") storageRoot: String
+    @Value($$"${spring.content.fs.filesystem-root:./data/}") storageRoot: String
 ) {
     companion object {
         private val log = KotlinLogging.logger {}

@@ -48,6 +48,7 @@ fun Game.toAdminDto(): GameAdminDto {
         perspectives = this.perspectives,
         images = this.images.map { it.toDto() },
         videoUrls = this.videoUrls.map { it.toString() },
+        variants = this.variants.map { it.toDto(includeAdminFields = true) },
         metadata = this.metadata.toAdminDto()
     )
 }
@@ -77,7 +78,40 @@ fun Game.toUserDto(): GameUserDto {
         perspectives = this.perspectives,
         images = this.images.map { it.toDto() },
         videoUrls = this.videoUrls.map { it.toString() },
+        variants = this.variants.map { it.toDto(includeAdminFields = false) },
         metadata = this.metadata.toUserDto()
+    )
+}
+
+fun GameVariant.toDto(includeAdminFields: Boolean): GameVariantDto {
+    return GameVariantDto(
+        id = id!!,
+        name = name,
+        version = version,
+        path = path.takeIf { includeAdminFields },
+        fileSize = fileSize ?: 0L,
+        tags = tags,
+        steamAppId = steamAppId,
+        launchArgs = launchArgs,
+        patchInfo = patchInfo,
+        isDefault = isDefault,
+        isLatestForVariant = isLatestForVariant,
+        linkStatus = linkStatus,
+        linkFallbackReason = linkFallbackReason.takeIf { includeAdminFields },
+        contents = contents.map { it.toDto(includeAdminFields) }
+    )
+}
+
+fun VariantContent.toDto(includeAdminFields: Boolean): VariantContentDto {
+    return VariantContentDto(
+        id = id!!,
+        type = type,
+        name = name,
+        path = path.takeIf { includeAdminFields },
+        fileSize = fileSize ?: 0L,
+        required = required,
+        defaultSelected = defaultSelected,
+        tags = tags
     )
 }
 

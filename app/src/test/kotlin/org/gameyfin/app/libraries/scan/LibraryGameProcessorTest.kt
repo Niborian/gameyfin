@@ -5,6 +5,9 @@ import org.gameyfin.app.core.filesystem.FilesystemService
 import org.gameyfin.app.games.GameService
 import org.gameyfin.app.games.entities.Game
 import org.gameyfin.app.games.entities.GameMetadata
+import org.gameyfin.app.games.variants.DiscoveredGameVariants
+import org.gameyfin.app.games.variants.GameVariantDiscoveryService
+import org.gameyfin.app.games.variants.GameVariantService
 import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.app.media.Image
 import org.gameyfin.app.media.ImageService
@@ -21,6 +24,8 @@ class LibraryGameProcessorTest {
     private lateinit var gameService: GameService
     private lateinit var imageService: ImageService
     private lateinit var filesystemService: FilesystemService
+    private lateinit var gameVariantDiscoveryService: GameVariantDiscoveryService
+    private lateinit var gameVariantService: GameVariantService
     private lateinit var libraryGameProcessor: LibraryGameProcessor
 
     @BeforeEach
@@ -28,12 +33,23 @@ class LibraryGameProcessorTest {
         gameService = mockk()
         imageService = mockk()
         filesystemService = mockk()
+        gameVariantDiscoveryService = mockk()
+        gameVariantService = mockk()
 
         libraryGameProcessor = LibraryGameProcessor(
             gameService,
             imageService,
-            filesystemService
+            filesystemService,
+            gameVariantDiscoveryService,
+            gameVariantService
         )
+
+        every { gameVariantDiscoveryService.discover(any()) } answers {
+            DiscoveredGameVariants(firstArg(), emptyList())
+        }
+        every { gameVariantService.syncVariants(any(), any(), any()) } answers {
+            firstArg()
+        }
     }
 
     @AfterEach
@@ -59,6 +75,7 @@ class LibraryGameProcessorTest {
         assertEquals(persistedGame, result)
         verify(exactly = 1) { gameService.matchFromFile(path, library) }
         verify(exactly = 1) { gameService.create(listOf(matchedGame)) }
+        verify(exactly = 1) { gameVariantService.syncVariants(persistedGame, any(), library) }
     }
 
     @Test

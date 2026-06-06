@@ -10,6 +10,7 @@ import org.gameyfin.app.libraries.entities.DirectoryMapping
 import org.gameyfin.app.libraries.entities.IgnoredPath
 import org.gameyfin.app.libraries.entities.IgnoredPathUserSource
 import org.gameyfin.app.libraries.entities.Library
+import org.gameyfin.app.libraries.entities.LibraryStorageMode
 import org.gameyfin.app.libraries.enums.ScanType
 import org.gameyfin.app.libraries.extensions.toDto
 import org.gameyfin.app.libraries.extensions.toDtos
@@ -502,6 +503,7 @@ class LibraryServiceTest {
             name = name,
             directories = directories,
             platforms = platforms,
+            storageMode = LibraryStorageMode.DIRECT,
             gameIds = emptyList(),
             stats = LibraryStatsDto(0, 0),
             ignoredPaths = emptyList(),

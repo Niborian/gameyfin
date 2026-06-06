@@ -75,12 +75,13 @@ class PluginSignatureVerifierTest {
     @Test
     fun `verifyEntryDigest should return true for valid JAR entry`() {
         val jarPath = createUnsignedJar("valid-entry.jar", mapOf("test.txt" to "hello world"))
-        val jarFile = JarFile(jarPath.toFile())
-        val entry = jarFile.getJarEntry("test.txt")
+        JarFile(jarPath.toFile()).use { jarFile ->
+            val entry = jarFile.getJarEntry("test.txt")
 
-        val result = verifier.verifyEntryDigest(jarFile, entry)
+            val result = verifier.verifyEntryDigest(jarFile, entry)
 
-        assertTrue(result)
+            assertTrue(result)
+        }
     }
 
     // ========================================================================================

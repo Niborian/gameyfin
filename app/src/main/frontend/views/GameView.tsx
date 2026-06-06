@@ -38,7 +38,10 @@ import Markdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import ChipList from "Frontend/components/general/ChipList";
 import {collectionState} from "Frontend/state/CollectionState";
-import {GameMetadataAdminDto, GameVariantDto, VariantContentDto, VariantLinkStatus} from "Frontend/dtos/GameDtos";
+import {GameMetadataAdminDto} from "Frontend/dtos/GameDtos";
+import GameVariantDto from "Frontend/generated/org/gameyfin/app/games/dto/GameVariantDto";
+import VariantContentDto from "Frontend/generated/org/gameyfin/app/games/dto/VariantContentDto";
+import VariantLinkStatus from "Frontend/generated/org/gameyfin/app/games/entities/VariantLinkStatus";
 
 export default function GameView() {
     const {gameId} = useParams();
@@ -59,7 +62,7 @@ export default function GameView() {
 
     const variants = (game?.variants ?? []) as GameVariantDto[];
     const selectedVariant = variants.find((variant) => variant.id === selectedVariantId)
-        ?? variants.find((variant) => variant.isDefault)
+        ?? variants.find((variant) => variant.default)
         ?? variants[0];
     const selectedContents = selectedVariant?.contents?.filter((content) =>
         content.required || selectedContentIds.has(content.id)
@@ -71,7 +74,7 @@ export default function GameView() {
     useEffect(() => {
         if (!game || variants.length === 0) return;
 
-        const defaultVariant = variants.find((variant) => variant.isDefault) ?? variants[0];
+        const defaultVariant = variants.find((variant) => variant.default) ?? variants[0];
         setSelectedVariantId(defaultVariant.id);
         setSelectedContentIds(defaultContentIds(defaultVariant));
     }, [game?.id, variants.length]);
@@ -253,7 +256,7 @@ export default function GameView() {
                         >
                             {variants.map((variant) => (
                                 <SelectItem key={variant.id}>
-                                    {`${variant.name} ${variant.version}${variant.isLatestForVariant ? " (latest)" : ""}`}
+                                    {`${variant.name} ${variant.version}${variant.latestForVariant ? " (latest)" : ""}`}
                                 </SelectItem>
                             ))}
                         </Select>

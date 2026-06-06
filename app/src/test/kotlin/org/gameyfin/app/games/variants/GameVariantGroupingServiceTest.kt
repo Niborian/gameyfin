@@ -7,9 +7,13 @@ import io.mockk.Runs
 import io.mockk.verify
 import org.gameyfin.app.core.filesystem.FilesystemService
 import org.gameyfin.app.core.plugins.management.PluginManagementEntry
+import org.gameyfin.app.games.dto.AttachVariantContentEntryDto
+import org.gameyfin.app.games.dto.AttachVariantContentRequestDto
 import org.gameyfin.app.games.dto.GroupGameAsVariantRequestDto
 import org.gameyfin.app.games.entities.Game
 import org.gameyfin.app.games.entities.GameMetadata
+import org.gameyfin.app.games.entities.GameVariant
+import org.gameyfin.app.games.entities.VariantContent
 import org.gameyfin.app.games.entities.VariantContentType
 import org.gameyfin.app.games.repositories.GameRepository
 import org.gameyfin.app.libraries.IgnoredPathRepository
@@ -190,6 +194,148 @@ class GameVariantGroupingServiceTest {
         assertFalse(patchContent.defaultSelected)
     }
 
+    @Test
+    fun `attachVariantContent should add one optional dlc folder without moving files`() {
+        val library = createLibrary()
+        val plugin = PluginManagementEntry("igdb")
+        val targetPath = "/mnt/Games/Craftopia.v2025.07.25.rar"
+        val dlcPath = "/mnt/Games/CraftopiaDLC"
+        val target = createGame(1L, library, targetPath, plugin, "123")
+        val variant = createBaseVariant(target, 10L, targetPath)
+        target.variants.add(variant)
+        library.games.add(target)
+
+        every { gameRepository.findById(1L) } returns Optional.of(target)
+        every { gameRepository.findAllByLibraryId(1L) } returns listOf(target)
+        every { ignoredPathRepository.findByPath(dlcPath) } returns null
+        every { ignoredPathRepository.save(any()) } answers { firstArg<IgnoredPath>() }
+        every { filesystemService.calculateFileSize(dlcPath) } returns 2048L
+        every { gameRepository.save(target) } returns target
+
+        val result = service.attachVariantContent(
+            targetGameId = 1L,
+            request = AttachVariantContentRequestDto(
+                sourceGameId = null,
+                sourceRootPath = dlcPath,
+                targetVariantId = 10L,
+                variantName = null,
+                version = null,
+                entries = listOf(
+                    AttachVariantContentEntryDto(
+                        path = dlcPath,
+                        contentName = "DLC pack",
+                        contentType = VariantContentType.DLC,
+                        required = false,
+                        defaultSelected = false,
+                        tags = setOf("dlc")
+                    )
+                )
+            )
+        )
+
+        assertEquals(target, result)
+        assertEquals(dlcPath, library.ignoredPaths.single().path)
+        assertEquals(2, variant.contents.size)
+        val dlc = variant.contents.single { it.type == VariantContentType.DLC }
+        assertEquals("DLC pack", dlc.name)
+        assertEquals(dlcPath, dlc.path)
+        assertEquals(2048L, dlc.fileSize)
+        assertFalse(dlc.required)
+        assertFalse(dlc.defaultSelected)
+        verify(exactly = 0) { gameRepository.delete(any()) }
+    }
+
+    @Test
+    fun `attachVariantContent should split direct children into separate entries`() {
+        val library = createLibrary()
+        val plugin = PluginManagementEntry("igdb")
+        val targetPath = "/mnt/Games/Craftopia.v2025.07.25.rar"
+        val firstDlc = "/mnt/Games/CraftopiaDLC/DLC1"
+        val secondDlc = "/mnt/Games/CraftopiaDLC/DLC2"
+        val target = createGame(1L, library, targetPath, plugin, "123")
+        val variant = createBaseVariant(target, 10L, targetPath)
+        target.variants.add(variant)
+        library.games.add(target)
+
+        every { gameRepository.findById(1L) } returns Optional.of(target)
+        every { gameRepository.findAllByLibraryId(1L) } returns listOf(target)
+        every { ignoredPathRepository.findByPath("/mnt/Games/CraftopiaDLC") } returns null
+        every { ignoredPathRepository.save(any()) } answers { firstArg<IgnoredPath>() }
+        every { filesystemService.calculateFileSize(firstDlc) } returns 100L
+        every { filesystemService.calculateFileSize(secondDlc) } returns 200L
+        every { gameRepository.save(target) } returns target
+
+        service.attachVariantContent(
+            targetGameId = 1L,
+            request = AttachVariantContentRequestDto(
+                sourceGameId = null,
+                sourceRootPath = "/mnt/Games/CraftopiaDLC",
+                targetVariantId = 10L,
+                variantName = null,
+                version = null,
+                entries = listOf(
+                    AttachVariantContentEntryDto(firstDlc, "DLC 1", VariantContentType.DLC, false, true, emptySet()),
+                    AttachVariantContentEntryDto(secondDlc, "DLC 2", VariantContentType.DLC, false, false, emptySet())
+                )
+            )
+        )
+
+        assertEquals(3, variant.contents.size)
+        assertEquals(100L, variant.contents.single { it.name == "DLC 1" }.fileSize)
+        assertTrue(variant.contents.single { it.name == "DLC 1" }.defaultSelected)
+        assertEquals(200L, variant.contents.single { it.name == "DLC 2" }.fileSize)
+        assertFalse(variant.contents.single { it.name == "DLC 2" }.defaultSelected)
+    }
+
+    @Test
+    fun `attachVariantContent should delete duplicate source game and ignore its path`() {
+        val library = createLibrary()
+        val plugin = PluginManagementEntry("igdb")
+        val targetPath = "/mnt/Games/Craftopia.v2025.07.25.rar"
+        val patchPath = "/mnt/Games/Craftopia"
+        val target = createGame(1L, library, targetPath, plugin, "123")
+        val source = createGame(2L, library, patchPath, plugin, "123")
+        val variant = createBaseVariant(target, 10L, targetPath)
+        target.variants.add(variant)
+        library.games.addAll(listOf(target, source))
+
+        every { gameRepository.findById(1L) } returns Optional.of(target)
+        every { gameRepository.findById(2L) } returns Optional.of(source)
+        every { ignoredPathRepository.findByPath(patchPath) } returns null
+        every { ignoredPathRepository.save(any()) } answers { firstArg<IgnoredPath>() }
+        every { gameRepository.delete(source) } just Runs
+        every { gameRepository.flush() } just Runs
+        every { filesystemService.calculateFileSize(patchPath) } returns 4096L
+        every { gameRepository.save(target) } returns target
+
+        service.attachVariantContent(
+            targetGameId = 1L,
+            request = AttachVariantContentRequestDto(
+                sourceGameId = 2L,
+                sourceRootPath = patchPath,
+                targetVariantId = 10L,
+                variantName = null,
+                version = null,
+                entries = listOf(
+                    AttachVariantContentEntryDto(
+                        path = patchPath,
+                        contentName = "Patch",
+                        contentType = VariantContentType.PATCH,
+                        required = false,
+                        defaultSelected = false,
+                        tags = setOf("patch")
+                    )
+                )
+            )
+        )
+
+        assertFalse(library.games.any { it.id == source.id })
+        assertEquals(patchPath, library.ignoredPaths.single().path)
+        assertEquals(2, variant.contents.size)
+        assertEquals(patchPath, variant.contents.single { it.type == VariantContentType.PATCH }.path)
+        verify(exactly = 1) { gameRepository.delete(source) }
+    }
+
     private fun createLibrary(): Library {
         return Library(
             id = 1L,
@@ -216,5 +362,32 @@ class GameVariantGroupingServiceTest {
                 originalIds = mapOf(plugin to originalId)
             )
         )
+    }
+
+    private fun createBaseVariant(game: Game, id: Long, path: String): GameVariant {
+        return GameVariant(
+            id = id,
+            game = game,
+            name = "Normal",
+            version = "2025.07.25",
+            path = path,
+            fileSize = 8192L,
+            isDefault = true,
+            isLatestForVariant = true,
+            scanManaged = false
+        ).also { variant ->
+            variant.contents.add(
+                VariantContent(
+                    id = id + 100,
+                    variant = variant,
+                    type = VariantContentType.BASE,
+                    name = "Base game",
+                    path = path,
+                    fileSize = 8192L,
+                    required = true,
+                    defaultSelected = true
+                )
+            )
+        }
     }
 }

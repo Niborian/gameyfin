@@ -53,6 +53,11 @@ class GameEndpoint(
     }
 
     @RolesAllowed(Role.Names.ADMIN)
+    fun attachVariantContent(targetGameId: Long, request: AttachVariantContentRequestDto): GameAdminDto {
+        return gameVariantGroupingService.attachVariantContent(targetGameId, request).toAdminDto()
+    }
+
+    @RolesAllowed(Role.Names.ADMIN)
     fun deleteGame(gameId: Long) {
         libraryCoreService.deleteGameFromLibrary(gameId)
         gameService.delete(gameId)

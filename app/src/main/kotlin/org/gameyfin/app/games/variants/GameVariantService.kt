@@ -21,7 +21,7 @@ class GameVariantService(
     @Transactional
     fun syncVariants(game: Game, discovery: DiscoveredGameVariants, library: Library): Game {
         val desiredKeys = discovery.variants.map { VariantKey(it.name, it.version) }.toSet()
-        game.variants.removeIf { VariantKey(it.name, it.version) !in desiredKeys }
+        game.variants.removeIf { it.scanManaged && VariantKey(it.name, it.version) !in desiredKeys }
 
         val newestVersionByName = discovery.variants
             .groupBy { it.name }
@@ -52,6 +52,7 @@ class GameVariantService(
             existing.patchInfo = parsed.patchInfo
             existing.isLatestForVariant = newestVersionByName[parsed.name] == parsed.version
             existing.isDefault = key == defaultKey
+            existing.scanManaged = true
             existing.linkStatus = if (variantLink.status == VariantLinkStatus.COPIED_FALLBACK || fallbackReasons.isNotEmpty()) {
                 VariantLinkStatus.COPIED_FALLBACK
             } else {

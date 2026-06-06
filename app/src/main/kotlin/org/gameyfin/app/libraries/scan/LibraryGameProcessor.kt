@@ -5,6 +5,7 @@ import org.gameyfin.app.core.filesystem.FilesystemService
 import org.gameyfin.app.games.GameService
 import org.gameyfin.app.games.entities.Game
 import org.gameyfin.app.games.variants.GameVariantDiscoveryService
+import org.gameyfin.app.games.variants.GameVariantGroupingService
 import org.gameyfin.app.games.variants.GameVariantService
 import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.app.media.ImageService
@@ -19,6 +20,7 @@ class LibraryGameProcessor(
     private val imageService: ImageService,
     private val filesystemService: FilesystemService,
     private val gameVariantDiscoveryService: GameVariantDiscoveryService,
+    private val gameVariantGroupingService: GameVariantGroupingService,
     private val gameVariantService: GameVariantService
 ) {
     companion object {
@@ -33,6 +35,10 @@ class LibraryGameProcessor(
 
             // Match metadata and build a Game entity (not persisted yet)
             game = gameService.matchFromFile(discovery.gamePath, library) ?: return null
+
+            gameVariantGroupingService.tryAutoGroup(game, discovery, library)?.let { groupedGame ->
+                return groupedGame
+            }
 
             // Download all referenced images (idempotent and deduplicated in ImageService)
             downloadImagesForGame(game)

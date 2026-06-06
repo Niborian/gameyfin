@@ -18,6 +18,7 @@ import {CollectionOverviewCard} from "Frontend/components/general/cards/Collecti
 import CollectionCreationModal from "Frontend/components/general/modals/CollectionCreationModal";
 import CollectionPrioritiesModal from "Frontend/components/general/modals/CollectionPrioritiesModal";
 import {pluginState} from "Frontend/state/PluginState";
+import VariantGroupingSuggestions from "Frontend/components/administration/VariantGroupingSuggestions";
 
 function GameManagementLayout({getConfig, formik}: any) {
     const libraries = useSnapshot(libraryState);
@@ -76,6 +77,7 @@ function GameManagementLayout({getConfig, formik}: any) {
                 </div> :
                 <p className="mt-4 text-center text-default-500">No libraries found</p>
             }
+            <VariantGroupingSuggestions/>
 
             <div className="flex flex-row items-baseline justify-between">
                 <h2 className="text-xl font-bold mt-8 mb-1">Collections</h2>

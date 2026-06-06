@@ -8,6 +8,7 @@ import org.gameyfin.app.core.metrics.ScanMetrics
 import org.gameyfin.app.core.plugins.PluginService
 import org.gameyfin.app.games.entities.Game
 import org.gameyfin.app.games.repositories.GameRepository
+import org.gameyfin.app.games.variants.GameVariantGroupingService
 import org.gameyfin.app.libraries.dto.*
 import org.gameyfin.app.libraries.entities.IgnoredPath
 import org.gameyfin.app.libraries.entities.IgnoredPathPluginSource
@@ -39,6 +40,7 @@ class LibraryScanService(
     private val libraryCoreService: LibraryCoreService,
     private val libraryGameProcessor: LibraryGameProcessor,
     private val gameRepository: GameRepository,
+    private val gameVariantGroupingService: GameVariantGroupingService,
     private val ignoredPathRepository: IgnoredPathRepository,
     private val pluginService: PluginService,
     private val configService: ConfigService,
@@ -156,6 +158,7 @@ class LibraryScanService(
                 scanData.allPathsToProcess,
                 progress
             )
+            autoGroupExactMatches(library)
 
             // 2. Update library (removed games/ignored paths, and add persisted new ones)
             val (removedGames) = updateLibrary(
@@ -223,6 +226,7 @@ class LibraryScanService(
                 scanData.allPathsToProcess,
                 progress
             )
+            autoGroupExactMatches(library)
 
             val (removedGames) = updateLibrary(
                 library,
@@ -329,6 +333,13 @@ class LibraryScanService(
         progress.status = LibraryScanStatus.FAILED
         progress.finishedAt = Instant.now()
         emit(progress)
+    }
+
+    private fun autoGroupExactMatches(library: Library) {
+        val grouped = gameVariantGroupingService.autoGroupExactMatches(library)
+        if (grouped > 0) {
+            log.info { "Auto-grouped $grouped exact variant matches for library ${library.id}" }
+        }
     }
 
     private fun processNewGames(

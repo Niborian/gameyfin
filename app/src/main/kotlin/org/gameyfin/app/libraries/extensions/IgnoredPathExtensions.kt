@@ -4,6 +4,7 @@ import org.gameyfin.app.core.plugins.management.PluginManagementEntry
 import org.gameyfin.app.libraries.dto.IgnoredPathDto
 import org.gameyfin.app.libraries.dto.IgnoredPathSourceTypeDto
 import org.gameyfin.app.libraries.entities.IgnoredPath
+import org.gameyfin.app.libraries.entities.IgnoredPathGroupedVariantSource
 import org.gameyfin.app.libraries.entities.IgnoredPathPluginSource
 import org.gameyfin.app.libraries.entities.IgnoredPathSourceType
 import org.gameyfin.app.libraries.entities.IgnoredPathUserSource
@@ -17,6 +18,7 @@ fun IgnoredPath.toDto(): IgnoredPathDto {
         source = when (val source = this.source) {
             is IgnoredPathPluginSource -> source.plugins.joinToString("\", \"", "[\"", "\"]") { it.pluginId }
             is IgnoredPathUserSource -> source.user.id.toString()
+            is IgnoredPathGroupedVariantSource -> ""
             else -> error("Unknown IgnoredPathSource type")
         }
     )
@@ -30,6 +32,7 @@ fun IgnoredPathSourceType.toDto(): IgnoredPathSourceTypeDto {
     return when (this) {
         IgnoredPathSourceType.PLUGIN -> IgnoredPathSourceTypeDto.PLUGIN
         IgnoredPathSourceType.USER -> IgnoredPathSourceTypeDto.USER
+        IgnoredPathSourceType.GROUPED_VARIANT -> IgnoredPathSourceTypeDto.GROUPED_VARIANT
     }
 }
 
@@ -45,6 +48,8 @@ fun IgnoredPathDto.toEntity(user: User? = null, plugins: List<PluginManagementEn
             requireNotNull(user) { "User must be provided for USER source type" }
             IgnoredPathUserSource(user)
         }
+
+        IgnoredPathSourceTypeDto.GROUPED_VARIANT -> IgnoredPathGroupedVariantSource()
     }
 
     return IgnoredPath(

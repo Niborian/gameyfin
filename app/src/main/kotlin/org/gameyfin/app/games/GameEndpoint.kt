@@ -8,6 +8,8 @@ import org.gameyfin.app.core.annotations.DynamicPublicAccess
 import org.gameyfin.app.core.plugins.dto.ExternalProviderIdDto
 import org.gameyfin.app.core.security.isCurrentUserAdmin
 import org.gameyfin.app.games.dto.*
+import org.gameyfin.app.games.extensions.toAdminDto
+import org.gameyfin.app.games.variants.GameVariantGroupingService
 import org.gameyfin.app.libraries.LibraryCoreService
 import org.gameyfin.app.libraries.LibraryService
 import org.gameyfin.pluginapi.gamemetadata.Platform
@@ -20,7 +22,8 @@ import java.nio.file.Path
 class GameEndpoint(
     private val gameService: GameService,
     private val libraryService: LibraryService,
-    private val libraryCoreService: LibraryCoreService
+    private val libraryCoreService: LibraryCoreService,
+    private val gameVariantGroupingService: GameVariantGroupingService
 ) {
     fun subscribe(): Flux<out List<GameEvent>> {
         return if (isCurrentUserAdmin()) {
@@ -38,6 +41,16 @@ class GameEndpoint(
 
     @RolesAllowed(Role.Names.ADMIN)
     fun updateGame(game: GameUpdateDto) = gameService.edit(game)
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun getGroupingSuggestions(libraryId: Long): List<GameGroupingSuggestionDto> {
+        return gameVariantGroupingService.getGroupingSuggestions(libraryId)
+    }
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun groupGameAsVariant(targetGameId: Long, request: GroupGameAsVariantRequestDto): GameAdminDto {
+        return gameVariantGroupingService.groupGameAsVariant(targetGameId, request).toAdminDto()
+    }
 
     @RolesAllowed(Role.Names.ADMIN)
     fun deleteGame(gameId: Long) {

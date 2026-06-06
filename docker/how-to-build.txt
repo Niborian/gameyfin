@@ -1,3 +1,11 @@
-1. Run production build
-2. Run docker build in root dir: docker buildx build --platform linux/arm64/v8,linux/amd64 -f docker/Dockerfile --tag gameyfin/gameyfin:<TAG> .
-2.1 If you want to push the image to a registry, add --push to the command above.
+Local replacement image:
+
+Windows:
+  .\docker\build-image.ps1 -ImageName gameyfin -ImageTag variant-local
+
+Linux/macOS:
+  ./docker/build-image.sh --image gameyfin --tag variant-local
+
+Production mode requires GAMEYFIN_KEYSTORE_PASSWORD because plugin JARs are signed:
+  .\docker\build-image.ps1 -ImageName gameyfin -ImageTag variant-local -Production
+  ./docker/build-image.sh --image gameyfin --tag variant-local --production

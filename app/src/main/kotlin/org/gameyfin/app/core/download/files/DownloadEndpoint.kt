@@ -29,10 +29,22 @@ class DownloadEndpoint(
 
     private val downloadExecutor: Executor = Executors.newVirtualThreadPerTaskExecutor()
 
+    @GetMapping("/{gameId}/estimate")
+    fun estimateDownloadSize(
+        @PathVariable gameId: Long,
+        @RequestParam(required = false) variantId: Long?,
+        @RequestParam(required = false) contentIds: List<Long>?
+    ): Long {
+        val game = gameService.getById(gameId)
+        return downloadService.estimateDownloadSize(game, variantId, contentIds)
+    }
+
     @GetMapping("/{gameId}")
     fun downloadGame(
         @PathVariable gameId: Long,
         @RequestParam provider: String,
+        @RequestParam(required = false) variantId: Long?,
+        @RequestParam(required = false) contentIds: List<Long>?,
         request: HttpServletRequest
     ): DeferredResult<ResponseEntity<StreamingResponseBody>> {
         val deferredResult = DeferredResult<ResponseEntity<StreamingResponseBody>>()
@@ -44,7 +56,7 @@ class DownloadEndpoint(
                 val sessionId = request.session.id
                 val remoteIp = request.getRemoteIp(LookupPolicy.IPV4_PREFERRED)
 
-                val result = when (val download = downloadService.getDownload(game.metadata.path, provider)) {
+                val result = when (val download = downloadService.getDownload(game, provider, variantId, contentIds)) {
                     is FileDownload -> {
                         val baseFilename = game.title?.replace("[\\\\/:*?\"<>|]".toRegex(), "") // Remove common invalid filename chars
                             ?: "download"

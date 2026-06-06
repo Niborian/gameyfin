@@ -15,6 +15,7 @@ import ArrayInputAutocomplete from "Frontend/components/general/input/ArrayInput
 import {useSnapshot} from "valtio/react";
 import {platformState} from "Frontend/state/PlatformState";
 import CheckboxInput from "Frontend/components/general/input/CheckboxInput";
+import SelectInput from "Frontend/components/general/input/SelectInput";
 
 interface LibraryManagementDetailsProps {
     library: LibraryDto;
@@ -88,6 +89,13 @@ export default function LibraryManagementDetails({library}: LibraryManagementDet
                 <CheckboxInput label="Display on homepage" name="metadata.displayOnHomepage" className="mb-4"/>
 
                 <ArrayInputAutocomplete options={Array.from(availablePlatforms)} name="platforms" label="Platforms"/>
+
+                <SelectInput
+                    name="storageMode"
+                    label="Storage Mode"
+                    values={["DIRECT", "HARDLINK_MIRROR"]}
+                    description="Hardlink mirror keeps source paths untouched and falls back to copying if hardlinks are not supported."
+                />
 
                 <DirectoryMappingInput name="directories"/>
 

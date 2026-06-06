@@ -30,6 +30,7 @@ sealed interface GameDto {
     val perspectives: List<PlayerPerspective>?
     val images: List<ImageDto>?
     val videoUrls: List<String>?
+    val variants: List<GameVariantDto>
     val metadata: GameMetadataDto
 }
 
@@ -58,6 +59,7 @@ data class GameUserDto(
     override val perspectives: List<PlayerPerspective>?,
     override val images: List<ImageDto>?,
     override val videoUrls: List<String>?,
+    override val variants: List<GameVariantDto>,
     override val metadata: GameMetadataUserDto
 ) : GameDto
 
@@ -86,5 +88,6 @@ data class GameAdminDto(
     override val perspectives: List<PlayerPerspective>?,
     override val images: List<ImageDto>?,
     override val videoUrls: List<String>?,
+    override val variants: List<GameVariantDto>,
     override val metadata: GameMetadataAdminDto
 ) : GameDto

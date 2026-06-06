@@ -85,6 +85,9 @@ class Game(
     @ManyToMany(mappedBy = "games", fetch = FetchType.EAGER)
     var collections: MutableList<Collection> = mutableListOf(),
 
+    @OneToMany(mappedBy = "game", cascade = [ALL], orphanRemoval = true, fetch = FetchType.EAGER)
+    var variants: MutableList<GameVariant> = mutableListOf(),
+
     @Embedded
     var metadata: GameMetadata
 ) {

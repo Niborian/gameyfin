@@ -128,29 +128,37 @@ class GameVariantGroupingService(
         val sourcePath = source.metadata.path
         val sourceSize = filesystemService.calculateFileSize(sourcePath)
         val library = target.library
+        val normalizedTags = tags.map { it.trim().lowercase() }.filter { it.isNotBlank() }.toSet()
 
         library.games.removeIf { it.id == source.id }
         addGroupedIgnoredPath(library, sourcePath)
         gameRepository.delete(source)
         gameRepository.flush()
 
-        addOrUpdateExternalVariant(
-            target,
-            ExternalVariantMetadata(
-                name = variantName,
-                version = uniqueVersion(target, variantName, version, sourcePath),
-                path = sourcePath,
-                fileSize = sourceSize,
-                tags = tags.map { it.trim().lowercase() }.filter { it.isNotBlank() }.toSet(),
-                steamAppId = steamAppId,
-                launchArgs = launchArgs,
-                patchInfo = patchInfo,
-                contentName = contentName,
-                contentType = contentType,
-                required = required,
-                defaultSelected = defaultSelected
-            )
+        val metadata = ExternalVariantMetadata(
+            name = variantName,
+            version = version,
+            path = sourcePath,
+            fileSize = sourceSize,
+            tags = normalizedTags,
+            steamAppId = steamAppId,
+            launchArgs = launchArgs,
+            patchInfo = patchInfo,
+            contentName = contentName,
+            contentType = contentType,
+            required = required,
+            defaultSelected = defaultSelected
         )
+
+        if (contentType == VariantContentType.BASE) {
+            addOrUpdateExternalVariant(
+                target,
+                metadata.copy(version = uniqueVersion(target, variantName, version, sourcePath))
+            )
+        } else {
+            addExternalContentToVariant(target, metadata)
+        }
+        refreshVariantFlags(target)
 
         return gameRepository.save(target)
     }
@@ -186,6 +194,69 @@ class GameVariantGroupingService(
                 defaultSelected = metadata.defaultSelected
             )
         )
+    }
+
+    private fun addExternalContentToVariant(target: Game, metadata: ExternalVariantMetadata) {
+        val variant = target.variants.firstOrNull { it.name == metadata.name && it.version == metadata.version }
+            ?: target.variants.firstOrNull { it.isDefault && it.version == "0" }
+            ?: target.variants.firstOrNull { it.version == "0" }
+            ?: target.variants.firstOrNull { it.isDefault }
+            ?: target.variants.firstOrNull()
+            ?: createBaseVariant(target, metadata)
+
+        variant.name = metadata.name
+        variant.version = metadata.version
+        variant.tags.addAll(metadata.tags)
+        metadata.steamAppId?.let { variant.steamAppId = it }
+        metadata.launchArgs?.let { variant.launchArgs = it }
+        metadata.patchInfo?.let { variant.patchInfo = it }
+        variant.isDefault = true
+        variant.isLatestForVariant = true
+        variant.scanManaged = false
+        target.variants.filter { it !== variant }.forEach { it.isDefault = false }
+
+        val content = variant.contents.firstOrNull { it.path == metadata.path }
+            ?: variant.contents.firstOrNull { it.type == metadata.contentType && it.name == metadata.contentName }
+            ?: VariantContent(variant = variant, type = metadata.contentType, name = metadata.contentName, path = metadata.path)
+                .also { variant.contents.add(it) }
+
+        content.type = metadata.contentType
+        content.name = metadata.contentName
+        content.path = metadata.path
+        content.fileSize = metadata.fileSize
+        content.required = metadata.required
+        content.defaultSelected = metadata.defaultSelected
+        content.tags.clear()
+        content.tags.addAll(metadata.tags)
+    }
+
+    private fun createBaseVariant(target: Game, metadata: ExternalVariantMetadata): GameVariant {
+        val basePath = target.metadata.path
+        val baseSize = filesystemService.calculateFileSize(basePath)
+        return GameVariant(
+            game = target,
+            name = metadata.name,
+            version = metadata.version,
+            path = basePath,
+            fileSize = baseSize,
+            isDefault = true,
+            isLatestForVariant = true,
+            scanManaged = false,
+            linkStatus = VariantLinkStatus.DIRECT
+        ).also { variant ->
+            variant.contents.add(
+                VariantContent(
+                    variant = variant,
+                    type = VariantContentType.BASE,
+                    name = "Base game",
+                    path = basePath,
+                    fileSize = baseSize,
+                    required = true,
+                    defaultSelected = true
+                )
+            )
+            target.variants.add(variant)
+        }
     }
 
     private fun addGroupedIgnoredPath(library: Library, path: String) {
@@ -254,6 +325,12 @@ class GameVariantGroupingService(
     private fun confidence(first: Game, second: Game): MatchConfidence {
         val sharedIds = sharedOriginalIds(first, second)
         if (sharedIds.isNotEmpty()) {
+            if (hasMixedFileAndDirectory(first, second)) {
+                return MatchConfidence(
+                    95,
+                    "Exact metadata provider id match, but file/folder direction needs review: ${sharedIds.joinToString()}"
+                )
+            }
             return MatchConfidence(100, "Exact metadata provider id match: ${sharedIds.joinToString()}")
         }
 
@@ -281,6 +358,10 @@ class GameVariantGroupingService(
         return first.metadata.originalIds.mapNotNull { (plugin, originalId) ->
             if (secondIds[plugin.pluginId] == originalId) "${plugin.pluginId}:$originalId" else null
         }
+    }
+
+    private fun hasMixedFileAndDirectory(first: Game, second: Game): Boolean {
+        return Path.of(first.metadata.path).isDirectory() != Path.of(second.metadata.path).isDirectory()
     }
 
     private fun variantMetadataFromCandidate(
@@ -336,6 +417,20 @@ class GameVariantGroupingService(
             index++
         }
         return "$requestedVersion-$index"
+    }
+
+    private fun refreshVariantFlags(target: Game) {
+        val newestVersionByName = target.variants
+            .groupBy { it.name }
+            .mapValues { (_, variants) -> VariantVersionComparator.newest(variants.map { it.version }) }
+
+        target.variants.forEach { variant ->
+            variant.isLatestForVariant = newestVersionByName[variant.name] == variant.version
+        }
+
+        if (target.variants.none { it.isDefault }) {
+            target.variants.firstOrNull()?.isDefault = true
+        }
     }
 
     private data class MatchConfidence(

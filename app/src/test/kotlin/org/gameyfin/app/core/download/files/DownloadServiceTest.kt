@@ -13,6 +13,7 @@ import org.gameyfin.app.games.entities.Game
 import org.gameyfin.app.games.entities.GameMetadata
 import org.gameyfin.app.games.entities.GameVariant
 import org.gameyfin.app.games.entities.VariantContent
+import org.gameyfin.app.games.entities.VariantContentType
 import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.pluginapi.download.Download
 import org.gameyfin.pluginapi.download.FileDownload
@@ -165,6 +166,15 @@ class DownloadServiceTest {
         val result = service.estimateDownloadSize(game, 10L, listOf(21L))
 
         assertEquals(8L, result)
+    }
+
+    @Test
+    fun `estimateDownloadSize should include default selected optional content when no content ids are supplied`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+
+        val result = service.estimateDownloadSize(game, 10L, null)
+
+        assertEquals(9L, result)
     }
 
     @Test
@@ -461,8 +471,10 @@ class DownloadServiceTest {
     private fun createVariantGame(tempDir: java.nio.file.Path): Game {
         val basePath = tempDir.resolve("base.bin").createFile()
         val dlcPath = tempDir.resolve("dlc.bin").createFile()
+        val soundtrackPath = tempDir.resolve("soundtrack.bin").createFile()
         basePath.writeText("12345")
         dlcPath.writeText("123")
+        soundtrackPath.writeText("1234")
 
         val library = Library(id = 1L, name = "Library")
         val game = Game(
@@ -496,11 +508,22 @@ class DownloadServiceTest {
                 VariantContent(
                     id = 21L,
                     variant = variant,
+                    type = VariantContentType.DLC,
                     name = "DLC",
                     path = dlcPath.toString(),
                     fileSize = 3L,
                     required = false,
                     defaultSelected = false
+                ),
+                VariantContent(
+                    id = 22L,
+                    variant = variant,
+                    type = VariantContentType.EXTRA,
+                    name = "Soundtrack",
+                    path = soundtrackPath.toString(),
+                    fileSize = 4L,
+                    required = false,
+                    defaultSelected = true
                 )
             )
         )

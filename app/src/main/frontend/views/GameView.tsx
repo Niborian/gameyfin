@@ -42,6 +42,7 @@ import {GameMetadataAdminDto} from "Frontend/dtos/GameDtos";
 import GameVariantDto from "Frontend/generated/org/gameyfin/app/games/dto/GameVariantDto";
 import VariantContentDto from "Frontend/generated/org/gameyfin/app/games/dto/VariantContentDto";
 import VariantLinkStatus from "Frontend/generated/org/gameyfin/app/games/entities/VariantLinkStatus";
+import VariantContentType from "Frontend/generated/org/gameyfin/app/games/entities/VariantContentType";
 
 export default function GameView() {
     const {gameId} = useParams();
@@ -70,6 +71,32 @@ export default function GameView() {
     const estimatedDownloadSize = selectedContents.length > 0
         ? selectedContents.reduce((total, content) => total + (content.fileSize ?? 0), 0)
         : selectedVariant?.fileSize ?? game?.metadata.fileSize ?? 0;
+    const contentGroups = selectedVariant ? [
+        {
+            key: "base",
+            title: "Base game",
+            contents: selectedVariant.contents.filter((content) => content.type === VariantContentType.BASE)
+        },
+        {
+            key: "dlc",
+            title: "DLC",
+            contents: selectedVariant.contents.filter((content) => content.type === VariantContentType.DLC)
+        },
+        {
+            key: "patches",
+            title: "Patches, mods, and extras",
+            contents: selectedVariant.contents.filter((content) =>
+                content.type === VariantContentType.PATCH ||
+                content.type === VariantContentType.MOD ||
+                content.type === VariantContentType.EXTRA
+            )
+        },
+        {
+            key: "servers",
+            title: "Dedicated servers",
+            contents: selectedVariant.contents.filter((content) => content.type === VariantContentType.DEDICATED_SERVER)
+        }
+    ].filter((group) => group.contents.length > 0) : [];
 
     useEffect(() => {
         if (!game || variants.length === 0) return;
@@ -276,18 +303,30 @@ export default function GameView() {
                             </div>
                         </div>
                     </div>
-                    {selectedVariant.contents.length > 1 &&
-                        <div className="flex flex-wrap gap-3">
-                            {selectedVariant.contents.map((content) => (
-                                <Checkbox
-                                    key={content.id}
-                                    size="sm"
-                                    isSelected={content.required || selectedContentIds.has(content.id)}
-                                    isDisabled={content.required}
-                                    onValueChange={(selected) => setContentSelected(content, selected)}
-                                >
-                                    {content.name} ({humanFileSize(content.fileSize)})
-                                </Checkbox>
+                    {contentGroups.length > 0 &&
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {contentGroups.map((group) => (
+                                <div key={group.key} className="flex flex-col gap-2 rounded-lg bg-default-100 p-3">
+                                    <p className="text-sm font-semibold">{group.title}</p>
+                                    {group.contents.map((content) => (
+                                        <Checkbox
+                                            key={content.id}
+                                            size="sm"
+                                            isSelected={content.required || selectedContentIds.has(content.id)}
+                                            isDisabled={content.required}
+                                            onValueChange={(selected) => setContentSelected(content, selected)}
+                                        >
+                                            <span className="flex flex-col">
+                                                <span>
+                                                    {content.name} ({humanFileSize(content.fileSize)})
+                                                    {content.required && <span className="text-default-500"> · required</span>}
+                                                </span>
+                                                {content.defaultSelected && !content.required &&
+                                                    <span className="text-xs text-default-500">Selected by default</span>}
+                                            </span>
+                                        </Checkbox>
+                                    ))}
+                                </div>
                             ))}
                         </div>
                     }

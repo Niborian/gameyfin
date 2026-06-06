@@ -8,6 +8,8 @@ import org.springframework.data.repository.query.Param
 import java.time.Instant
 
 interface GameRepository : JpaRepository<Game, Long> {
+    fun findAllByLibraryId(libraryId: Long): List<Game>
+
     @Query("SELECT g FROM Game g JOIN g.platforms p WHERE g.title = :title AND YEAR(g.release) = YEAR(:release) AND p = :platform")
     fun findByTitleAndReleaseYearAndPlatform(
         @Param("title") title: String,

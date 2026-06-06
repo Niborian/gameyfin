@@ -7,6 +7,7 @@ import org.gameyfin.app.games.entities.Game
 import org.gameyfin.app.games.entities.GameMetadata
 import org.gameyfin.app.games.variants.DiscoveredGameVariants
 import org.gameyfin.app.games.variants.GameVariantDiscoveryService
+import org.gameyfin.app.games.variants.GameVariantGroupingService
 import org.gameyfin.app.games.variants.GameVariantService
 import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.app.media.Image
@@ -25,6 +26,7 @@ class LibraryGameProcessorTest {
     private lateinit var imageService: ImageService
     private lateinit var filesystemService: FilesystemService
     private lateinit var gameVariantDiscoveryService: GameVariantDiscoveryService
+    private lateinit var gameVariantGroupingService: GameVariantGroupingService
     private lateinit var gameVariantService: GameVariantService
     private lateinit var libraryGameProcessor: LibraryGameProcessor
 
@@ -34,6 +36,7 @@ class LibraryGameProcessorTest {
         imageService = mockk()
         filesystemService = mockk()
         gameVariantDiscoveryService = mockk()
+        gameVariantGroupingService = mockk()
         gameVariantService = mockk()
 
         libraryGameProcessor = LibraryGameProcessor(
@@ -41,6 +44,7 @@ class LibraryGameProcessorTest {
             imageService,
             filesystemService,
             gameVariantDiscoveryService,
+            gameVariantGroupingService,
             gameVariantService
         )
 
@@ -50,6 +54,7 @@ class LibraryGameProcessorTest {
         every { gameVariantService.syncVariants(any(), any(), any()) } answers {
             firstArg()
         }
+        every { gameVariantGroupingService.tryAutoGroup(any(), any(), any()) } returns null
     }
 
     @AfterEach

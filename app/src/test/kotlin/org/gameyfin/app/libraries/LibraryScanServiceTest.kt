@@ -12,6 +12,7 @@ import org.gameyfin.app.core.plugins.dto.PluginDto
 import org.gameyfin.app.games.entities.Game
 import org.gameyfin.app.games.entities.GameMetadata
 import org.gameyfin.app.games.repositories.GameRepository
+import org.gameyfin.app.games.variants.GameVariantGroupingService
 import org.gameyfin.app.libraries.entities.IgnoredPath
 import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.app.libraries.enums.ScanType
@@ -33,6 +34,7 @@ class LibraryScanServiceTest {
     private lateinit var libraryCoreService: LibraryCoreService
     private lateinit var libraryGameProcessor: LibraryGameProcessor
     private lateinit var gameRepository: GameRepository
+    private lateinit var gameVariantGroupingService: GameVariantGroupingService
     private lateinit var libraryScanService: LibraryScanService
     private lateinit var ignoredPathRepository: IgnoredPathRepository
     private lateinit var pluginService: PluginService
@@ -45,6 +47,7 @@ class LibraryScanServiceTest {
         libraryCoreService = mockk()
         libraryGameProcessor = mockk()
         gameRepository = mockk()
+        gameVariantGroupingService = mockk()
         ignoredPathRepository = mockk()
         pluginService = mockk()
         configService = mockk()
@@ -63,11 +66,13 @@ class LibraryScanServiceTest {
             libraryCoreService,
             libraryGameProcessor,
             gameRepository,
+            gameVariantGroupingService,
             ignoredPathRepository,
             pluginService,
             configService,
             ScanMetrics(SimpleMeterRegistry())
         )
+        every { gameVariantGroupingService.autoGroupExactMatches(any()) } returns 0
     }
 
     @AfterEach

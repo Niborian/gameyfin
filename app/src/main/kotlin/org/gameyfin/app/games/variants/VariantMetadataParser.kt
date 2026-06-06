@@ -71,8 +71,8 @@ class VariantMetadataParser {
                 ?: VariantContentType.EXTRA
             val name = properties["${prefix}name"]?.ifBlank { null } ?: key
             val relativePath = properties["${prefix}path"]?.ifBlank { null } ?: key
-            val required = properties["${prefix}required"].toBooleanStrictOrNull() ?: false
-            val defaultSelected = properties["${prefix}defaultSelected"].toBooleanStrictOrNull() ?: required
+            val required = properties["${prefix}required"]?.toBooleanStrictOrNull() ?: false
+            val defaultSelected = properties["${prefix}defaultSelected"]?.toBooleanStrictOrNull() ?: required
             val tags = splitCsv(properties["${prefix}tags"])
 
             ParsedVariantContent(

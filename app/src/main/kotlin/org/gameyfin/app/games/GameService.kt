@@ -630,7 +630,12 @@ class GameService(
         if (replaceGameId != null) {
             val existingGame = getById(replaceGameId)
 
-            // Copy fields from the existing game to the merged game
+            if (persist) {
+                replaceMetadataFields(existingGame, mergedGame)
+                existingGame.metadata.matchConfirmed = true
+                return create(existingGame)
+            }
+
             mergedGame.id = existingGame.id
             mergedGame.createdAt = existingGame.createdAt
             mergedGame.metadata.downloadCount = existingGame.metadata.downloadCount
@@ -914,6 +919,29 @@ class GameService(
         setFieldIfAbsent("videoUrls", metadata.videoUrls?.takeIf { it.isNotEmpty() }, metadataMap, sourcePlugin) {
             mergedGame.videoUrls = it.toList()
         }
+    }
+
+    private fun replaceMetadataFields(existingGame: Game, replacement: Game) {
+        existingGame.platforms = replacement.platforms
+        existingGame.title = replacement.title
+        existingGame.coverImage = replacement.coverImage
+        existingGame.headerImage = replacement.headerImage
+        existingGame.comment = replacement.comment
+        existingGame.summary = replacement.summary
+        existingGame.release = replacement.release
+        existingGame.userRating = replacement.userRating
+        existingGame.criticRating = replacement.criticRating
+        existingGame.publishers = replacement.publishers
+        existingGame.developers = replacement.developers
+        existingGame.genres = replacement.genres
+        existingGame.themes = replacement.themes
+        existingGame.keywords = replacement.keywords
+        existingGame.features = replacement.features
+        existingGame.perspectives = replacement.perspectives
+        existingGame.images = replacement.images
+        existingGame.videoUrls = replacement.videoUrls
+        existingGame.metadata.fields = replacement.metadata.fields
+        existingGame.metadata.originalIds = replacement.metadata.originalIds
     }
 
     private fun String.fuzzyMatchTitle(other: String): Boolean {

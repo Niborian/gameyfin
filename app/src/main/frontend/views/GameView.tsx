@@ -184,6 +184,10 @@ export default function GameView() {
         });
     }
 
+    function contentListSize(contents: VariantContentDto[]) {
+        return contents.reduce((total, content) => total + (content.fileSize ?? 0), 0);
+    }
+
     return game && (
         <div className="flex flex-col gap-4">
             <div className="overflow-hidden relative rounded-t-lg">
@@ -308,24 +312,44 @@ export default function GameView() {
                             {contentGroups.map((group) => (
                                 <div key={group.key} className="flex flex-col gap-2 rounded-lg bg-default-100 p-3">
                                     <p className="text-sm font-semibold">{group.title}</p>
-                                    {group.contents.map((content) => (
-                                        <Checkbox
-                                            key={content.id}
-                                            size="sm"
-                                            isSelected={content.required || selectedContentIds.has(content.id)}
-                                            isDisabled={content.required}
-                                            onValueChange={(selected) => setContentSelected(content, selected)}
-                                        >
-                                            <span className="flex flex-col">
-                                                <span>
-                                                    {content.name} ({humanFileSize(content.fileSize)})
-                                                    {content.required && <span className="text-default-500"> · required</span>}
+                                    {group.key === "base" && group.contents.length > 1 ? (
+                                        <div className="flex flex-col gap-2">
+                                            <Checkbox size="sm" isSelected isDisabled>
+                                                <span className="flex flex-col">
+                                                    <span>{group.contents.length} required files ({humanFileSize(contentListSize(group.contents))})</span>
+                                                    <span className="text-xs text-default-500">Included with this version</span>
                                                 </span>
-                                                {content.defaultSelected && !content.required &&
-                                                    <span className="text-xs text-default-500">Selected by default</span>}
-                                            </span>
-                                        </Checkbox>
-                                    ))}
+                                            </Checkbox>
+                                            <details className="text-xs text-default-500">
+                                                <summary className="cursor-pointer">Show base files</summary>
+                                                <div className="flex flex-col gap-1 pt-2 pl-4">
+                                                    {group.contents.map((content) => (
+                                                        <span key={content.id}>
+                                                            {content.name} ({humanFileSize(content.fileSize)})
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </details>
+                                        </div>
+                                    ) : group.contents.map((content) => (
+                                            <Checkbox
+                                                key={content.id}
+                                                size="sm"
+                                                isSelected={content.required || selectedContentIds.has(content.id)}
+                                                isDisabled={content.required}
+                                                onValueChange={(selected) => setContentSelected(content, selected)}
+                                            >
+                                                <span className="flex flex-col">
+                                                    <span>
+                                                        {content.name} ({humanFileSize(content.fileSize)})
+                                                        {content.required && <span className="text-default-500"> · required</span>}
+                                                    </span>
+                                                    {content.defaultSelected && !content.required &&
+                                                        <span className="text-xs text-default-500">Selected by default</span>}
+                                                </span>
+                                            </Checkbox>
+                                        )
+                                    )}
                                 </div>
                             ))}
                         </div>

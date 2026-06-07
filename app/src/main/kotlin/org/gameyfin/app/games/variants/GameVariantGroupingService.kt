@@ -5,6 +5,7 @@ import org.gameyfin.app.games.dto.AttachVariantContentEntryDto
 import org.gameyfin.app.games.dto.AttachVariantContentRequestDto
 import org.gameyfin.app.games.dto.GameGroupingSuggestionDto
 import org.gameyfin.app.games.dto.GroupGameAsVariantRequestDto
+import org.gameyfin.app.games.dto.UpdateVariantContentRequestDto
 import org.gameyfin.app.games.entities.Game
 import org.gameyfin.app.games.entities.GameVariant
 import org.gameyfin.app.games.entities.VariantContent
@@ -120,7 +121,12 @@ class GameVariantGroupingService(
         require(request.entries.isNotEmpty()) { "At least one content entry is required" }
 
         val sourceRootPath = request.sourceRootPath.ifBlank { request.entries.first().path }
-        val duplicateSource = findAttachSource(target, request.sourceGameId, sourceRootPath)
+        val duplicateSource = findAttachSource(
+            target = target,
+            sourceGameId = request.sourceGameId,
+            sourceRootPath = sourceRootPath,
+            entryPaths = request.entries.map { it.path }
+        )
 
         val sourceWasRemoved = duplicateSource != null
         if (duplicateSource != null) {
@@ -162,6 +168,83 @@ class GameVariantGroupingService(
         request.entries.forEach { entry -> addContentEntry(variant, entry) }
         variant.scanManaged = false
         refreshVariantFlags(target)
+
+        return gameRepository.save(target)
+    }
+
+    @Transactional
+    fun updateVariantContent(
+        targetGameId: Long,
+        variantId: Long,
+        contentId: Long,
+        request: UpdateVariantContentRequestDto
+    ): Game {
+        val target = gameRepository.findByIdOrNull(targetGameId)
+            ?: throw IllegalArgumentException("Target game $targetGameId not found")
+        require(request.path.isNotBlank()) { "Content path is required" }
+        val variant = findVariant(target, variantId)
+        val content = findContent(variant, contentId)
+        val wasPrimaryContent = variant.path == content.path
+
+        content.type = request.contentType
+        content.name = request.contentName.ifBlank { Path.of(request.path).fileName.toString() }
+        content.path = request.path
+        content.fileSize = filesystemService.calculateFileSize(request.path)
+        content.required = request.required || request.contentType == VariantContentType.BASE
+        content.defaultSelected = content.required || request.defaultSelected
+        content.tags.clear()
+        content.tags.addAll(normalizeTags(request.tags))
+
+        if (request.setAsVariantPath == true || wasPrimaryContent) {
+            setVariantPath(target, variant, content.path)
+        }
+        variant.scanManaged = false
+        refreshVariantFileSize(variant)
+        refreshVariantFlags(target)
+
+        return gameRepository.save(target)
+    }
+
+    @Transactional
+    fun deleteVariantContent(targetGameId: Long, variantId: Long, contentId: Long): Game {
+        val target = gameRepository.findByIdOrNull(targetGameId)
+            ?: throw IllegalArgumentException("Target game $targetGameId not found")
+        val variant = findVariant(target, variantId)
+        val content = findContent(variant, contentId)
+
+        require(variant.contents.size > 1) { "Cannot remove the last content item from a variant" }
+        if (content.type == VariantContentType.BASE) {
+            require(variant.contents.any { it.id != content.id && it.type == VariantContentType.BASE }) {
+                "Cannot remove the last BASE content item from a variant"
+            }
+        }
+
+        val removedPrimaryPath = variant.path == content.path
+        variant.contents.removeIf { it.id == content.id }
+        if (removedPrimaryPath) {
+            val replacement = variant.contents.firstOrNull { it.type == VariantContentType.BASE }
+                ?: variant.contents.first()
+            setVariantPath(target, variant, replacement.path)
+        }
+        variant.scanManaged = false
+        refreshVariantFileSize(variant)
+        refreshVariantFlags(target)
+
+        return gameRepository.save(target)
+    }
+
+    @Transactional
+    fun removeDuplicateVariantSource(targetGameId: Long, sourceGameId: Long): Game {
+        val target = gameRepository.findByIdOrNull(targetGameId)
+            ?: throw IllegalArgumentException("Target game $targetGameId not found")
+        val source = gameRepository.findByIdOrNull(sourceGameId)
+            ?: throw IllegalArgumentException("Source game $sourceGameId not found")
+
+        require(target.id != source.id) { "Source and target game must be different" }
+        require(target.library.id == source.library.id) { "Source and target game must be in the same library" }
+
+        removeSourceGame(target, source)
+        addGroupedIgnoredPath(target.library, source.metadata.path)
 
         return gameRepository.save(target)
     }
@@ -218,13 +301,25 @@ class GameVariantGroupingService(
         return gameRepository.save(target)
     }
 
-    private fun findAttachSource(target: Game, sourceGameId: Long?, sourceRootPath: String): Game? {
+    private fun findAttachSource(
+        target: Game,
+        sourceGameId: Long?,
+        sourceRootPath: String,
+        entryPaths: List<String>
+    ): Game? {
         val source = sourceGameId?.let { id ->
             gameRepository.findByIdOrNull(id)
                 ?: throw IllegalArgumentException("Source game $id not found")
         } ?: target.library.id?.let { libraryId ->
-            gameRepository.findAllByLibraryId(libraryId)
-                .firstOrNull { it.id != target.id && it.metadata.path == sourceRootPath }
+            val candidates = gameRepository.findAllByLibraryId(libraryId)
+                .filter { it.id != target.id }
+                .filter { sourceGame ->
+                    val candidatePath = sourceGame.metadata.path
+                    candidatePath == sourceRootPath ||
+                            isSameOrChild(sourceRootPath, candidatePath) ||
+                            entryPaths.any { isSameOrChild(it, candidatePath) }
+                }
+            candidates.singleOrNull()
         }
 
         if (source != null) {
@@ -233,6 +328,16 @@ class GameVariantGroupingService(
         }
 
         return source
+    }
+
+    private fun findVariant(target: Game, variantId: Long): GameVariant {
+        return target.variants.firstOrNull { it.id == variantId }
+            ?: throw IllegalArgumentException("Variant $variantId not found for game ${target.id}")
+    }
+
+    private fun findContent(variant: GameVariant, contentId: Long): VariantContent {
+        return variant.contents.firstOrNull { it.id == contentId }
+            ?: throw IllegalArgumentException("Content $contentId not found for variant ${variant.id}")
     }
 
     private fun removeSourceGame(target: Game, source: Game) {
@@ -381,6 +486,23 @@ class GameVariantGroupingService(
         content.defaultSelected = content.required || entry.defaultSelected
         content.tags.clear()
         content.tags.addAll(normalizedTags)
+    }
+
+    private fun setVariantPath(target: Game, variant: GameVariant, path: String) {
+        require(target.variants.none { it !== variant && it.path == path }) {
+            "Another variant already uses path $path"
+        }
+
+        variant.path = path
+        variant.fileSize = filesystemService.calculateFileSize(path)
+    }
+
+    private fun refreshVariantFileSize(variant: GameVariant) {
+        variant.fileSize = variant.contents
+            .filter { it.type == VariantContentType.BASE }
+            .takeIf { it.isNotEmpty() }
+            ?.sumOf { it.fileSize ?: filesystemService.calculateFileSize(it.path) }
+            ?: filesystemService.calculateFileSize(variant.path)
     }
 
     private fun createBaseVariant(target: Game, metadata: ExternalVariantMetadata): GameVariant {
@@ -561,6 +683,16 @@ class GameVariantGroupingService(
             .map { it.trim().lowercase() }
             .filter { it.isNotBlank() }
             .toSet()
+    }
+
+    private fun isSameOrChild(path: String, parentPath: String): Boolean {
+        return try {
+            val normalizedPath = Path.of(path).normalize()
+            val normalizedParent = Path.of(parentPath).normalize()
+            normalizedPath == normalizedParent || normalizedPath.startsWith(normalizedParent)
+        } catch (_: Exception) {
+            path == parentPath || path.startsWith(parentPath.trimEnd('/', '\\') + "/") || path.startsWith(parentPath.trimEnd('/', '\\') + "\\")
+        }
     }
 
     private fun releaseYear(game: Game): Int? {

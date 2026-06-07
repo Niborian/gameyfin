@@ -58,6 +58,26 @@ class GameEndpoint(
     }
 
     @RolesAllowed(Role.Names.ADMIN)
+    fun updateVariantContent(
+        targetGameId: Long,
+        variantId: Long,
+        contentId: Long,
+        request: UpdateVariantContentRequestDto
+    ): GameAdminDto {
+        return gameVariantGroupingService.updateVariantContent(targetGameId, variantId, contentId, request).toAdminDto()
+    }
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun deleteVariantContent(targetGameId: Long, variantId: Long, contentId: Long): GameAdminDto {
+        return gameVariantGroupingService.deleteVariantContent(targetGameId, variantId, contentId).toAdminDto()
+    }
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun removeDuplicateVariantSource(targetGameId: Long, sourceGameId: Long): GameAdminDto {
+        return gameVariantGroupingService.removeDuplicateVariantSource(targetGameId, sourceGameId).toAdminDto()
+    }
+
+    @RolesAllowed(Role.Names.ADMIN)
     fun deleteGame(gameId: Long) {
         libraryCoreService.deleteGameFromLibrary(gameId)
         gameService.delete(gameId)

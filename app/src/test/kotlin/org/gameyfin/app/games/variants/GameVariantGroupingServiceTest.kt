@@ -10,6 +10,7 @@ import org.gameyfin.app.core.plugins.management.PluginManagementEntry
 import org.gameyfin.app.games.dto.AttachVariantContentEntryDto
 import org.gameyfin.app.games.dto.AttachVariantContentRequestDto
 import org.gameyfin.app.games.dto.GroupGameAsVariantRequestDto
+import org.gameyfin.app.games.dto.UpdateVariantContentRequestDto
 import org.gameyfin.app.games.entities.Game
 import org.gameyfin.app.games.entities.GameMetadata
 import org.gameyfin.app.games.entities.GameVariant
@@ -333,6 +334,144 @@ class GameVariantGroupingServiceTest {
         assertEquals(patchPath, library.ignoredPaths.single().path)
         assertEquals(2, variant.contents.size)
         assertEquals(patchPath, variant.contents.single { it.type == VariantContentType.PATCH }.path)
+        verify(exactly = 1) { gameRepository.delete(source) }
+    }
+
+    @Test
+    fun `attachVariantContent should delete duplicate source when selected content is under source path`() {
+        val library = createLibrary()
+        val plugin = PluginManagementEntry("igdb")
+        val targetPath = "/mnt/Games/Factorio.v2.0.60.rar"
+        val sourcePath = "/mnt/Games/Factorio"
+        val patchPath = "/mnt/Games/Factorio/Onlinefix/Factorio Fix Repair Steam Generic.rar"
+        val target = createGame(1L, library, targetPath, plugin, "10052")
+        val source = createGame(2L, library, sourcePath, plugin, "10052")
+        val variant = createBaseVariant(target, 10L, targetPath)
+        target.variants.add(variant)
+        library.games.addAll(listOf(target, source))
+
+        every { gameRepository.findById(1L) } returns Optional.of(target)
+        every { gameRepository.findAllByLibraryId(1L) } returns listOf(target, source)
+        every { ignoredPathRepository.findByPath(sourcePath) } returns null
+        every { ignoredPathRepository.save(any()) } answers { firstArg<IgnoredPath>() }
+        every { gameRepository.delete(source) } just Runs
+        every { gameRepository.flush() } just Runs
+        every { filesystemService.calculateFileSize(patchPath) } returns 22L
+        every { gameRepository.save(target) } returns target
+
+        service.attachVariantContent(
+            targetGameId = 1L,
+            request = AttachVariantContentRequestDto(
+                sourceGameId = null,
+                sourceRootPath = patchPath,
+                targetVariantId = 10L,
+                variantName = null,
+                version = null,
+                entries = listOf(
+                    AttachVariantContentEntryDto(patchPath, "Multiplayer patch", VariantContentType.PATCH, false, true, emptySet())
+                )
+            )
+        )
+
+        assertFalse(library.games.any { it.id == source.id })
+        assertEquals(sourcePath, library.ignoredPaths.single().path)
+        assertEquals(patchPath, variant.contents.single { it.type == VariantContentType.PATCH }.path)
+        verify(exactly = 1) { gameRepository.delete(source) }
+    }
+
+    @Test
+    fun `updateVariantContent should rename content and set variant primary path`() {
+        val library = createLibrary()
+        val plugin = PluginManagementEntry("igdb")
+        val oldBasePath = "/mnt/Games/Farming.Simulator.25.rar"
+        val newBasePath = "/mnt/Games/FarmingSimulator25Parts/part01.rar"
+        val target = createGame(1L, library, oldBasePath, plugin, "123")
+        val variant = createBaseVariant(target, 10L, oldBasePath)
+        target.variants.add(variant)
+        library.games.add(target)
+
+        every { gameRepository.findById(1L) } returns Optional.of(target)
+        every { filesystemService.calculateFileSize(newBasePath) } returns 512L
+        every { gameRepository.save(target) } returns target
+
+        service.updateVariantContent(
+            targetGameId = 1L,
+            variantId = 10L,
+            contentId = 110L,
+            request = UpdateVariantContentRequestDto(
+                path = newBasePath,
+                contentName = "Base archive part 1",
+                contentType = VariantContentType.BASE,
+                required = true,
+                defaultSelected = true,
+                tags = setOf("base"),
+                setAsVariantPath = true
+            )
+        )
+
+        assertEquals(newBasePath, variant.path)
+        assertEquals(512L, variant.fileSize)
+        val content = variant.contents.single()
+        assertEquals("Base archive part 1", content.name)
+        assertEquals(newBasePath, content.path)
+        assertTrue(content.required)
+        assertTrue(content.defaultSelected)
+    }
+
+    @Test
+    fun `deleteVariantContent should remove content and keep another base item`() {
+        val library = createLibrary()
+        val plugin = PluginManagementEntry("igdb")
+        val firstBasePath = "/mnt/Games/FarmingSimulator25/part01.rar"
+        val secondBasePath = "/mnt/Games/FarmingSimulator25/part02.rar"
+        val target = createGame(1L, library, firstBasePath, plugin, "123")
+        val variant = createBaseVariant(target, 10L, firstBasePath)
+        variant.contents.add(
+            VariantContent(
+                id = 111L,
+                variant = variant,
+                type = VariantContentType.BASE,
+                name = "Part 2",
+                path = secondBasePath,
+                fileSize = 200L,
+                required = true,
+                defaultSelected = true
+            )
+        )
+        target.variants.add(variant)
+        library.games.add(target)
+
+        every { gameRepository.findById(1L) } returns Optional.of(target)
+        every { filesystemService.calculateFileSize(secondBasePath) } returns 200L
+        every { gameRepository.save(target) } returns target
+
+        service.deleteVariantContent(1L, 10L, 110L)
+
+        assertEquals(1, variant.contents.size)
+        assertEquals(secondBasePath, variant.path)
+        assertEquals(200L, variant.fileSize)
+    }
+
+    @Test
+    fun `removeDuplicateVariantSource should delete source game and ignore source path`() {
+        val library = createLibrary()
+        val plugin = PluginManagementEntry("igdb")
+        val target = createGame(1L, library, "/mnt/Games/Factorio.v2.0.60.rar", plugin, "10052")
+        val source = createGame(2L, library, "/mnt/Games/Factorio", plugin, "10052")
+        library.games.addAll(listOf(target, source))
+
+        every { gameRepository.findById(1L) } returns Optional.of(target)
+        every { gameRepository.findById(2L) } returns Optional.of(source)
+        every { ignoredPathRepository.findByPath(source.metadata.path) } returns null
+        every { ignoredPathRepository.save(any()) } answers { firstArg<IgnoredPath>() }
+        every { gameRepository.delete(source) } just Runs
+        every { gameRepository.flush() } just Runs
+        every { gameRepository.save(target) } returns target
+
+        service.removeDuplicateVariantSource(1L, 2L)
+
+        assertFalse(library.games.any { it.id == source.id })
+        assertEquals(source.metadata.path, library.ignoredPaths.single().path)
         verify(exactly = 1) { gameRepository.delete(source) }
     }
 

@@ -63,8 +63,9 @@ export default function GameView() {
     const [expandedContentGroups, setExpandedContentGroups] = useState<Set<string>>(new Set());
 
     const variants = (game?.variants ?? []) as GameVariantDto[];
+    const effectiveDefaultVariant = preferredVariant(variants);
     const selectedVariant = variants.find((variant) => variant.id === selectedVariantId)
-        ?? variants.find((variant) => variant.default)
+        ?? effectiveDefaultVariant
         ?? variants[0];
     const selectedContents = selectedVariant?.contents?.filter((content) =>
         content.required || selectedContentIds.has(content.id)
@@ -102,11 +103,11 @@ export default function GameView() {
     useEffect(() => {
         if (!game || variants.length === 0) return;
 
-        const defaultVariant = variants.find((variant) => variant.default) ?? variants[0];
+        const defaultVariant = effectiveDefaultVariant ?? variants[0];
         setSelectedVariantId(defaultVariant.id);
         setSelectedContentIds(defaultContentIds(defaultVariant));
         setExpandedContentGroups(new Set());
-    }, [game?.id, variants.length]);
+    }, [game?.id, variants.length, effectiveDefaultVariant?.id]);
 
     useEffect(() => {
         DownloadProviderEndpoint.getProviders().then((providers) => {
@@ -166,6 +167,14 @@ export default function GameView() {
         );
     }
 
+    function preferredVariant(variants: GameVariantDto[]) {
+        return variants.find((variant) => variant.defaultLocked)
+            ?? variants.find((variant) => variant.name.toLowerCase() === "normal" && variant.latestForVariant)
+            ?? variants.find((variant) => variant.default)
+            ?? variants.find((variant) => variant.latestForVariant)
+            ?? variants[0];
+    }
+
     function onVariantChange(keys: any) {
         const selectedKey = Array.from(keys)[0] as string | undefined;
         const nextVariant = variants.find((variant) => variant.id.toString() === selectedKey);
@@ -205,13 +214,13 @@ export default function GameView() {
             <Checkbox
                 key={content.id}
                 size="sm"
-                className="py-0.5"
+                className="py-1"
                 isSelected={content.required || selectedContentIds.has(content.id)}
                 isDisabled={content.required}
                 onValueChange={(selected) => setContentSelected(content, selected)}
             >
-                <span className="flex flex-col leading-tight">
-                    <span>
+                <span className="flex flex-col gap-0.5 leading-snug">
+                    <span className="text-sm">
                         {content.name} ({content.pathCount > 1 ? `${content.pathCount} files, ` : ""}{humanFileSize(content.fileSize)})
                         {content.required && <span className="text-default-500"> · required</span>}
                     </span>
@@ -231,21 +240,19 @@ export default function GameView() {
             : group.contents;
 
         return (
-            <div key={group.key} className="break-inside-avoid rounded-lg bg-default-100 p-2.5 mb-3">
+            <div key={group.key} className="break-inside-avoid rounded-lg bg-default-100 p-3.5 mb-3">
                 <div className="flex flex-row items-center justify-between gap-2">
                     <p className="text-sm font-semibold">{group.title}</p>
                     {isLongList && (
-                        <Button size="sm" variant="light" className="h-6 px-2" onPress={() => toggleContentGroup(group.key)}>
-                            {isExpanded ? "Show less" : `Show all ${group.contents.length}`}
-                        </Button>
+                        <Chip size="sm" variant="flat">{group.contents.length} items</Chip>
                     )}
                 </div>
-                <div className="flex flex-col gap-1 mt-1">
+                <div className="flex flex-col gap-2 mt-2">
                     {group.key === "base" && group.contents.length > 1 ? (
                         <>
-                            <Checkbox size="sm" className="py-0.5" isSelected isDisabled>
-                                <span className="flex flex-col leading-tight">
-                                    <span>{group.contents.length} required files ({humanFileSize(contentListSize(group.contents))})</span>
+                            <Checkbox size="sm" className="py-1" isSelected isDisabled>
+                                <span className="flex flex-col gap-0.5 leading-snug">
+                                    <span className="text-sm">{group.contents.length} required files ({humanFileSize(contentListSize(group.contents))})</span>
                                     <span className="text-xs text-default-500">Included with this version</span>
                                 </span>
                             </Checkbox>
@@ -262,8 +269,13 @@ export default function GameView() {
                         </>
                     ) : visibleContents.map(renderContentItem)}
                     {isLongList && !isExpanded && (
-                        <Button size="sm" variant="flat" className="mt-1 self-start h-7" onPress={() => toggleContentGroup(group.key)}>
+                        <Button size="sm" variant="flat" className="mt-1 self-start h-8 px-3" onPress={() => toggleContentGroup(group.key)}>
                             Show {group.contents.length - collapseThreshold} more
+                        </Button>
+                    )}
+                    {isLongList && isExpanded && (
+                        <Button size="sm" variant="flat" className="mt-1 self-start h-8 px-3" onPress={() => toggleContentGroup(group.key)}>
+                            Show less
                         </Button>
                     )}
                 </div>
@@ -358,7 +370,7 @@ export default function GameView() {
                         />}
                     </div>
                 </div>
-                {selectedVariant && <div className="flex flex-col gap-3 max-w-3xl">
+                {selectedVariant && <div className="flex flex-col gap-3 max-w-5xl">
                     <div className="flex flex-row gap-3 items-end">
                         <Select
                             size="sm"

@@ -68,6 +68,11 @@ class GameEndpoint(
     }
 
     @RolesAllowed(Role.Names.ADMIN)
+    fun setDefaultVariant(targetGameId: Long, variantId: Long): GameAdminDto {
+        return gameVariantGroupingService.setDefaultVariant(targetGameId, variantId).toAdminDto()
+    }
+
+    @RolesAllowed(Role.Names.ADMIN)
     fun deleteVariantContent(targetGameId: Long, variantId: Long, contentId: Long): GameAdminDto {
         return gameVariantGroupingService.deleteVariantContent(targetGameId, variantId, contentId).toAdminDto()
     }

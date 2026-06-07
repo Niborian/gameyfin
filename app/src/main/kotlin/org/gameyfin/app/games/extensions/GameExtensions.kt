@@ -95,6 +95,7 @@ fun GameVariant.toDto(includeAdminFields: Boolean): GameVariantDto {
         launchArgs = launchArgs,
         patchInfo = patchInfo,
         isDefault = isDefault,
+        defaultLocked = defaultLocked,
         isLatestForVariant = isLatestForVariant,
         linkStatus = linkStatus,
         linkFallbackReason = linkFallbackReason.takeIf { includeAdminFields },

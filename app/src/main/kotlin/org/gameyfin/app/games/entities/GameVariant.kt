@@ -36,6 +36,8 @@ class GameVariant(
 
     var isDefault: Boolean = false,
 
+    var defaultLocked: Boolean = false,
+
     var isLatestForVariant: Boolean = false,
 
     var scanManaged: Boolean = true,

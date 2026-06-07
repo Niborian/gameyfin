@@ -71,7 +71,7 @@ export default function VariantManagerModal({
                                             }: VariantManagerModalProps) {
     const pathPicker = useDisclosure();
     const variants = (game?.variants ?? []) as GameVariantDto[];
-    const defaultVariant = variants.find((variant) => variant.default) ?? variants[0];
+    const defaultVariant = preferredVariant(variants);
 
     const [selectedVariantId, setSelectedVariantId] = useState<number>();
     const [sourceGameId, setSourceGameId] = useState<number>();
@@ -86,12 +86,14 @@ export default function VariantManagerModal({
     const [groupTags, setGroupTags] = useState("");
     const [groupRequired, setGroupRequired] = useState(false);
     const [groupDefaultSelected, setGroupDefaultSelected] = useState(true);
+    const [shareWithAllVariants, setShareWithAllVariants] = useState(false);
     const [contentDrafts, setContentDrafts] = useState<Record<number, DraftEntry>>({});
     const [isSaving, setIsSaving] = useState(false);
     const [isLoadingChildren, setIsLoadingChildren] = useState(false);
     const [savingContentId, setSavingContentId] = useState<number>();
     const [deletingContentId, setDeletingContentId] = useState<number>();
     const [removingSourceId, setRemovingSourceId] = useState<number>();
+    const [settingDefaultVariantId, setSettingDefaultVariantId] = useState<number>();
 
     const selectedVariant = variants.find((variant) => variant.id === selectedVariantId) ?? defaultVariant;
     const relevantSuggestions = useMemo(() => {
@@ -111,6 +113,14 @@ export default function VariantManagerModal({
         clearDraft();
     }, [game?.id, defaultVariant?.id, variants.length]);
 
+    function preferredVariant(variants: GameVariantDto[]) {
+        return variants.find((variant) => variant.defaultLocked)
+            ?? variants.find((variant) => variant.name.toLowerCase() === "normal" && variant.latestForVariant)
+            ?? variants.find((variant) => variant.default)
+            ?? variants.find((variant) => variant.latestForVariant)
+            ?? variants[0];
+    }
+
     function clearDraft() {
         setSourceGameId(undefined);
         setSourceRootPath("");
@@ -121,6 +131,7 @@ export default function VariantManagerModal({
         setGroupTags("");
         setGroupRequired(false);
         setGroupDefaultSelected(true);
+        setShareWithAllVariants(false);
         setEntries([]);
     }
 
@@ -261,6 +272,7 @@ export default function VariantManagerModal({
             setGroupContentName("Base game");
             setGroupRequired(true);
             setGroupDefaultSelected(true);
+            setShareWithAllVariants(false);
         } else if (groupContentName === "Base game") {
             setGroupContentName("Grouped content");
         }
@@ -299,12 +311,17 @@ export default function VariantManagerModal({
         const isSingleBaseVariant = requestEntries.length === 1 &&
             requestEntries[0].contentType === VariantContentType.BASE &&
             requestEntries[0].paths.length === 1;
+        const shouldShareWithAllVariants = shareWithAllVariants &&
+            !isSingleBaseVariant &&
+            variants.length > 1 &&
+            requestEntries.some((entry) => entry.contentType !== VariantContentType.BASE);
         setIsSaving(true);
         try {
             const updated = await GameEndpoint.attachVariantContent(game.id, {
                 sourceGameId,
                 sourceRootPath,
-                targetVariantId: isSingleBaseVariant ? undefined : selectedVariant?.id,
+                targetVariantId: shouldShareWithAllVariants || isSingleBaseVariant ? undefined : selectedVariant?.id,
+                targetVariantIds: shouldShareWithAllVariants ? variants.map((variant) => variant.id) : undefined,
                 variantName: isSingleBaseVariant ? variantName : selectedVariant?.name ?? variantName,
                 version: isSingleBaseVariant ? version : selectedVariant?.version ?? version,
                 entries: requestEntries
@@ -330,6 +347,77 @@ export default function VariantManagerModal({
             });
         } finally {
             setIsSaving(false);
+        }
+    }
+
+    async function setDefaultVariant(variant: GameVariantDto) {
+        if (!game) return;
+
+        setSettingDefaultVariantId(variant.id);
+        try {
+            const updated = await GameEndpoint.setDefaultVariant(game.id, variant.id);
+            // @ts-ignore Hilla returns the admin shape for admins.
+            gameState.state[updated.id] = updated;
+            onChanged?.();
+            addToast({
+                title: "Default version updated",
+                description: `${variant.name} ${variant.version} is now the default download.`,
+                color: "success"
+            });
+        } catch (error) {
+            addToast({
+                title: "Could not update default version",
+                description: error instanceof Error ? error.message : String(error),
+                color: "danger"
+            });
+        } finally {
+            setSettingDefaultVariantId(undefined);
+        }
+    }
+
+    async function shareContentToAllVariants(content: VariantContentDto) {
+        if (!game || variants.length < 2) return;
+        const draft = contentDrafts[content.id];
+        if (!draft) return;
+        if (draft.contentType === VariantContentType.BASE) return;
+        const paths = parsePaths(draft.paths || draft.path);
+        if (paths.length === 0) return;
+
+        setSavingContentId(content.id);
+        try {
+            const updated = await GameEndpoint.attachVariantContent(game.id, {
+                sourceGameId: undefined,
+                sourceRootPath: paths[0],
+                targetVariantId: undefined,
+                targetVariantIds: variants.map((variant) => variant.id),
+                variantName: selectedVariant?.name ?? variantName,
+                version: selectedVariant?.version ?? version,
+                entries: [{
+                    path: paths[0],
+                    paths,
+                    contentName: draft.contentName,
+                    contentType: draft.contentType,
+                    required: draft.required,
+                    defaultSelected: draft.required || draft.defaultSelected,
+                    tags: draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean)
+                }]
+            });
+            // @ts-ignore Hilla returns the admin shape for admins.
+            gameState.state[updated.id] = updated;
+            onChanged?.();
+            addToast({
+                title: "Content shared",
+                description: "This content is now available on all versions.",
+                color: "success"
+            });
+        } catch (error) {
+            addToast({
+                title: "Could not share content",
+                description: error instanceof Error ? error.message : String(error),
+                color: "danger"
+            });
+        } finally {
+            setSavingContentId(undefined);
         }
     }
 
@@ -450,7 +538,11 @@ export default function VariantManagerModal({
                                                                 <Chip color={variant.id === selectedVariant?.id ? "primary" : "default"} variant="flat">
                                                                     {variant.name} {variant.version}
                                                                 </Chip>
-                                                                {variant.default && <Chip size="sm" color="success" variant="flat">default</Chip>}
+                                                                {defaultVariant?.id === variant.id &&
+                                                                    <Chip size="sm" color="success" variant="flat">
+                                                                        {variant.defaultLocked ? "pinned default" : "default"}
+                                                                    </Chip>
+                                                                }
                                                                 {variant.latestForVariant && <Chip size="sm" variant="flat">latest</Chip>}
                                                                 <Button size="sm" variant="light" onPress={() => {
                                                                     setSelectedVariantId(variant.id);
@@ -458,6 +550,16 @@ export default function VariantManagerModal({
                                                                     setVersion(variant.version);
                                                                 }}>
                                                                     Use as target
+                                                                </Button>
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant={variant.defaultLocked ? "flat" : "light"}
+                                                                    color={variant.defaultLocked ? "success" : "default"}
+                                                                    isDisabled={variant.defaultLocked}
+                                                                    isLoading={settingDefaultVariantId === variant.id}
+                                                                    onPress={() => setDefaultVariant(variant)}
+                                                                >
+                                                                    {variant.defaultLocked ? "Default pinned" : "Set default"}
                                                                 </Button>
                                                             </div>
                                                             {variant.path && <p className="text-xs text-default-500 break-all">{variant.path}</p>}
@@ -485,6 +587,15 @@ export default function VariantManagerModal({
                                                                                             onPress={() => saveContent(variant, content)}
                                                                                         >
                                                                                             Save
+                                                                                        </Button>
+                                                                                        <Button
+                                                                                            size="sm"
+                                                                                            variant="flat"
+                                                                                            isDisabled={draft.contentType === VariantContentType.BASE || variants.length < 2}
+                                                                                            isLoading={savingContentId === content.id}
+                                                                                            onPress={() => shareContentToAllVariants(content)}
+                                                                                        >
+                                                                                            Share to all
                                                                                         </Button>
                                                                                         <Button
                                                                                             size="sm"
@@ -687,6 +798,14 @@ export default function VariantManagerModal({
                                                         onValueChange={setGroupSelectedPaths}
                                                     >
                                                         Group selected paths into one content
+                                                    </Checkbox>
+                                                )}
+                                                {variants.length > 1 && newEntriesType !== VariantContentType.BASE && (
+                                                    <Checkbox
+                                                        isSelected={shareWithAllVariants}
+                                                        onValueChange={setShareWithAllVariants}
+                                                    >
+                                                        Share with all versions
                                                     </Checkbox>
                                                 )}
                                                 {sourceGameId && (

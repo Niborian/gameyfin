@@ -18,6 +18,11 @@
 
 Name and functionality inspired by [Jellyfin](https://jellyfin.org/).
 
+> [!IMPORTANT]
+> This repository contains an unofficial Gameyfin build. It is not an upstream release and is not presented as endorsed
+> by the Gameyfin maintainers. It exists to prototype variant/version support, selectable extra content, grouped archive
+> downloads, hardlink-friendly library handling, and metadata tools for keeping torrent-managed paths in place.
+
 Gameyfin will turn your disorganized collection of video games into a beautiful, easy-to-navigate library that you can
 access from any device with a web browser.  
 It will automatically scan your game folders, download metadata and cover images, and present everything in a
@@ -28,6 +33,31 @@ before.
 ### Documentation
 
 The documentation and screenshots are available at [gameyfin.org](https://gameyfin.org/).
+
+### Unofficial Variant Build
+
+This fork adds experimental support for libraries where one visible game entry can contain multiple versions and
+variants without moving the original source files.
+
+Highlights:
+
+* Version-aware variants, with the latest `Normal` version selected by default unless an admin pins another default.
+* User-selectable DLC, patches, mods, extras, and dedicated server content per download.
+* Shared optional content that can apply to multiple versions.
+* Grouped content paths so multipart archives can appear as one selectable download item.
+* Admin tools for attaching existing paths, grouping duplicates, and ignoring attached source paths so scans do not
+  recreate duplicate games.
+* Hardlink mirror storage mode for libraries that need managed access without breaking torrent paths.
+
+The images below are neutral illustrations of the added behavior and intentionally do not show real game artwork.
+
+<p align="center">
+    <img src="assets/variant-support/variant-content-model.svg" width="820" alt="Diagram showing variants and shared optional content">
+</p>
+
+<p align="center">
+    <img src="assets/variant-support/download-selection.svg" width="820" alt="Diagram showing selectable download content">
+</p>
 
 ### Features
 

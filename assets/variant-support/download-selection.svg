@@ -1,0 +1,35 @@
+<svg width="960" height="420" viewBox="0 0 960 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Selectable download content</title>
+  <desc id="desc">A generic download panel with a version selector, required base content, optional DLC, and optional patches.</desc>
+  <rect width="960" height="420" rx="28" fill="#101116"/>
+  <rect x="54" y="46" width="852" height="328" rx="24" fill="#1F2028"/>
+  <text x="88" y="92" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Download only what you choose</text>
+  <text x="88" y="124" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">Required base content is always included; optional content changes the estimated source size.</text>
+
+  <rect x="88" y="158" width="312" height="54" rx="14" fill="#2A2B34"/>
+  <text x="110" y="181" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13">Version</text>
+  <text x="110" y="201" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">Normal 1.3 (latest)</text>
+  <text x="428" y="192" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">Estimated download: 40.4 GiB</text>
+
+  <rect x="88" y="240" width="250" height="86" rx="16" fill="#2A2B34"/>
+  <text x="112" y="270" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Base game</text>
+  <circle cx="118" cy="300" r="9" fill="#6F45BD"/>
+  <path d="M114 300L117 303L123 296" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="138" y="306" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14">Required archive group</text>
+
+  <rect x="366" y="240" width="220" height="86" rx="16" fill="#2A2B34"/>
+  <text x="390" y="270" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">DLC</text>
+  <circle cx="396" cy="300" r="9" fill="#6F45BD"/>
+  <path d="M392 300L395 303L401 296" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="416" y="306" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14">Optional pack</text>
+
+  <rect x="614" y="240" width="204" height="86" rx="16" fill="#2A2B34"/>
+  <text x="638" y="270" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Patch / mod</text>
+  <circle cx="644" cy="300" r="9" stroke="#777A88" stroke-width="2"/>
+  <text x="664" y="306" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14">Optional add-on</text>
+
+  <rect x="726" y="152" width="92" height="34" rx="17" fill="#6F45BD"/>
+  <text x="750" y="174" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="700">Download</text>
+
+  <text x="88" y="352" fill="#8E91A3" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13">Illustration uses placeholder UI content only; no real game artwork or names are shown.</text>
+</svg>

@@ -166,10 +166,28 @@ class GameVariantGroupingService(
             return gameRepository.save(target)
         }
 
-        val variant = resolveAttachVariant(target, request, sourceRootPath)
-        request.entries.forEach { entry -> addContentEntry(variant, entry) }
-        variant.scanManaged = false
+        val variants = resolveAttachVariants(target, request, sourceRootPath)
+        variants.forEach { variant ->
+            request.entries.forEach { entry -> addContentEntry(variant, entry) }
+            variant.scanManaged = false
+            refreshVariantFileSize(variant)
+        }
         refreshVariantFlags(target)
+
+        return gameRepository.save(target)
+    }
+
+    @Transactional
+    fun setDefaultVariant(targetGameId: Long, variantId: Long): Game {
+        val target = gameRepository.findByIdOrNull(targetGameId)
+            ?: throw IllegalArgumentException("Target game $targetGameId not found")
+        val selected = findVariant(target, variantId)
+
+        target.variants.forEach { variant ->
+            val isSelected = variant === selected
+            variant.isDefault = isSelected
+            variant.defaultLocked = isSelected
+        }
 
         return gameRepository.save(target)
     }
@@ -353,8 +371,8 @@ class GameVariantGroupingService(
     }
 
     private fun addOrUpdateExternalVariant(target: Game, metadata: ExternalVariantMetadata) {
-        val variant = target.variants.firstOrNull { it.path == metadata.path }
-            ?: GameVariant(game = target, path = metadata.path).also { target.variants.add(it) }
+        val existingVariant = target.variants.firstOrNull { it.path == metadata.path }
+        val variant = existingVariant ?: GameVariant(game = target, path = metadata.path).also { target.variants.add(it) }
 
         variant.name = metadata.name
         variant.version = uniqueVersion(target, metadata.name, metadata.version, metadata.path)
@@ -365,7 +383,10 @@ class GameVariantGroupingService(
         variant.steamAppId = metadata.steamAppId
         variant.launchArgs = metadata.launchArgs
         variant.patchInfo = metadata.patchInfo
-        variant.isDefault = target.variants.none { it !== variant && it.isDefault }
+        if (existingVariant == null) {
+            variant.isDefault = false
+            variant.defaultLocked = false
+        }
         variant.isLatestForVariant = true
         variant.scanManaged = false
         variant.linkStatus = VariantLinkStatus.DIRECT
@@ -400,10 +421,8 @@ class GameVariantGroupingService(
         metadata.steamAppId?.let { variant.steamAppId = it }
         metadata.launchArgs?.let { variant.launchArgs = it }
         metadata.patchInfo?.let { variant.patchInfo = it }
-        variant.isDefault = true
         variant.isLatestForVariant = true
         variant.scanManaged = false
-        target.variants.filter { it !== variant }.forEach { it.isDefault = false }
 
         val content = variant.contents.firstOrNull { it.path == metadata.path }
             ?: variant.contents.firstOrNull { it.type == metadata.contentType && it.name == metadata.contentName }
@@ -420,6 +439,27 @@ class GameVariantGroupingService(
         content.defaultSelected = metadata.defaultSelected
         content.tags.clear()
         content.tags.addAll(metadata.tags)
+    }
+
+    private fun resolveAttachVariants(
+        target: Game,
+        request: AttachVariantContentRequestDto,
+        sourceRootPath: String
+    ): List<GameVariant> {
+        val requestedIds = request.targetVariantIds.orEmpty().ifEmpty {
+            request.targetVariantId?.let { listOf(it) }.orEmpty()
+        }
+
+        if (requestedIds.isNotEmpty()) {
+            return requestedIds
+                .distinct()
+                .map { targetVariantId ->
+                    target.variants.firstOrNull { it.id == targetVariantId }
+                        ?: throw IllegalArgumentException("Variant $targetVariantId not found for game ${target.id}")
+                }
+        }
+
+        return listOf(resolveAttachVariant(target, request, sourceRootPath))
     }
 
     private fun resolveAttachVariant(
@@ -456,7 +496,7 @@ class GameVariantGroupingService(
                 )
         }
 
-        return target.variants.firstOrNull { it.isDefault }
+        return preferredDefaultVariant(target)
             ?: target.variants.firstOrNull()
             ?: createBaseVariant(
                 target,
@@ -529,7 +569,7 @@ class GameVariantGroupingService(
             version = metadata.version,
             path = basePath,
             fileSize = baseSize,
-            isDefault = true,
+            isDefault = false,
             isLatestForVariant = true,
             scanManaged = false,
             linkStatus = VariantLinkStatus.DIRECT
@@ -748,9 +788,17 @@ class GameVariantGroupingService(
             variant.isLatestForVariant = newestVersionByName[variant.name] == variant.version
         }
 
-        if (target.variants.none { it.isDefault }) {
-            target.variants.firstOrNull()?.isDefault = true
+        val defaultVariant = preferredDefaultVariant(target)
+        target.variants.forEach { variant ->
+            variant.isDefault = variant === defaultVariant
         }
+    }
+
+    private fun preferredDefaultVariant(target: Game): GameVariant? {
+        return target.variants.firstOrNull { it.defaultLocked }
+            ?: target.variants.firstOrNull { it.name.equals("Normal", ignoreCase = true) && it.isLatestForVariant }
+            ?: target.variants.firstOrNull { it.isLatestForVariant }
+            ?: target.variants.firstOrNull()
     }
 
     private data class MatchConfidence(

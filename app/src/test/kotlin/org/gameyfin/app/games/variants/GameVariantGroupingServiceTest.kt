@@ -380,6 +380,137 @@ class GameVariantGroupingServiceTest {
     }
 
     @Test
+    fun `attachVariantContent should share non base content with selected variants`() {
+        val library = createLibrary()
+        val plugin = PluginManagementEntry("igdb")
+        val targetPath = "/mnt/Games/Craftopia.v2025.07.25.rar"
+        val oldPath = "/mnt/Games/Craftopia.v2025.01.01.rar"
+        val patchPath = "/mnt/Games/Craftopia/OnlineFix"
+        val target = createGame(1L, library, targetPath, plugin, "123")
+        val latestVariant = createBaseVariant(target, 10L, targetPath)
+        val oldVariant = createBaseVariant(target, 20L, oldPath).also {
+            it.version = "2025.01.01"
+            it.isDefault = false
+            it.isLatestForVariant = false
+        }
+        target.variants.addAll(listOf(latestVariant, oldVariant))
+        library.games.add(target)
+
+        every { gameRepository.findById(1L) } returns Optional.of(target)
+        every { gameRepository.findAllByLibraryId(1L) } returns listOf(target)
+        every { ignoredPathRepository.findByPath(patchPath) } returns null
+        every { ignoredPathRepository.save(any()) } answers { firstArg<IgnoredPath>() }
+        every { filesystemService.calculateFileSize(patchPath) } returns 22L
+        every { gameRepository.save(target) } returns target
+
+        service.attachVariantContent(
+            targetGameId = 1L,
+            request = AttachVariantContentRequestDto(
+                sourceGameId = null,
+                sourceRootPath = patchPath,
+                targetVariantId = null,
+                targetVariantIds = listOf(10L, 20L),
+                variantName = null,
+                version = null,
+                entries = listOf(
+                    AttachVariantContentEntryDto(
+                        path = patchPath,
+                        contentName = "Multiplayer patch",
+                        contentType = VariantContentType.PATCH,
+                        required = false,
+                        defaultSelected = true,
+                        tags = setOf("multiplayer")
+                    )
+                )
+            )
+        )
+
+        assertEquals(patchPath, library.ignoredPaths.single().path)
+        target.variants.forEach { variant ->
+            val patch = variant.contents.single { it.type == VariantContentType.PATCH }
+            assertEquals(patchPath, patch.path)
+            assertEquals("Multiplayer patch", patch.name)
+            assertTrue(patch.defaultSelected)
+        }
+    }
+
+    @Test
+    fun `attachVariantContent should auto default latest normal when no default is pinned`() {
+        val library = createLibrary()
+        val plugin = PluginManagementEntry("igdb")
+        val oldPath = "/mnt/Games/Craftopia.v2025.01.01.rar"
+        val latestPath = "/mnt/Games/Craftopia.v2025.07.25.rar"
+        val dlcPath = "/mnt/Games/CraftopiaDLC"
+        val target = createGame(1L, library, latestPath, plugin, "123")
+        val oldVariant = createBaseVariant(target, 10L, oldPath).also {
+            it.version = "2025.01.01"
+            it.isDefault = true
+            it.isLatestForVariant = false
+            it.defaultLocked = false
+        }
+        val latestVariant = createBaseVariant(target, 20L, latestPath).also {
+            it.version = "2025.07.25"
+            it.isDefault = false
+            it.isLatestForVariant = true
+            it.defaultLocked = false
+        }
+        target.variants.addAll(listOf(oldVariant, latestVariant))
+        library.games.add(target)
+
+        every { gameRepository.findById(1L) } returns Optional.of(target)
+        every { gameRepository.findAllByLibraryId(1L) } returns listOf(target)
+        every { ignoredPathRepository.findByPath(dlcPath) } returns null
+        every { ignoredPathRepository.save(any()) } answers { firstArg<IgnoredPath>() }
+        every { filesystemService.calculateFileSize(dlcPath) } returns 512L
+        every { gameRepository.save(target) } returns target
+
+        service.attachVariantContent(
+            targetGameId = 1L,
+            request = AttachVariantContentRequestDto(
+                sourceGameId = null,
+                sourceRootPath = dlcPath,
+                targetVariantId = 20L,
+                variantName = null,
+                version = null,
+                entries = listOf(AttachVariantContentEntryDto(dlcPath, "DLC", VariantContentType.DLC, false, false, emptySet()))
+            )
+        )
+
+        assertFalse(oldVariant.isDefault)
+        assertTrue(latestVariant.isDefault)
+    }
+
+    @Test
+    fun `setDefaultVariant should pin selected default and clear others`() {
+        val library = createLibrary()
+        val plugin = PluginManagementEntry("igdb")
+        val oldPath = "/mnt/Games/Craftopia.v2025.01.01.rar"
+        val latestPath = "/mnt/Games/Craftopia.v2025.07.25.rar"
+        val target = createGame(1L, library, latestPath, plugin, "123")
+        val oldVariant = createBaseVariant(target, 10L, oldPath).also {
+            it.version = "2025.01.01"
+            it.isDefault = false
+            it.defaultLocked = false
+        }
+        val latestVariant = createBaseVariant(target, 20L, latestPath).also {
+            it.version = "2025.07.25"
+            it.isDefault = true
+            it.defaultLocked = false
+        }
+        target.variants.addAll(listOf(oldVariant, latestVariant))
+
+        every { gameRepository.findById(1L) } returns Optional.of(target)
+        every { gameRepository.save(target) } returns target
+
+        service.setDefaultVariant(1L, 10L)
+
+        assertTrue(oldVariant.isDefault)
+        assertTrue(oldVariant.defaultLocked)
+        assertFalse(latestVariant.isDefault)
+        assertFalse(latestVariant.defaultLocked)
+    }
+
+    @Test
     fun `updateVariantContent should rename content and set variant primary path`() {
         val library = createLibrary()
         val plugin = PluginManagementEntry("igdb")

@@ -110,8 +110,10 @@ class DownloadService(
             game.variants.firstOrNull { it.id == variantId }
                 ?: throw IllegalArgumentException("Variant $variantId not found for game ${game.id}")
         } else {
-            game.variants.firstOrNull { it.isDefault }
+            game.variants.firstOrNull { it.defaultLocked }
                 ?: game.variants.firstOrNull { it.name.equals("Normal", ignoreCase = true) && it.isLatestForVariant }
+                ?: game.variants.firstOrNull { it.isDefault }
+                ?: game.variants.firstOrNull { it.isLatestForVariant }
                 ?: game.variants.first()
         }
     }

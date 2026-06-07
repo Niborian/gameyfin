@@ -16,6 +16,7 @@ data class GameVariantDto(
     val launchArgs: String?,
     val patchInfo: String?,
     val isDefault: Boolean,
+    val defaultLocked: Boolean,
     val isLatestForVariant: Boolean,
     val linkStatus: VariantLinkStatus,
     val linkFallbackReason: String?,

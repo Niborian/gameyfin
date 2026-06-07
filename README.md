@@ -49,7 +49,7 @@ Highlights:
   recreate duplicate games.
 * Hardlink mirror storage mode for libraries that need managed access without breaking torrent paths.
 
-The images below are neutral illustrations of the added behavior and intentionally do not show real game artwork.
+The images below summarize the added behavior.
 
 <p align="center">
     <img src="assets/variant-support/variant-content-model.svg" width="820" alt="Diagram showing variants and shared optional content">

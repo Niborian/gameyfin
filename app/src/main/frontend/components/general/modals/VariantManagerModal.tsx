@@ -15,6 +15,7 @@ import {
     ModalHeader,
     Select,
     SelectItem,
+    Textarea,
     Tooltip,
     useDisclosure
 } from "@heroui/react";
@@ -43,6 +44,7 @@ interface VariantManagerModalProps {
 type DraftEntry = {
     selected: boolean;
     path: string;
+    paths: string;
     contentName: string;
     contentType: VariantContentType;
     required: boolean;
@@ -79,6 +81,11 @@ export default function VariantManagerModal({
     const [splitChildren, setSplitChildren] = useState(false);
     const [newEntriesType, setNewEntriesType] = useState<VariantContentType>(VariantContentType.DLC);
     const [entries, setEntries] = useState<DraftEntry[]>([]);
+    const [groupSelectedPaths, setGroupSelectedPaths] = useState(false);
+    const [groupContentName, setGroupContentName] = useState("Grouped content");
+    const [groupTags, setGroupTags] = useState("");
+    const [groupRequired, setGroupRequired] = useState(false);
+    const [groupDefaultSelected, setGroupDefaultSelected] = useState(true);
     const [contentDrafts, setContentDrafts] = useState<Record<number, DraftEntry>>({});
     const [isSaving, setIsSaving] = useState(false);
     const [isLoadingChildren, setIsLoadingChildren] = useState(false);
@@ -109,6 +116,11 @@ export default function VariantManagerModal({
         setSourceRootPath("");
         setSplitChildren(false);
         setNewEntriesType(VariantContentType.DLC);
+        setGroupSelectedPaths(false);
+        setGroupContentName("Grouped content");
+        setGroupTags("");
+        setGroupRequired(false);
+        setGroupDefaultSelected(true);
         setEntries([]);
     }
 
@@ -140,6 +152,7 @@ export default function VariantManagerModal({
         return {
             selected: true,
             path,
+            paths: path,
             contentName: name,
             contentType: type,
             required: type === VariantContentType.BASE,
@@ -152,6 +165,7 @@ export default function VariantManagerModal({
         return {
             selected: true,
             path: content.path ?? "",
+            paths: ((content.paths?.length ? content.paths : [content.path]).filter(Boolean) as string[]).join("\n"),
             contentName: content.name,
             contentType: content.type,
             required: content.required,
@@ -184,6 +198,9 @@ export default function VariantManagerModal({
 
     async function toggleSplitChildren(selected: boolean) {
         setSplitChildren(selected);
+        if (!selected) {
+            setGroupSelectedPaths(false);
+        }
         if (!selected || !sourceRootPath) {
             if (sourceRootPath && entries.length === 0) {
                 setEntries([createEntry(sourceRootPath, sourceRootPath.split(/[\\/]/).filter(Boolean).pop() ?? "Content", newEntriesType)]);
@@ -212,6 +229,13 @@ export default function VariantManagerModal({
         return `${root.replace(/[\\/]$/, "")}/${name}`;
     }
 
+    function parsePaths(value: string) {
+        return value.split(/\r?\n/)
+            .map((path) => path.trim())
+            .filter(Boolean)
+            .filter((path, index, paths) => paths.indexOf(path) === index);
+    }
+
     function updateContentDraft(contentId: number, changed: Partial<DraftEntry>) {
         setContentDrafts((current) => {
             const currentDraft = current[contentId];
@@ -233,6 +257,13 @@ export default function VariantManagerModal({
 
     function applyTypeToNewEntries(type: VariantContentType) {
         setNewEntriesType(type);
+        if (type === VariantContentType.BASE) {
+            setGroupContentName("Base game");
+            setGroupRequired(true);
+            setGroupDefaultSelected(true);
+        } else if (groupContentName === "Base game") {
+            setGroupContentName("Grouped content");
+        }
         setEntries((current) => current.map((entry) => ({
             ...entry,
             contentType: type,
@@ -246,7 +277,28 @@ export default function VariantManagerModal({
         const selectedEntries = entries.filter((entry) => entry.selected);
         if (!sourceRootPath || selectedEntries.length === 0) return;
 
-        const isSingleBaseVariant = selectedEntries.length === 1 && selectedEntries[0].contentType === VariantContentType.BASE;
+        const requestEntries = groupSelectedPaths && splitChildren && selectedEntries.length > 1
+            ? [{
+                path: selectedEntries[0].path,
+                paths: selectedEntries.map((entry) => entry.path),
+                contentName: groupContentName,
+                contentType: newEntriesType,
+                required: groupRequired || newEntriesType === VariantContentType.BASE,
+                defaultSelected: groupRequired || groupDefaultSelected || newEntriesType === VariantContentType.BASE,
+                tags: groupTags.split(",").map((tag) => tag.trim()).filter(Boolean)
+            }]
+            : selectedEntries.map((entry) => ({
+                path: entry.path,
+                paths: parsePaths(entry.paths || entry.path),
+                contentName: entry.contentName,
+                contentType: entry.contentType,
+                required: entry.required,
+                defaultSelected: entry.required || entry.defaultSelected,
+                tags: entry.tags.split(",").map((tag) => tag.trim()).filter(Boolean)
+            }));
+        const isSingleBaseVariant = requestEntries.length === 1 &&
+            requestEntries[0].contentType === VariantContentType.BASE &&
+            requestEntries[0].paths.length === 1;
         setIsSaving(true);
         try {
             const updated = await GameEndpoint.attachVariantContent(game.id, {
@@ -255,14 +307,7 @@ export default function VariantManagerModal({
                 targetVariantId: isSingleBaseVariant ? undefined : selectedVariant?.id,
                 variantName: isSingleBaseVariant ? variantName : selectedVariant?.name ?? variantName,
                 version: isSingleBaseVariant ? version : selectedVariant?.version ?? version,
-                entries: selectedEntries.map((entry) => ({
-                    path: entry.path,
-                    contentName: entry.contentName,
-                    contentType: entry.contentType,
-                    required: entry.required,
-                    defaultSelected: entry.required || entry.defaultSelected,
-                    tags: entry.tags.split(",").map((tag) => tag.trim()).filter(Boolean)
-                }))
+                entries: requestEntries
             });
 
             // @ts-ignore Hilla returns the admin shape for admins.
@@ -292,11 +337,14 @@ export default function VariantManagerModal({
         if (!game) return;
         const draft = contentDrafts[content.id];
         if (!draft) return;
+        const paths = parsePaths(draft.paths || draft.path);
+        if (paths.length === 0) return;
 
         setSavingContentId(content.id);
         try {
             const updated = await GameEndpoint.updateVariantContent(game.id, variant.id, content.id, {
-                path: draft.path,
+                path: paths[0],
+                paths,
                 contentName: draft.contentName,
                 contentType: draft.contentType,
                 required: draft.required,
@@ -425,6 +473,7 @@ export default function VariantManagerModal({
                                                                                     <div className="flex flex-wrap items-center gap-2">
                                                                                         <Chip size="sm" variant="flat">{contentTypeLabel(content.type)}</Chip>
                                                                                         {isPrimaryPath && <Chip size="sm" color="primary" variant="flat">primary path</Chip>}
+                                                                                        {content.pathCount > 1 && <Chip size="sm" variant="flat">{content.pathCount} files</Chip>}
                                                                                         <span className="text-sm text-default-500">{humanFileSize(content.fileSize)}</span>
                                                                                     </div>
                                                                                     <div className="flex flex-row gap-2">
@@ -458,11 +507,16 @@ export default function VariantManagerModal({
                                                                                         </Button>
                                                                                     </div>
                                                                                 </div>
-                                                                                <Input
+                                                                                <Textarea
                                                                                     size="sm"
-                                                                                    label="Path"
-                                                                                    value={draft.path}
-                                                                                    onValueChange={(path) => updateContentDraft(content.id, {path})}
+                                                                                    minRows={content.pathCount > 1 ? 3 : 1}
+                                                                                    label="Paths (one per line)"
+                                                                                    description="Use this to group multipart archives as one selectable download."
+                                                                                    value={draft.paths}
+                                                                                    onValueChange={(paths) => updateContentDraft(content.id, {
+                                                                                        paths,
+                                                                                        path: parsePaths(paths)[0] ?? draft.path
+                                                                                    })}
                                                                                 />
                                                                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                                                                                     <Input
@@ -627,6 +681,14 @@ export default function VariantManagerModal({
                                                 >
                                                     Split direct children
                                                 </Checkbox>
+                                                {splitChildren && entries.length > 1 && (
+                                                    <Checkbox
+                                                        isSelected={groupSelectedPaths}
+                                                        onValueChange={setGroupSelectedPaths}
+                                                    >
+                                                        Group selected paths into one content
+                                                    </Checkbox>
+                                                )}
                                                 {sourceGameId && (
                                                     <Button size="sm" variant="light" startContent={<XIcon/>} onPress={clearDraft}>
                                                         Clear suggestion
@@ -635,6 +697,62 @@ export default function VariantManagerModal({
                                             </div>
                                             <Divider/>
                                             {isLoadingChildren && <p className="text-sm text-default-500">Loading child paths…</p>}
+                                            {groupSelectedPaths && (
+                                                <Card shadow="none" className="bg-default-100">
+                                                    <CardBody className="flex flex-col gap-2">
+                                                        <p className="text-sm font-semibold">
+                                                            Grouped content ({entries.filter((entry) => entry.selected).length} paths)
+                                                        </p>
+                                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                                            <Input
+                                                                size="sm"
+                                                                label="Content name"
+                                                                value={groupContentName}
+                                                                onValueChange={setGroupContentName}
+                                                            />
+                                                            <Select
+                                                                size="sm"
+                                                                label="Content type"
+                                                                selectedKeys={[newEntriesType]}
+                                                                onSelectionChange={(keys) => {
+                                                                    const key = Array.from(keys)[0]?.toString() as VariantContentType | undefined;
+                                                                    if (key) applyTypeToNewEntries(key);
+                                                                }}
+                                                            >
+                                                                {contentTypes.map((type) => (
+                                                                    <SelectItem key={type}>{contentTypeLabel(type)}</SelectItem>
+                                                                ))}
+                                                            </Select>
+                                                        </div>
+                                                        <Input
+                                                            size="sm"
+                                                            label="Tags"
+                                                            placeholder="multiplayer, dlc"
+                                                            value={groupTags}
+                                                            onValueChange={setGroupTags}
+                                                        />
+                                                        <div className="flex flex-row gap-4">
+                                                            <Checkbox
+                                                                isSelected={groupRequired || newEntriesType === VariantContentType.BASE}
+                                                                isDisabled={newEntriesType === VariantContentType.BASE}
+                                                                onValueChange={(required) => {
+                                                                    setGroupRequired(required);
+                                                                    if (required) setGroupDefaultSelected(true);
+                                                                }}
+                                                            >
+                                                                Required
+                                                            </Checkbox>
+                                                            <Checkbox
+                                                                isSelected={groupRequired || groupDefaultSelected || newEntriesType === VariantContentType.BASE}
+                                                                isDisabled={groupRequired || newEntriesType === VariantContentType.BASE}
+                                                                onValueChange={setGroupDefaultSelected}
+                                                            >
+                                                                Default selected
+                                                            </Checkbox>
+                                                        </div>
+                                                    </CardBody>
+                                                </Card>
+                                            )}
                                             <div className="flex flex-col gap-3">
                                                 {entries.map((entry, index) => (
                                                     <Card key={`${entry.path}-${index}`} shadow="none" className="bg-default-100">
@@ -644,42 +762,46 @@ export default function VariantManagerModal({
                                                             </Checkbox>
                                                             <Input size="sm" label="Path" value={entry.path}
                                                                    onValueChange={(path) => updateEntry(index, {path})}/>
-                                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                                                <Input size="sm" label="Content name" value={entry.contentName}
-                                                                       onValueChange={(contentName) => updateEntry(index, {contentName})}/>
-                                                                <Select
-                                                                    size="sm"
-                                                                    label="Content type"
-                                                                    selectedKeys={[entry.contentType]}
-                                                                    onSelectionChange={(keys) => {
-                                                                        const key = Array.from(keys)[0]?.toString() as VariantContentType | undefined;
-                                                                        if (key) updateEntry(index, {contentType: key});
-                                                                    }}
-                                                                >
-                                                                    {contentTypes.map((type) => (
-                                                                        <SelectItem key={type}>{contentTypeLabel(type)}</SelectItem>
-                                                                    ))}
-                                                                </Select>
-                                                            </div>
-                                                            <Input size="sm" label="Tags" placeholder="multiplayer, dlc"
-                                                                   value={entry.tags}
-                                                                   onValueChange={(tags) => updateEntry(index, {tags})}/>
-                                                            <div className="flex flex-row gap-4">
-                                                                <Checkbox
-                                                                    isSelected={entry.required}
-                                                                    isDisabled={entry.contentType === VariantContentType.BASE}
-                                                                    onValueChange={(required) => updateEntry(index, {required})}
-                                                                >
-                                                                    Required
-                                                                </Checkbox>
-                                                                <Checkbox
-                                                                    isSelected={entry.required || entry.defaultSelected}
-                                                                    isDisabled={entry.required}
-                                                                    onValueChange={(defaultSelected) => updateEntry(index, {defaultSelected})}
-                                                                >
-                                                                    Default selected
-                                                                </Checkbox>
-                                                            </div>
+                                                            {!groupSelectedPaths && (
+                                                                <>
+                                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                                                        <Input size="sm" label="Content name" value={entry.contentName}
+                                                                               onValueChange={(contentName) => updateEntry(index, {contentName})}/>
+                                                                        <Select
+                                                                            size="sm"
+                                                                            label="Content type"
+                                                                            selectedKeys={[entry.contentType]}
+                                                                            onSelectionChange={(keys) => {
+                                                                                const key = Array.from(keys)[0]?.toString() as VariantContentType | undefined;
+                                                                                if (key) updateEntry(index, {contentType: key});
+                                                                            }}
+                                                                        >
+                                                                            {contentTypes.map((type) => (
+                                                                                <SelectItem key={type}>{contentTypeLabel(type)}</SelectItem>
+                                                                            ))}
+                                                                        </Select>
+                                                                    </div>
+                                                                    <Input size="sm" label="Tags" placeholder="multiplayer, dlc"
+                                                                           value={entry.tags}
+                                                                           onValueChange={(tags) => updateEntry(index, {tags})}/>
+                                                                    <div className="flex flex-row gap-4">
+                                                                        <Checkbox
+                                                                            isSelected={entry.required}
+                                                                            isDisabled={entry.contentType === VariantContentType.BASE}
+                                                                            onValueChange={(required) => updateEntry(index, {required})}
+                                                                        >
+                                                                            Required
+                                                                        </Checkbox>
+                                                                        <Checkbox
+                                                                            isSelected={entry.required || entry.defaultSelected}
+                                                                            isDisabled={entry.required}
+                                                                            onValueChange={(defaultSelected) => updateEntry(index, {defaultSelected})}
+                                                                        >
+                                                                            Default selected
+                                                                        </Checkbox>
+                                                                    </div>
+                                                                </>
+                                                            )}
                                                         </CardBody>
                                                     </Card>
                                                 ))}

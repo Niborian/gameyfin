@@ -385,6 +385,7 @@ class GameVariantGroupingServiceTest {
         val plugin = PluginManagementEntry("igdb")
         val oldBasePath = "/mnt/Games/Farming.Simulator.25.rar"
         val newBasePath = "/mnt/Games/FarmingSimulator25Parts/part01.rar"
+        val secondBasePath = "/mnt/Games/FarmingSimulator25Parts/part02.rar"
         val target = createGame(1L, library, oldBasePath, plugin, "123")
         val variant = createBaseVariant(target, 10L, oldBasePath)
         target.variants.add(variant)
@@ -392,6 +393,7 @@ class GameVariantGroupingServiceTest {
 
         every { gameRepository.findById(1L) } returns Optional.of(target)
         every { filesystemService.calculateFileSize(newBasePath) } returns 512L
+        every { filesystemService.calculateFileSize(secondBasePath) } returns 256L
         every { gameRepository.save(target) } returns target
 
         service.updateVariantContent(
@@ -400,6 +402,7 @@ class GameVariantGroupingServiceTest {
             contentId = 110L,
             request = UpdateVariantContentRequestDto(
                 path = newBasePath,
+                paths = listOf(newBasePath, secondBasePath),
                 contentName = "Base archive part 1",
                 contentType = VariantContentType.BASE,
                 required = true,
@@ -410,10 +413,12 @@ class GameVariantGroupingServiceTest {
         )
 
         assertEquals(newBasePath, variant.path)
-        assertEquals(512L, variant.fileSize)
+        assertEquals(768L, variant.fileSize)
         val content = variant.contents.single()
         assertEquals("Base archive part 1", content.name)
         assertEquals(newBasePath, content.path)
+        assertEquals(listOf(newBasePath, secondBasePath), content.paths)
+        assertEquals(768L, content.fileSize)
         assertTrue(content.required)
         assertTrue(content.defaultSelected)
     }

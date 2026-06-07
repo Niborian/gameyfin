@@ -103,11 +103,14 @@ fun GameVariant.toDto(includeAdminFields: Boolean): GameVariantDto {
 }
 
 fun VariantContent.toDto(includeAdminFields: Boolean): VariantContentDto {
+    val effectivePaths = effectivePaths()
     return VariantContentDto(
         id = id!!,
         type = type,
         name = name,
         path = path.takeIf { includeAdminFields },
+        paths = effectivePaths.takeIf { includeAdminFields },
+        pathCount = effectivePaths.size,
         fileSize = fileSize ?: 0L,
         required = required,
         defaultSelected = defaultSelected,

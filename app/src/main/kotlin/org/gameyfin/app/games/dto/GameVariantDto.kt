@@ -28,6 +28,8 @@ data class VariantContentDto(
     val type: VariantContentType,
     val name: String,
     val path: String?,
+    val paths: List<String>?,
+    val pathCount: Int,
     val fileSize: Long,
     val required: Boolean,
     val defaultSelected: Boolean,

@@ -8,5 +8,6 @@ data class AttachVariantContentEntryDto(
     val contentType: VariantContentType,
     val required: Boolean,
     val defaultSelected: Boolean,
-    val tags: Set<String>?
+    val tags: Set<String>?,
+    val paths: List<String>? = null
 )

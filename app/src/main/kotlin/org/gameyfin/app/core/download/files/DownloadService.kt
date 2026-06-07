@@ -13,6 +13,7 @@ import org.gameyfin.app.core.plugins.management.GameyfinPluginManager
 import org.gameyfin.app.games.entities.Game
 import org.gameyfin.app.games.entities.GameVariant
 import org.gameyfin.app.games.entities.VariantContent
+import org.gameyfin.app.games.entities.effectivePaths
 import org.gameyfin.pluginapi.download.Download
 import org.gameyfin.pluginapi.download.FileDownload
 import org.gameyfin.pluginapi.download.DownloadProvider
@@ -79,7 +80,10 @@ class DownloadService(
         val variant = selectVariant(game, variantId)
         val selectedContents = selectContents(variant, contentIds)
 
-        if (selectedContents.size == 1 && selectedContents.single().path == variant.path) {
+        if (selectedContents.size == 1 &&
+            selectedContents.single().effectivePaths().size == 1 &&
+            selectedContents.single().path == variant.path
+        ) {
             return getDownload(variant.path, provider)
         }
 
@@ -92,7 +96,9 @@ class DownloadService(
 
     fun estimateDownloadSize(game: Game, variantId: Long?, contentIds: List<Long>?): Long {
         val variant = selectVariant(game, variantId)
-        return selectContents(variant, contentIds).sumOf { it.fileSize ?: calculatePathSize(Path.of(it.path)) }
+        return selectContents(variant, contentIds).sumOf { content ->
+            content.fileSize ?: content.effectivePaths().sumOf { calculatePathSize(Path.of(it)) }
+        }
     }
 
     private fun selectVariant(game: Game, variantId: Long?): GameVariant {
@@ -140,12 +146,25 @@ class DownloadService(
             try {
                 ZipOutputStream(pipeOut).use { zip ->
                     contents.forEach { content ->
-                        val path = Path.of(content.path)
-                        val entryRoot = safeZipEntryName(content.name.ifBlank { path.name })
-                        if (path.isDirectory()) {
-                            zipDirectory(zip, path, entryRoot)
+                        val paths = content.effectivePaths().map { Path.of(it) }
+                        val entryRoot = safeZipEntryName(content.name.ifBlank { paths.first().name })
+
+                        if (paths.size == 1) {
+                            val path = paths.single()
+                            if (path.isDirectory()) {
+                                zipDirectory(zip, path, entryRoot)
+                            } else {
+                                zipFile(zip, path, entryRoot, includeFileName = content.name == path.name)
+                            }
                         } else {
-                            zipFile(zip, path, entryRoot, includeFileName = content.name == path.name)
+                            paths.forEach { path ->
+                                val childEntryRoot = "$entryRoot/${safeZipEntryName(path.name)}"
+                                if (path.isDirectory()) {
+                                    zipDirectory(zip, path, childEntryRoot)
+                                } else {
+                                    zipFile(zip, path, childEntryRoot, includeFileName = true)
+                                }
+                            }
                         }
                     }
                 }

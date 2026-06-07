@@ -4,6 +4,7 @@ import org.gameyfin.app.games.entities.VariantContentType
 
 data class UpdateVariantContentRequestDto(
     val path: String,
+    val paths: List<String>? = null,
     val contentName: String,
     val contentType: VariantContentType,
     val required: Boolean,

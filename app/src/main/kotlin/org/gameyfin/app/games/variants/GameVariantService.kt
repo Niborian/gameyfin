@@ -87,6 +87,8 @@ class GameVariantService(
             content.name = parsed.name
             content.path = linkResult.path.toString()
             content.fileSize = filesystemService.calculateFileSize(linkResult.path.toString())
+            content.paths.clear()
+            content.paths.add(linkResult.path.toString())
             content.required = parsed.required
             content.defaultSelected = parsed.defaultSelected
             content.tags.clear()

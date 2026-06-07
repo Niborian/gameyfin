@@ -29,7 +29,7 @@ import FileDto from "Frontend/generated/org/gameyfin/app/core/filesystem/FileDto
 import {humanFileSize} from "Frontend/util/utils";
 import ContentPathPickerModal from "Frontend/components/general/modals/ContentPathPickerModal";
 import {gameState} from "Frontend/state/GameState";
-import {FolderOpenIcon, PlusIcon, XIcon} from "@phosphor-icons/react";
+import {CheckIcon, FolderOpenIcon, PlusIcon, TrashIcon, XIcon} from "@phosphor-icons/react";
 
 interface VariantManagerModalProps {
     game?: GameAdminDto;
@@ -77,9 +77,14 @@ export default function VariantManagerModal({
     const [variantName, setVariantName] = useState("Normal");
     const [version, setVersion] = useState("0");
     const [splitChildren, setSplitChildren] = useState(false);
+    const [newEntriesType, setNewEntriesType] = useState<VariantContentType>(VariantContentType.DLC);
     const [entries, setEntries] = useState<DraftEntry[]>([]);
+    const [contentDrafts, setContentDrafts] = useState<Record<number, DraftEntry>>({});
     const [isSaving, setIsSaving] = useState(false);
     const [isLoadingChildren, setIsLoadingChildren] = useState(false);
+    const [savingContentId, setSavingContentId] = useState<number>();
+    const [deletingContentId, setDeletingContentId] = useState<number>();
+    const [removingSourceId, setRemovingSourceId] = useState<number>();
 
     const selectedVariant = variants.find((variant) => variant.id === selectedVariantId) ?? defaultVariant;
     const relevantSuggestions = useMemo(() => {
@@ -93,13 +98,17 @@ export default function VariantManagerModal({
         setSelectedVariantId(defaultVariant?.id);
         setVariantName(defaultVariant?.name ?? "Normal");
         setVersion(defaultVariant?.version ?? "0");
+        setContentDrafts(Object.fromEntries(variants.flatMap((variant) =>
+            (variant.contents ?? []).map((content: VariantContentDto) => [content.id, createDraftFromContent(content)])
+        )));
         clearDraft();
-    }, [game?.id, defaultVariant?.id]);
+    }, [game?.id, defaultVariant?.id, variants.length]);
 
     function clearDraft() {
         setSourceGameId(undefined);
         setSourceRootPath("");
         setSplitChildren(false);
+        setNewEntriesType(VariantContentType.DLC);
         setEntries([]);
     }
 
@@ -139,6 +148,18 @@ export default function VariantManagerModal({
         };
     }
 
+    function createDraftFromContent(content: VariantContentDto): DraftEntry {
+        return {
+            selected: true,
+            path: content.path ?? "",
+            contentName: content.name,
+            contentType: content.type,
+            required: content.required,
+            defaultSelected: content.defaultSelected,
+            tags: (content.tags ?? []).join(", ")
+        };
+    }
+
     function updateEntry(index: number, changed: Partial<DraftEntry>) {
         setEntries((current) => current.map((entry, entryIndex) => {
             if (entryIndex !== index) return entry;
@@ -158,14 +179,14 @@ export default function VariantManagerModal({
         setSourceGameId(undefined);
         setSourceRootPath(path);
         setSplitChildren(false);
-        setEntries([createEntry(path, path.split(/[\\/]/).filter(Boolean).pop() ?? "DLC", VariantContentType.DLC)]);
+        setEntries([createEntry(path, path.split(/[\\/]/).filter(Boolean).pop() ?? "DLC", newEntriesType)]);
     }
 
     async function toggleSplitChildren(selected: boolean) {
         setSplitChildren(selected);
         if (!selected || !sourceRootPath) {
             if (sourceRootPath && entries.length === 0) {
-                setEntries([createEntry(sourceRootPath, sourceRootPath.split(/[\\/]/).filter(Boolean).pop() ?? "DLC", VariantContentType.DLC)]);
+                setEntries([createEntry(sourceRootPath, sourceRootPath.split(/[\\/]/).filter(Boolean).pop() ?? "Content", newEntriesType)]);
             }
             return;
         }
@@ -174,7 +195,7 @@ export default function VariantManagerModal({
         try {
             const children = await FilesystemEndpoint.listContents(sourceRootPath) as FileDto[];
             setEntries(children.map((child) =>
-                createEntry(child.path ?? joinPath(sourceRootPath, child.name), child.name, VariantContentType.DLC)
+                createEntry(child.path ?? joinPath(sourceRootPath, child.name), child.name, newEntriesType)
             ));
         } catch (error) {
             addToast({
@@ -189,6 +210,35 @@ export default function VariantManagerModal({
 
     function joinPath(root: string, name: string) {
         return `${root.replace(/[\\/]$/, "")}/${name}`;
+    }
+
+    function updateContentDraft(contentId: number, changed: Partial<DraftEntry>) {
+        setContentDrafts((current) => {
+            const currentDraft = current[contentId];
+            if (!currentDraft) return current;
+            const next = {...currentDraft, ...changed};
+            if (changed.contentType === VariantContentType.BASE) {
+                next.required = true;
+                next.defaultSelected = true;
+            }
+            if (changed.required === true) {
+                next.defaultSelected = true;
+            }
+            return {
+                ...current,
+                [contentId]: next
+            };
+        });
+    }
+
+    function applyTypeToNewEntries(type: VariantContentType) {
+        setNewEntriesType(type);
+        setEntries((current) => current.map((entry) => ({
+            ...entry,
+            contentType: type,
+            required: type === VariantContentType.BASE || entry.required,
+            defaultSelected: type === VariantContentType.BASE || entry.defaultSelected
+        })));
     }
 
     async function attachContent() {
@@ -238,6 +288,85 @@ export default function VariantManagerModal({
         }
     }
 
+    async function saveContent(variant: GameVariantDto, content: VariantContentDto, setAsVariantPath = false) {
+        if (!game) return;
+        const draft = contentDrafts[content.id];
+        if (!draft) return;
+
+        setSavingContentId(content.id);
+        try {
+            const updated = await GameEndpoint.updateVariantContent(game.id, variant.id, content.id, {
+                path: draft.path,
+                contentName: draft.contentName,
+                contentType: draft.contentType,
+                required: draft.required,
+                defaultSelected: draft.required || draft.defaultSelected,
+                tags: draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
+                setAsVariantPath
+            });
+            // @ts-ignore Hilla returns the admin shape for admins.
+            gameState.state[updated.id] = updated;
+            onChanged?.();
+            addToast({title: "Content updated", color: "success"});
+        } catch (error) {
+            addToast({
+                title: "Could not update content",
+                description: error instanceof Error ? error.message : String(error),
+                color: "danger"
+            });
+        } finally {
+            setSavingContentId(undefined);
+        }
+    }
+
+    async function deleteContent(variant: GameVariantDto, content: VariantContentDto) {
+        if (!game) return;
+
+        setDeletingContentId(content.id);
+        try {
+            const updated = await GameEndpoint.deleteVariantContent(game.id, variant.id, content.id);
+            // @ts-ignore Hilla returns the admin shape for admins.
+            gameState.state[updated.id] = updated;
+            onChanged?.();
+            addToast({title: "Content removed", color: "success"});
+        } catch (error) {
+            addToast({
+                title: "Could not remove content",
+                description: error instanceof Error ? error.message : String(error),
+                color: "danger"
+            });
+        } finally {
+            setDeletingContentId(undefined);
+        }
+    }
+
+    async function removeSuggestionSource(suggestion: GameGroupingSuggestionDto) {
+        if (!game) return;
+        const sourceId = suggestion.targetGameId === game.id ? suggestion.sourceGameId : suggestion.targetGameId;
+
+        setRemovingSourceId(sourceId);
+        try {
+            const updated = await GameEndpoint.removeDuplicateVariantSource(game.id, sourceId);
+            // @ts-ignore Hilla returns the admin shape for admins.
+            gameState.state[updated.id] = updated;
+            delete gameState.state[sourceId];
+            onChanged?.();
+            addToast({
+                title: "Duplicate source removed",
+                description: "The source game row was removed and its path was ignored. Files were not changed.",
+                color: "success"
+            });
+        } catch (error) {
+            addToast({
+                title: "Could not remove source",
+                description: error instanceof Error ? error.message : String(error),
+                color: "danger"
+            });
+        } finally {
+            setRemovingSourceId(undefined);
+        }
+    }
+
     function contentTypeLabel(type: VariantContentType) {
         return type.replaceAll("_", " ");
     }
@@ -284,19 +413,105 @@ export default function VariantManagerModal({
                                                                 </Button>
                                                             </div>
                                                             {variant.path && <p className="text-xs text-default-500 break-all">{variant.path}</p>}
-                                                            <div className="flex flex-col gap-1">
-                                                                {(variant.contents ?? []).map((content: VariantContentDto) => (
-                                                                    <div key={content.id} className="grid grid-cols-[8rem_1fr_auto] gap-2 text-sm">
-                                                                        <span className="text-default-500">{contentTypeLabel(content.type)}</span>
-                                                                        <span>
-                                                                            {content.name}
-                                                                            {content.required && <span className="text-default-500"> · required</span>}
-                                                                            {content.defaultSelected && !content.required && <span className="text-default-500"> · default selected</span>}
-                                                                        </span>
-                                                                        <span className="text-default-500">{humanFileSize(content.fileSize)}</span>
-                                                                        {content.path && <span className="col-span-3 text-xs text-default-500 break-all">{content.path}</span>}
-                                                                    </div>
-                                                                ))}
+                                                            <div className="flex flex-col gap-3">
+                                                                {(variant.contents ?? []).map((content: VariantContentDto) => {
+                                                                    const draft = contentDrafts[content.id] ?? createDraftFromContent(content);
+                                                                    const isPrimaryPath = variant.path === content.path;
+
+                                                                    return (
+                                                                        <Card key={content.id} shadow="none" className="bg-default-50">
+                                                                            <CardBody className="flex flex-col gap-2">
+                                                                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                                                                    <div className="flex flex-wrap items-center gap-2">
+                                                                                        <Chip size="sm" variant="flat">{contentTypeLabel(content.type)}</Chip>
+                                                                                        {isPrimaryPath && <Chip size="sm" color="primary" variant="flat">primary path</Chip>}
+                                                                                        <span className="text-sm text-default-500">{humanFileSize(content.fileSize)}</span>
+                                                                                    </div>
+                                                                                    <div className="flex flex-row gap-2">
+                                                                                        <Button
+                                                                                            size="sm"
+                                                                                            variant="flat"
+                                                                                            startContent={<CheckIcon/>}
+                                                                                            isLoading={savingContentId === content.id}
+                                                                                            onPress={() => saveContent(variant, content)}
+                                                                                        >
+                                                                                            Save
+                                                                                        </Button>
+                                                                                        <Button
+                                                                                            size="sm"
+                                                                                            variant="flat"
+                                                                                            isDisabled={isPrimaryPath}
+                                                                                            isLoading={savingContentId === content.id}
+                                                                                            onPress={() => saveContent(variant, content, true)}
+                                                                                        >
+                                                                                            Use as primary
+                                                                                        </Button>
+                                                                                        <Button
+                                                                                            isIconOnly
+                                                                                            size="sm"
+                                                                                            color="danger"
+                                                                                            variant="flat"
+                                                                                            isLoading={deletingContentId === content.id}
+                                                                                            onPress={() => deleteContent(variant, content)}
+                                                                                        >
+                                                                                            <TrashIcon/>
+                                                                                        </Button>
+                                                                                    </div>
+                                                                                </div>
+                                                                                <Input
+                                                                                    size="sm"
+                                                                                    label="Path"
+                                                                                    value={draft.path}
+                                                                                    onValueChange={(path) => updateContentDraft(content.id, {path})}
+                                                                                />
+                                                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                                                                    <Input
+                                                                                        size="sm"
+                                                                                        label="Content name"
+                                                                                        value={draft.contentName}
+                                                                                        onValueChange={(contentName) => updateContentDraft(content.id, {contentName})}
+                                                                                    />
+                                                                                    <Select
+                                                                                        size="sm"
+                                                                                        label="Content type"
+                                                                                        selectedKeys={[draft.contentType]}
+                                                                                        onSelectionChange={(keys) => {
+                                                                                            const key = Array.from(keys)[0]?.toString() as VariantContentType | undefined;
+                                                                                            if (key) updateContentDraft(content.id, {contentType: key});
+                                                                                        }}
+                                                                                    >
+                                                                                        {contentTypes.map((type) => (
+                                                                                            <SelectItem key={type}>{contentTypeLabel(type)}</SelectItem>
+                                                                                        ))}
+                                                                                    </Select>
+                                                                                </div>
+                                                                                <Input
+                                                                                    size="sm"
+                                                                                    label="Tags"
+                                                                                    placeholder="multiplayer, dlc"
+                                                                                    value={draft.tags}
+                                                                                    onValueChange={(tags) => updateContentDraft(content.id, {tags})}
+                                                                                />
+                                                                                <div className="flex flex-row gap-4">
+                                                                                    <Checkbox
+                                                                                        isSelected={draft.required}
+                                                                                        isDisabled={draft.contentType === VariantContentType.BASE}
+                                                                                        onValueChange={(required) => updateContentDraft(content.id, {required})}
+                                                                                    >
+                                                                                        Required
+                                                                                    </Checkbox>
+                                                                                    <Checkbox
+                                                                                        isSelected={draft.required || draft.defaultSelected}
+                                                                                        isDisabled={draft.required}
+                                                                                        onValueChange={(defaultSelected) => updateContentDraft(content.id, {defaultSelected})}
+                                                                                    >
+                                                                                        Default selected
+                                                                                    </Checkbox>
+                                                                                </div>
+                                                                            </CardBody>
+                                                                        </Card>
+                                                                    );
+                                                                })}
                                                             </div>
                                                         </CardBody>
                                                     </Card>
@@ -325,9 +540,20 @@ export default function VariantManagerModal({
                                                                     <span className="text-xs text-default-500">{suggestion.reason}</span>
                                                                     <span className="text-xs text-default-500 break-all">{source.path}</span>
                                                                 </div>
-                                                                <Button size="sm" color="primary" variant="flat" onPress={() => useSuggestion(suggestion)}>
-                                                                    Use as source
-                                                                </Button>
+                                                                <div className="flex flex-row gap-2">
+                                                                    <Button size="sm" color="primary" variant="flat" onPress={() => useSuggestion(suggestion)}>
+                                                                        Use as source
+                                                                    </Button>
+                                                                    <Button
+                                                                        size="sm"
+                                                                        color="danger"
+                                                                        variant="flat"
+                                                                        isLoading={removingSourceId === (suggestion.targetGameId === game.id ? suggestion.sourceGameId : suggestion.targetGameId)}
+                                                                        onPress={() => removeSuggestionSource(suggestion)}
+                                                                    >
+                                                                        Remove source row
+                                                                    </Button>
+                                                                </div>
                                                             </CardBody>
                                                         </Card>
                                                     );
@@ -369,7 +595,7 @@ export default function VariantManagerModal({
                                                     setSourceGameId(undefined);
                                                     setSourceRootPath(value);
                                                     if (value && entries.length === 0) {
-                                                        setEntries([createEntry(value, value.split(/[\\/]/).filter(Boolean).pop() ?? "Content", VariantContentType.DLC)]);
+                                                        setEntries([createEntry(value, value.split(/[\\/]/).filter(Boolean).pop() ?? "Content", newEntriesType)]);
                                                     }
                                                 }}
                                                 endContent={
@@ -380,6 +606,19 @@ export default function VariantManagerModal({
                                                     </Tooltip>
                                                 }
                                             />
+                                            <Select
+                                                size="sm"
+                                                label="New entries type"
+                                                selectedKeys={[newEntriesType]}
+                                                onSelectionChange={(keys) => {
+                                                    const key = Array.from(keys)[0]?.toString() as VariantContentType | undefined;
+                                                    if (key) applyTypeToNewEntries(key);
+                                                }}
+                                            >
+                                                {contentTypes.map((type) => (
+                                                    <SelectItem key={type}>{contentTypeLabel(type)}</SelectItem>
+                                                ))}
+                                            </Select>
                                             <div className="flex flex-row gap-4">
                                                 <Checkbox
                                                     isSelected={splitChildren}

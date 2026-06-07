@@ -308,7 +308,7 @@ export default function GameView() {
                         </div>
                     </div>
                     {contentGroups.length > 0 &&
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
                             {contentGroups.map((group) => (
                                 <div key={group.key} className="flex flex-col gap-2 rounded-lg bg-default-100 p-3">
                                     <p className="text-sm font-semibold">{group.title}</p>
@@ -341,7 +341,7 @@ export default function GameView() {
                                             >
                                                 <span className="flex flex-col">
                                                     <span>
-                                                        {content.name} ({humanFileSize(content.fileSize)})
+                                                        {content.name} ({content.pathCount > 1 ? `${content.pathCount} files, ` : ""}{humanFileSize(content.fileSize)})
                                                         {content.required && <span className="text-default-500"> · required</span>}
                                                     </span>
                                                     {content.defaultSelected && !content.required &&

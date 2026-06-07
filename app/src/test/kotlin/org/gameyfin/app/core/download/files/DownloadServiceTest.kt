@@ -29,6 +29,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.time.Instant
+import java.util.zip.ZipInputStream
 import kotlin.io.path.Path
 import kotlin.io.path.createFile
 import kotlin.io.path.writeText
@@ -185,6 +186,42 @@ class DownloadServiceTest {
 
         assertTrue(result is FileDownload)
         assertEquals("zip", (result as FileDownload).fileExtension)
+    }
+
+    @Test
+    fun `getDownload should zip grouped content paths under one content root`(@TempDir tempDir: java.nio.file.Path) {
+        val firstPart = tempDir.resolve("part01.rar").createFile()
+        val secondPart = tempDir.resolve("part02.rar").createFile()
+        firstPart.writeText("12345")
+        secondPart.writeText("123")
+        val game = createVariantGame(tempDir)
+        val variant = game.variants.single()
+        variant.contents.clear()
+        variant.contents.add(
+            VariantContent(
+                id = 20L,
+                variant = variant,
+                name = "Base archive",
+                path = firstPart.toString(),
+                fileSize = null,
+                required = true,
+                defaultSelected = true,
+                paths = mutableListOf(firstPart.toString(), secondPart.toString())
+            )
+        )
+
+        val result = service.getDownload(game, TestProvider::class.java.name, 10L, listOf(20L)) as FileDownload
+        val entries = mutableListOf<String>()
+        ZipInputStream(result.data).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                entries.add(entry.name)
+            }
+        }
+
+        assertEquals("zip", result.fileExtension)
+        assertEquals(8L, service.estimateDownloadSize(game, 10L, listOf(20L)))
+        assertEquals(listOf("Base archive/part01.rar", "Base archive/part02.rar"), entries)
     }
 
     @Test

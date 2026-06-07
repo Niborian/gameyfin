@@ -11,6 +11,7 @@ import org.gameyfin.app.games.entities.GameVariant
 import org.gameyfin.app.games.entities.VariantContent
 import org.gameyfin.app.games.entities.VariantContentType
 import org.gameyfin.app.games.entities.VariantLinkStatus
+import org.gameyfin.app.games.entities.effectivePaths
 import org.gameyfin.app.games.repositories.GameRepository
 import org.gameyfin.app.libraries.IgnoredPathRepository
 import org.gameyfin.app.libraries.entities.IgnoredPath
@@ -125,7 +126,7 @@ class GameVariantGroupingService(
             target = target,
             sourceGameId = request.sourceGameId,
             sourceRootPath = sourceRootPath,
-            entryPaths = request.entries.map { it.path }
+            entryPaths = request.entries.flatMap { requestedPaths(it.path, it.paths) }
         )
 
         val sourceWasRemoved = duplicateSource != null
@@ -148,8 +149,8 @@ class GameVariantGroupingService(
                 ExternalVariantMetadata(
                     name = request.variantName?.ifBlank { null } ?: "Normal",
                     version = request.version?.ifBlank { null } ?: extractVersion(entry.path) ?: "0",
-                    path = entry.path,
-                    fileSize = filesystemService.calculateFileSize(entry.path),
+                    path = requestedPaths(entry.path, entry.paths).first(),
+                    fileSize = calculatePathsSize(requestedPaths(entry.path, entry.paths)),
                     tags = normalizeTags(entry.tags),
                     steamAppId = null,
                     launchArgs = null,
@@ -157,7 +158,8 @@ class GameVariantGroupingService(
                     contentName = entry.contentName.ifBlank { "Base game" },
                     contentType = VariantContentType.BASE,
                     required = true,
-                    defaultSelected = true
+                    defaultSelected = true,
+                    contentPaths = requestedPaths(entry.path, entry.paths)
                 )
             )
             refreshVariantFlags(target)
@@ -181,15 +183,18 @@ class GameVariantGroupingService(
     ): Game {
         val target = gameRepository.findByIdOrNull(targetGameId)
             ?: throw IllegalArgumentException("Target game $targetGameId not found")
-        require(request.path.isNotBlank()) { "Content path is required" }
+        val requestedPaths = requestedPaths(request.path, request.paths)
+        require(requestedPaths.isNotEmpty()) { "Content path is required" }
         val variant = findVariant(target, variantId)
         val content = findContent(variant, contentId)
         val wasPrimaryContent = variant.path == content.path
 
         content.type = request.contentType
-        content.name = request.contentName.ifBlank { Path.of(request.path).fileName.toString() }
-        content.path = request.path
-        content.fileSize = filesystemService.calculateFileSize(request.path)
+        content.name = request.contentName.ifBlank { Path.of(requestedPaths.first()).fileName.toString() }
+        content.path = requestedPaths.first()
+        content.paths.clear()
+        content.paths.addAll(requestedPaths)
+        content.fileSize = calculatePathsSize(requestedPaths)
         content.required = request.required || request.contentType == VariantContentType.BASE
         content.defaultSelected = content.required || request.defaultSelected
         content.tags.clear()
@@ -285,7 +290,8 @@ class GameVariantGroupingService(
             contentName = contentName,
             contentType = contentType,
             required = required,
-            defaultSelected = defaultSelected
+            defaultSelected = defaultSelected,
+            contentPaths = listOf(sourcePath)
         )
 
         if (contentType == VariantContentType.BASE) {
@@ -374,7 +380,8 @@ class GameVariantGroupingService(
                 path = metadata.path,
                 fileSize = metadata.fileSize,
                 required = metadata.required,
-                defaultSelected = metadata.defaultSelected
+                defaultSelected = metadata.defaultSelected,
+                paths = metadata.contentPaths.toMutableList()
             )
         )
     }
@@ -407,6 +414,8 @@ class GameVariantGroupingService(
         content.name = metadata.contentName
         content.path = metadata.path
         content.fileSize = metadata.fileSize
+        content.paths.clear()
+        content.paths.addAll(metadata.contentPaths)
         content.required = metadata.required
         content.defaultSelected = metadata.defaultSelected
         content.tags.clear()
@@ -441,7 +450,8 @@ class GameVariantGroupingService(
                         contentName = "Base game",
                         contentType = VariantContentType.BASE,
                         required = true,
-                        defaultSelected = true
+                        defaultSelected = true,
+                        contentPaths = listOf(sourceRootPath)
                     )
                 )
         }
@@ -462,26 +472,31 @@ class GameVariantGroupingService(
                     contentName = "Base game",
                     contentType = VariantContentType.BASE,
                     required = true,
-                    defaultSelected = true
+                    defaultSelected = true,
+                    contentPaths = listOf(target.metadata.path)
                 )
             )
     }
 
     private fun addContentEntry(variant: GameVariant, entry: AttachVariantContentEntryDto) {
         val normalizedTags = normalizeTags(entry.tags)
-        val content = variant.contents.firstOrNull { it.path == entry.path }
+        val entryPaths = requestedPaths(entry.path, entry.paths)
+        val primaryPath = entryPaths.first()
+        val content = variant.contents.firstOrNull { it.path == primaryPath }
             ?: variant.contents.firstOrNull { it.type == entry.contentType && it.name == entry.contentName }
             ?: VariantContent(
                 variant = variant,
                 type = entry.contentType,
                 name = entry.contentName,
-                path = entry.path
+                path = primaryPath
             ).also { variant.contents.add(it) }
 
         content.type = entry.contentType
-        content.name = entry.contentName.ifBlank { Path.of(entry.path).fileName.toString() }
-        content.path = entry.path
-        content.fileSize = filesystemService.calculateFileSize(entry.path)
+        content.name = entry.contentName.ifBlank { Path.of(primaryPath).fileName.toString() }
+        content.path = primaryPath
+        content.paths.clear()
+        content.paths.addAll(entryPaths)
+        content.fileSize = calculatePathsSize(entryPaths)
         content.required = entry.required || entry.contentType == VariantContentType.BASE
         content.defaultSelected = content.required || entry.defaultSelected
         content.tags.clear()
@@ -501,7 +516,7 @@ class GameVariantGroupingService(
         variant.fileSize = variant.contents
             .filter { it.type == VariantContentType.BASE }
             .takeIf { it.isNotEmpty() }
-            ?.sumOf { it.fileSize ?: filesystemService.calculateFileSize(it.path) }
+            ?.sumOf { it.fileSize ?: calculatePathsSize(it.effectivePaths()) }
             ?: filesystemService.calculateFileSize(variant.path)
     }
 
@@ -527,7 +542,8 @@ class GameVariantGroupingService(
                     path = basePath,
                     fileSize = baseSize,
                     required = true,
-                    defaultSelected = true
+                    defaultSelected = true,
+                    paths = mutableListOf(basePath)
                 )
             )
             target.variants.add(variant)
@@ -660,7 +676,8 @@ class GameVariantGroupingService(
             contentName = "Base game",
             contentType = VariantContentType.BASE,
             required = true,
-            defaultSelected = true
+            defaultSelected = true,
+            contentPaths = listOf(sourcePath)
         )
     }
 
@@ -683,6 +700,17 @@ class GameVariantGroupingService(
             .map { it.trim().lowercase() }
             .filter { it.isNotBlank() }
             .toSet()
+    }
+
+    private fun requestedPaths(primaryPath: String, paths: List<String>?): List<String> {
+        return (listOf(primaryPath) + paths.orEmpty())
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+    }
+
+    private fun calculatePathsSize(paths: List<String>): Long {
+        return paths.sumOf { filesystemService.calculateFileSize(it) }
     }
 
     private fun isSameOrChild(path: String, parentPath: String): Boolean {
@@ -742,6 +770,7 @@ class GameVariantGroupingService(
         val contentName: String,
         val contentType: VariantContentType,
         val required: Boolean,
-        val defaultSelected: Boolean
+        val defaultSelected: Boolean,
+        val contentPaths: List<String>
     )
 }

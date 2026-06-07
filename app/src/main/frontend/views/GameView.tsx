@@ -60,6 +60,7 @@ export default function GameView() {
     const [downloadOptions, setDownloadOptions] = useState<Record<string, ComboButtonOption>>();
     const [selectedVariantId, setSelectedVariantId] = useState<number>();
     const [selectedContentIds, setSelectedContentIds] = useState<Set<number>>(new Set());
+    const [expandedContentGroups, setExpandedContentGroups] = useState<Set<string>>(new Set());
 
     const variants = (game?.variants ?? []) as GameVariantDto[];
     const selectedVariant = variants.find((variant) => variant.id === selectedVariantId)
@@ -104,6 +105,7 @@ export default function GameView() {
         const defaultVariant = variants.find((variant) => variant.default) ?? variants[0];
         setSelectedVariantId(defaultVariant.id);
         setSelectedContentIds(defaultContentIds(defaultVariant));
+        setExpandedContentGroups(new Set());
     }, [game?.id, variants.length]);
 
     useEffect(() => {
@@ -171,6 +173,7 @@ export default function GameView() {
 
         setSelectedVariantId(nextVariant.id);
         setSelectedContentIds(defaultContentIds(nextVariant));
+        setExpandedContentGroups(new Set());
     }
 
     function setContentSelected(content: VariantContentDto, selected: boolean) {
@@ -186,6 +189,86 @@ export default function GameView() {
 
     function contentListSize(contents: VariantContentDto[]) {
         return contents.reduce((total, content) => total + (content.fileSize ?? 0), 0);
+    }
+
+    function toggleContentGroup(groupKey: string) {
+        setExpandedContentGroups((current) => {
+            const next = new Set(current);
+            if (next.has(groupKey)) next.delete(groupKey);
+            else next.add(groupKey);
+            return next;
+        });
+    }
+
+    function renderContentItem(content: VariantContentDto) {
+        return (
+            <Checkbox
+                key={content.id}
+                size="sm"
+                className="py-0.5"
+                isSelected={content.required || selectedContentIds.has(content.id)}
+                isDisabled={content.required}
+                onValueChange={(selected) => setContentSelected(content, selected)}
+            >
+                <span className="flex flex-col leading-tight">
+                    <span>
+                        {content.name} ({content.pathCount > 1 ? `${content.pathCount} files, ` : ""}{humanFileSize(content.fileSize)})
+                        {content.required && <span className="text-default-500"> · required</span>}
+                    </span>
+                    {content.defaultSelected && !content.required &&
+                        <span className="text-xs text-default-500">Selected by default</span>}
+                </span>
+            </Checkbox>
+        );
+    }
+
+    function renderContentGroup(group: { key: string; title: string; contents: VariantContentDto[] }) {
+        const collapseThreshold = 5;
+        const isLongList = group.key !== "base" && group.contents.length > collapseThreshold;
+        const isExpanded = expandedContentGroups.has(group.key);
+        const visibleContents = isLongList && !isExpanded
+            ? group.contents.slice(0, collapseThreshold)
+            : group.contents;
+
+        return (
+            <div key={group.key} className="break-inside-avoid rounded-lg bg-default-100 p-2.5 mb-3">
+                <div className="flex flex-row items-center justify-between gap-2">
+                    <p className="text-sm font-semibold">{group.title}</p>
+                    {isLongList && (
+                        <Button size="sm" variant="light" className="h-6 px-2" onPress={() => toggleContentGroup(group.key)}>
+                            {isExpanded ? "Show less" : `Show all ${group.contents.length}`}
+                        </Button>
+                    )}
+                </div>
+                <div className="flex flex-col gap-1 mt-1">
+                    {group.key === "base" && group.contents.length > 1 ? (
+                        <>
+                            <Checkbox size="sm" className="py-0.5" isSelected isDisabled>
+                                <span className="flex flex-col leading-tight">
+                                    <span>{group.contents.length} required files ({humanFileSize(contentListSize(group.contents))})</span>
+                                    <span className="text-xs text-default-500">Included with this version</span>
+                                </span>
+                            </Checkbox>
+                            <details className="text-xs text-default-500">
+                                <summary className="cursor-pointer">Show base files</summary>
+                                <div className="flex flex-col gap-0.5 pt-1 pl-4">
+                                    {group.contents.map((content) => (
+                                        <span key={content.id}>
+                                            {content.name} ({humanFileSize(content.fileSize)})
+                                        </span>
+                                    ))}
+                                </div>
+                            </details>
+                        </>
+                    ) : visibleContents.map(renderContentItem)}
+                    {isLongList && !isExpanded && (
+                        <Button size="sm" variant="flat" className="mt-1 self-start h-7" onPress={() => toggleContentGroup(group.key)}>
+                            Show {group.contents.length - collapseThreshold} more
+                        </Button>
+                    )}
+                </div>
+            </div>
+        );
     }
 
     return game && (
@@ -309,47 +392,11 @@ export default function GameView() {
                     </div>
                     {contentGroups.length > 0 &&
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
-                            {contentGroups.map((group) => (
-                                <div key={group.key} className="flex flex-col gap-2 rounded-lg bg-default-100 p-3">
-                                    <p className="text-sm font-semibold">{group.title}</p>
-                                    {group.key === "base" && group.contents.length > 1 ? (
-                                        <div className="flex flex-col gap-2">
-                                            <Checkbox size="sm" isSelected isDisabled>
-                                                <span className="flex flex-col">
-                                                    <span>{group.contents.length} required files ({humanFileSize(contentListSize(group.contents))})</span>
-                                                    <span className="text-xs text-default-500">Included with this version</span>
-                                                </span>
-                                            </Checkbox>
-                                            <details className="text-xs text-default-500">
-                                                <summary className="cursor-pointer">Show base files</summary>
-                                                <div className="flex flex-col gap-1 pt-2 pl-4">
-                                                    {group.contents.map((content) => (
-                                                        <span key={content.id}>
-                                                            {content.name} ({humanFileSize(content.fileSize)})
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            </details>
-                                        </div>
-                                    ) : group.contents.map((content) => (
-                                            <Checkbox
-                                                key={content.id}
-                                                size="sm"
-                                                isSelected={content.required || selectedContentIds.has(content.id)}
-                                                isDisabled={content.required}
-                                                onValueChange={(selected) => setContentSelected(content, selected)}
-                                            >
-                                                <span className="flex flex-col">
-                                                    <span>
-                                                        {content.name} ({content.pathCount > 1 ? `${content.pathCount} files, ` : ""}{humanFileSize(content.fileSize)})
-                                                        {content.required && <span className="text-default-500"> · required</span>}
-                                                    </span>
-                                                    {content.defaultSelected && !content.required &&
-                                                        <span className="text-xs text-default-500">Selected by default</span>}
-                                                </span>
-                                            </Checkbox>
-                                        )
-                                    )}
+                            {[0, 1].map((column) => (
+                                <div key={column} className="flex flex-col">
+                                    {contentGroups
+                                        .filter((_, index) => index % 2 === column)
+                                        .map(renderContentGroup)}
                                 </div>
                             ))}
                         </div>

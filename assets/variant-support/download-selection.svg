@@ -9,27 +9,39 @@
   <rect x="88" y="158" width="312" height="54" rx="14" fill="#2A2B34"/>
   <text x="110" y="181" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13">Version</text>
   <text x="110" y="201" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">Normal 1.3 (latest)</text>
-  <text x="428" y="192" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">Estimated download: 40.4 GiB</text>
+  <text x="428" y="181" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13">Selected source size</text>
+  <text x="428" y="202" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">40.4 GiB · base + 2 optional items</text>
 
   <rect x="88" y="240" width="250" height="86" rx="16" fill="#2A2B34"/>
   <text x="112" y="270" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Base game</text>
   <circle cx="118" cy="300" r="9" fill="#6F45BD"/>
   <path d="M114 300L117 303L123 296" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="138" y="306" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14">Required archive group</text>
+  <text x="138" y="296" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14">Required archive group</text>
+  <text x="138" y="315" fill="#8E91A3" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="12">7 files · always included</text>
 
   <rect x="366" y="240" width="220" height="86" rx="16" fill="#2A2B34"/>
   <text x="390" y="270" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">DLC</text>
-  <circle cx="396" cy="300" r="9" fill="#6F45BD"/>
-  <path d="M392 300L395 303L401 296" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="416" y="306" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14">Optional pack</text>
+  <circle cx="396" cy="296" r="9" fill="#6F45BD"/>
+  <path d="M392 296L395 299L401 292" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="416" y="302" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14">Selected pack</text>
+  <circle cx="396" cy="320" r="8" stroke="#777A88" stroke-width="2"/>
+  <text x="416" y="325" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13">Unselected add-on</text>
 
   <rect x="614" y="240" width="204" height="86" rx="16" fill="#2A2B34"/>
-  <text x="638" y="270" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Patch / mod</text>
-  <circle cx="644" cy="300" r="9" stroke="#777A88" stroke-width="2"/>
-  <text x="664" y="306" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14">Optional add-on</text>
+  <text x="638" y="270" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Patch / server</text>
+  <circle cx="644" cy="296" r="9" fill="#6F45BD"/>
+  <path d="M640 296L643 299L649 292" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="664" y="302" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14">Shared patch</text>
+  <circle cx="644" cy="320" r="8" stroke="#777A88" stroke-width="2"/>
+  <text x="664" y="325" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13">Server files</text>
 
-  <rect x="726" y="152" width="92" height="34" rx="17" fill="#6F45BD"/>
-  <text x="750" y="174" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="700">Download</text>
+  <rect x="712" y="152" width="122" height="34" rx="17" fill="#6F45BD"/>
+  <text x="735" y="174" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="700">Download zip</text>
 
-  <text x="88" y="352" fill="#8E91A3" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13">Illustration uses placeholder UI content only; no real game artwork or names are shown.</text>
+  <rect x="88" y="344" width="222" height="24" rx="12" fill="#262833"/>
+  <text x="104" y="361" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13">required items are locked</text>
+  <rect x="324" y="344" width="236" height="24" rx="12" fill="#262833"/>
+  <text x="340" y="361" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13">optional items change size</text>
+  <rect x="574" y="344" width="244" height="24" rx="12" fill="#262833"/>
+  <text x="590" y="361" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13">only selected paths are streamed</text>
 </svg>

@@ -39,6 +39,7 @@ import java.time.ZoneOffset
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 
 class GameServiceTest {
 
@@ -580,6 +581,66 @@ class GameServiceTest {
         assertNotNull(result)
         assertEquals(replaceGameId, result.id)
         assertEquals(existingGame.createdAt, result.createdAt)
+    }
+
+    @Test
+    fun `matchManually should preserve variants when replacing and persisting existing game`() {
+        val originalIds = mapOf(
+            "org.gameyfin.app.games.TestProvider" to ExternalProviderIdDto("test-plugin", "123")
+        )
+        val path = Path.of("/test/game.exe")
+        val replaceGameId = 5L
+        val existingGame = createTestGame(replaceGameId, "Old title")
+        existingGame.variants.add(
+            GameVariant(
+                id = 50L,
+                game = existingGame,
+                name = "Normal",
+                version = "1.0",
+                path = "/test/game.exe",
+                isDefault = true,
+                isLatestForVariant = true,
+                scanManaged = false
+            ).also { variant ->
+                variant.contents.add(
+                    VariantContent(
+                        id = 51L,
+                        variant = variant,
+                        type = VariantContentType.PATCH,
+                        name = "Multiplayer patch",
+                        path = "/test/patch.zip",
+                        required = false,
+                        defaultSelected = true
+                    )
+                )
+            }
+        )
+        val metadata = org.gameyfin.pluginapi.gamemetadata.GameMetadata(
+            originalId = "123",
+            title = "New title",
+            platforms = setOf(Platform.PC_MICROSOFT_WINDOWS)
+        )
+
+        val provider = spyk(TestProvider(metadata))
+        val pluginEntry = mockk<PluginManagementEntry>(relaxed = true) {
+            every { pluginId } returns "test-plugin"
+            every { priority } returns 1
+        }
+
+        every { pluginManager.getExtensions(GameMetadataProvider::class.java) } returns listOf(provider)
+        every { pluginService.getPluginManagementEntry(provider.javaClass) } returns pluginEntry
+        every { gameRepository.findByIdOrNull(replaceGameId) } returns existingGame
+        every { filesystemService.calculateFileSize(any()) } returns 1000L
+        every { gameRepository.save(existingGame) } returns existingGame
+
+        val result = gameService.matchManually(originalIds, path, library, replaceGameId, persist = true)
+
+        assertSame(existingGame, result)
+        assertEquals("New title", existingGame.title)
+        assertEquals(1, existingGame.variants.size)
+        assertEquals("Multiplayer patch", existingGame.variants.single().contents.single().name)
+        assertSame(existingGame, existingGame.variants.single().game)
+        verify(exactly = 1) { gameRepository.save(existingGame) }
     }
 
     @Test

@@ -16,8 +16,9 @@ Name and functionality inspired by [Jellyfin](https://jellyfin.org/).
 
 > [!IMPORTANT]
 > **This is not an official Gameyfin image or upstream release.** It is an independent Niborian fork, is not endorsed by
-> the Gameyfin maintainers, and must not be deployed as `ghcr.io/gameyfin/gameyfin`. Its reviewed images are published
-> only as `ghcr.io/niborian/gameyfin` and identify their fork revision in container metadata.
+> the Gameyfin maintainers. You may deploy this fork as `ghcr.io/niborian/gameyfin`, but it is provided without any
+> guarantee that it works for your library or environment. If a fork image has a problem, please report it here—not to
+> the original Gameyfin maintainers. Reviewed fork images identify their revision in container metadata.
 
 This fork exists to prototype variant/version support, selectable extra content, grouped archive downloads,
 hardlink-friendly library handling, and metadata tools for keeping torrent-managed paths in place.
@@ -29,11 +30,14 @@ user-friendly interface.
 Download your game files directly from the web UI, share your library with friends, and enjoy your games like never
 before.
 
-### Documentation
+### Original Gameyfin documentation
 
-The documentation and screenshots are available at [gameyfin.org](https://gameyfin.org/).
+The original project's [documentation and screenshots](https://gameyfin.org/) and
+[GitHub repository](https://github.com/gameyfin/gameyfin) are the right starting point for understanding Gameyfin.
+Their installation guide targets the original image, however, and does not validate this fork's variants, paths, or
+release process.
 
-### Unofficial Variant Build
+### Added by this fork
 
 This fork adds experimental support for libraries where one visible game entry can contain multiple versions and
 variants without moving the original source files.
@@ -54,7 +58,7 @@ The images below summarize the added behavior.
     <img src="assets/variant-support/variant-content-model.svg" width="820" alt="Diagram showing variants and shared optional content">
 </p>
 
-## Product direction and delivery plan
+## Planned work
 
 The fork is organized around user outcomes, not undifferentiated feature work. Every pull request must close a
 milestone-backed issue, describe the visible behavior it adds, and pass the required quality checks.
@@ -94,7 +98,10 @@ never an untraceable local tag or a mutable `latest` tag.
     <img src="assets/variant-support/download-selection.svg" width="820" alt="Diagram showing selectable download content">
 </p>
 
-### Features
+## Original Gameyfin capabilities
+
+The following baseline capabilities come from [original Gameyfin](https://github.com/gameyfin/gameyfin), not from this
+fork's variant work:
 
 ✨ Automatically scans and indexes your game libraries  
 ⬇️ Access your library via your web browser & download games directly from there  

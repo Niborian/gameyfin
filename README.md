@@ -17,8 +17,9 @@ Name and functionality inspired by [Jellyfin](https://jellyfin.org/).
 > [!IMPORTANT]
 > **This is not an official Gameyfin image or upstream release.** It is an independent Niborian fork, is not endorsed by
 > the Gameyfin maintainers. You may deploy this fork as `ghcr.io/niborian/gameyfin`, but it is provided without any
-> guarantee that it works for your library or environment. If a fork image has a problem, please report it here—not to
-> the original Gameyfin maintainers. Reviewed fork images identify their revision in container metadata.
+> guarantee that it works for your library or environment. If a fork image has a problem, please report it here, not to
+> the original Gameyfin maintainers. Filing an issue does not promise that it will be fixed; use of this fork is entirely
+> at your own risk. Reviewed fork images identify their revision in container metadata.
 
 This fork exists to prototype variant/version support, selectable extra content, grouped archive downloads,
 hardlink-friendly library handling, and metadata tools for keeping torrent-managed paths in place.

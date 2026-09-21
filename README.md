@@ -108,9 +108,13 @@ never an untraceable local tag or a mutable `latest` tag.
 
 ### Contribute to Gameyfin
 
-Contributions are welcome!  
-There are no strict requirements to contribute, but please contact us first if you want to implement a new feature or
-change the design of the application before you start working on it.
+This is a personal Niborian fork, maintained primarily for its own game library and workflow. It is not intended to
+compete with, represent, or replace the original Gameyfin project.
+
+The original Gameyfin maintainers are welcome to adopt any useful changes from this repository under its AGPL-3.0
+license. If a contributor wants their change considered for upstream Gameyfin, they should coordinate with the original
+maintainers first. Keep pull requests here focused, linked to a milestone-backed issue, and respectful of the upstream
+project.
 
 ### Technical Details
 

@@ -95,6 +95,9 @@ Pull requests run tests but cannot publish an image. A merge to `main` produces 
 manual reviewed release run adds the matching semantic version tag. Deploy a reviewed version tag or pinned digest,
 never an untraceable local tag or a mutable `latest` tag.
 
+Official plugins bundled by this fork are signed with a Niborian-owned key. Its private key and password are held only
+as GitHub Actions secrets and are never included in the repository or container image.
+
 <p align="center">
     <img src="assets/variant-support/download-selection.svg" width="820" alt="Diagram showing selectable download content">
 </p>

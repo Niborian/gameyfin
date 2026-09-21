@@ -6,11 +6,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Optional additional immutable release tag (for example, 2.4.0-variants.1)"
-        required: false
-        type: string
 
 env:
   IMAGE_NAME: ghcr.io/niborian/gameyfin
@@ -21,6 +16,8 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+    outputs:
+      version: ${{ steps.version.outputs.value }}
     steps:
       - uses: actions/checkout@v6
 
@@ -30,6 +27,18 @@ jobs:
           java-version: "25"
 
       - uses: gradle/actions/setup-gradle@v5
+
+      - name: Verify the release version is synchronized
+        id: version
+        shell: bash
+        run: |
+          gradle_version=$(sed -nE 's/^version = "([^"]+)"/\1/p' build.gradle.kts)
+          web_version=$(node -p "JSON.parse(require('fs').readFileSync('app/package.json')).version")
+          if [ -z "$gradle_version" ] || [ "$gradle_version" != "$web_version" ]; then
+            echo "Release version mismatch: Gradle=$gradle_version web=$web_version" >&2
+            exit 1
+          fi
+          echo "value=$gradle_version" >> "$GITHUB_OUTPUT"
 
       - name: Run automated tests
         run: ./gradlew :app:test --no-daemon --console=plain
@@ -79,13 +88,7 @@ jobs:
         id: tags
         shell: bash
         run: |
-          tags="${IMAGE_NAME}:sha-${GITHUB_SHA}"
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
-            case "${{ inputs.tag }}" in
-              *[!A-Za-z0-9._-]*|'') echo "Invalid image tag" >&2; exit 1 ;;
-            esac
-            tags="${tags},${IMAGE_NAME}:${{ inputs.tag }}"
-          fi
+          tags="${IMAGE_NAME}:${{ needs.verify.outputs.version }},${IMAGE_NAME}:sha-${GITHUB_SHA}"
           echo "tags=${tags}" >> "$GITHUB_OUTPUT"
 
       - name: Build and publish image by digest
@@ -100,7 +103,7 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/Niborian/gameyfin
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=sha-${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.verify.outputs.version }}
             org.opencontainers.image.description=Unofficial Gameyfin variant build for preserving torrent-managed game paths
           cache-from: type=gha,scope=gameyfin-amd64
           cache-to: type=gha,mode=max,scope=gameyfin-amd64

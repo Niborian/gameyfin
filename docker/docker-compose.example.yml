@@ -1,6 +1,8 @@
 services:
   gameyfin:
-    image: ghcr.io/gameyfin/gameyfin:2
+    # Replace this SHA tag with a reviewed image produced by this fork's
+    # GitHub Actions package workflow.
+    image: ghcr.io/niborian/gameyfin:sha-REPLACE_WITH_COMMIT
     container_name: gameyfin
     restart: unless-stopped
     # (optional) Limit the memory usage of the container. Recommended minimum is 1024m.

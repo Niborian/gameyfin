@@ -88,7 +88,10 @@ jobs:
         id: tags
         shell: bash
         run: |
-          tags="${IMAGE_NAME}:${{ needs.verify.outputs.version }},${IMAGE_NAME}:sha-${GITHUB_SHA}"
+          tags="${IMAGE_NAME}:sha-${GITHUB_SHA}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tags="${IMAGE_NAME}:${{ needs.verify.outputs.version }},${tags}"
+          fi
           echo "tags=${tags}" >> "$GITHUB_OUTPUT"
 
       - name: Build and publish image by digest

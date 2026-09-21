@@ -3,9 +3,11 @@
 ## Published fork image
 
 GitHub Actions verifies pull requests and publishes the AMD64 image for this
-unofficial variant build to `ghcr.io/niborian/gameyfin`. Every publish receives
-an immutable `sha-<commit>` tag; a human-triggered workflow may add a reviewed
-release tag. Deploy the SHA tag or its digest, never a mutable tag.
+unofficial variant build to `ghcr.io/niborian/gameyfin`. A merge to `main`
+creates only an immutable `sha-<commit>` candidate. After review, a manually
+started workflow adds the matching Gradle/web version tag (for example,
+`2.4.0-variants.1`) to that release build. Deploy that reviewed version tag or
+its digest; never a mutable tag.
 
 The workflow deliberately does not publish to the upstream Gameyfin package or
 Maven Central. Before changing a running instance, back up its H2 database and

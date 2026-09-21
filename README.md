@@ -19,9 +19,12 @@
 Name and functionality inspired by [Jellyfin](https://jellyfin.org/).
 
 > [!IMPORTANT]
-> This repository contains an unofficial Gameyfin build. It is not an upstream release and is not presented as endorsed
-> by the Gameyfin maintainers. It exists to prototype variant/version support, selectable extra content, grouped archive
-> downloads, hardlink-friendly library handling, and metadata tools for keeping torrent-managed paths in place.
+> **This is not an official Gameyfin image or upstream release.** It is an independent Niborian fork, is not endorsed by
+> the Gameyfin maintainers, and must not be deployed as `ghcr.io/gameyfin/gameyfin`. Its reviewed images are published
+> only as `ghcr.io/niborian/gameyfin` and identify their fork revision in container metadata.
+
+This fork exists to prototype variant/version support, selectable extra content, grouped archive downloads,
+hardlink-friendly library handling, and metadata tools for keeping torrent-managed paths in place.
 
 Gameyfin will turn your disorganized collection of video games into a beautiful, easy-to-navigate library that you can
 access from any device with a web browser.  
@@ -54,6 +57,42 @@ The images below summarize the added behavior.
 <p align="center">
     <img src="assets/variant-support/variant-content-model.svg" width="820" alt="Diagram showing variants and shared optional content">
 </p>
+
+## Product direction and delivery plan
+
+The fork is organized around user outcomes, not undifferentiated feature work. Every pull request must close a
+milestone-backed issue, describe the visible behavior it adds, and pass the required quality checks.
+
+| Milestone | What it delivers |
+| --- | --- |
+| [Release foundation](https://github.com/Niborian/gameyfin/milestone/1) | One visible release version, a matching reviewed package tag, provenance, SBOM, and a repeatable release gate. |
+| [Variant library integrity](https://github.com/Niborian/gameyfin/milestone/2) | Rescans preserve variants, selected defaults, hardlinks, and original source paths. |
+| [Selectable downloads](https://github.com/Niborian/gameyfin/milestone/3) | Users receive exactly the version and optional content they choose, including grouped/shared archives. |
+| [Production operations](https://github.com/Niborian/gameyfin/milestone/4) | Recoverable H2 backups, memory-safe scans, health checks, and restricted access exposure. |
+| [Upstream compatibility](https://github.com/Niborian/gameyfin/milestone/5) | Future upstream changes are merged and tested without losing fork behavior. |
+| [Library intelligence and request automation](https://github.com/Niborian/gameyfin/milestone/6) | Explainable release grouping, lawful update discovery, and reviewed request automation. |
+
+See the [issue backlog](https://github.com/Niborian/gameyfin/issues) for concrete acceptance criteria.
+
+### Non-negotiable library guarantees
+
+- Scanning, grouping, and retirement must not move, rename, delete, or rewrite torrent-managed source files.
+- Low-confidence release matches remain in an administrator review queue; a suggestion never silently replaces a
+  selected version.
+- Older versions are superseded and archived before any cleanup. Only application-managed mirrors or caches may be
+  pruned after an explicit review and grace period.
+- Download automation is limited to administrator-approved, authorized sources. It does not bypass store licensing,
+  DRM, or access controls.
+
+### Version and image identity
+
+`build.gradle.kts` is the canonical release version. The build synchronizes it into the frontend, where it is displayed
+in the Gameyfin footer. A reviewed release publishes the same version as a package tag, for example
+`ghcr.io/niborian/gameyfin:2.4.0-variants.1`; every candidate also receives an immutable `sha-<commit>` tag.
+
+Pull requests run tests but cannot publish an image. A merge to `main` produces an immutable SHA candidate, and a
+manual reviewed release run adds the matching semantic version tag. Deploy a reviewed version tag or pinned digest,
+never an untraceable local tag or a mutable `latest` tag.
 
 <p align="center">
     <img src="assets/variant-support/download-selection.svg" width="820" alt="Diagram showing selectable download content">

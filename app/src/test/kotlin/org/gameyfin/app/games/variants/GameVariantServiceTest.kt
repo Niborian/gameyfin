@@ -27,7 +27,7 @@ class GameVariantServiceTest {
         service.syncVariants(game, discoveredVariants(gamePath), library)
 
         assertEquals("1.1", game.variants.single { it.isDefault }.version)
-        assertTrue(game.variants.single { it.version == "1.1" }.isLatestForVariant)
+        assertTrue(game.variants.single { it.name == "Normal" && it.version == "1.1" }.isLatestForVariant)
     }
 
     @Test

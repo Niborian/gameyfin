@@ -50,6 +50,7 @@ class GameVariantGroupingService(
         if (exactTargets.size != 1) return null
 
         val target = exactTargets.single()
+        if (releaseNameSuggestionService.suggest(Path.of(target.metadata.path).fileName.toString()) != null) return null
         val variantMetadata = variantMetadataFromCandidate(candidate, target, discovery)
         addOrUpdateExternalVariant(target, variantMetadata)
         addGroupedIgnoredPath(library, variantMetadata.path)
@@ -651,6 +652,12 @@ class GameVariantGroupingService(
     private fun chooseTargetAndSource(first: Game, second: Game): Pair<Game, Game> {
         val firstPath = Path.of(first.metadata.path)
         val secondPath = Path.of(second.metadata.path)
+
+        // Keep a marked compatibility build as the review source, not the canonical target.
+        val firstHint = releaseNameSuggestionService.suggest(firstPath.fileName.toString())
+        val secondHint = releaseNameSuggestionService.suggest(secondPath.fileName.toString())
+        if (firstHint != null && secondHint == null) return second to first
+        if (secondHint != null && firstHint == null) return first to second
 
         if (firstPath.isDirectory() && !secondPath.isDirectory()) return first to second
         if (!firstPath.isDirectory() && secondPath.isDirectory()) return second to first

@@ -99,6 +99,29 @@ class GameVariantGroupingServiceTest {
     }
 
     @Test
+    fun `older marked release cannot become the automatic canonical target`(@TempDir tempDir: Path) {
+        val library = createLibrary()
+        val plugin = PluginManagementEntry("igdb")
+        val markedPath = tempDir.resolve("Craftopia.v1.2.Online-Fix.rar").createFile()
+        val normalPath = tempDir.resolve("Craftopia.v1.3.rar").createFile()
+        val marked = createGame(1L, library, markedPath.toString(), plugin, "123")
+        val normal = createGame(2L, library, normalPath.toString(), plugin, "123")
+        library.games.addAll(listOf(marked, normal))
+
+        every { gameRepository.findAllByLibraryId(1L) } returns listOf(marked, normal)
+        every { filesystemService.calculateFileSize(any()) } returns 2048L
+
+        val suggestion = service.getGroupingSuggestions(1L).single()
+
+        assertEquals(normal.id, suggestion.targetGameId)
+        assertEquals(marked.id, suggestion.sourceGameId)
+        assertFalse(suggestion.autoGroup)
+        assertEquals(0, service.autoGroupExactMatches(library))
+        assertNull(service.tryAutoGroup(normal, DiscoveredGameVariants(normalPath, emptyList()), library))
+        verify(exactly = 0) { gameRepository.save(any()) }
+    }
+
+    @Test
     fun `getGroupingSuggestions should require review for mixed file and folder matches`(@TempDir tempDir: Path) {
         val library = createLibrary()
         val plugin = PluginManagementEntry("igdb")

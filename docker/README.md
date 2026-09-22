@@ -1,5 +1,20 @@
 # Docker image builder
 
+## Published fork image
+
+GitHub Actions verifies pull requests and publishes the AMD64 image for this
+unofficial variant build to `ghcr.io/niborian/gameyfin`. A merge to `main`
+creates only an immutable `sha-<commit>` candidate. After review, a manually
+started workflow adds the matching Gradle/web version tag (for example,
+`2.4.0-variants.1`) to that release build. Deploy that reviewed version tag or
+its digest; never a mutable tag.
+
+The workflow deliberately does not publish to the upstream Gameyfin package or
+Maven Central. Before changing a running instance, back up its H2 database and
+test scanning plus variant behavior against a fixture library that includes
+torrent-managed paths, versions, selectable content, grouped archives, and
+hardlinks.
+
 Use these scripts when you want to build a local Gameyfin image from this checkout and replace your running container with it.
 
 ## Windows PowerShell

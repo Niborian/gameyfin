@@ -10,9 +10,13 @@ tasks.named<Jar>("jar") {
 
 val keystorePasswordEnvironmentVariable = "GAMEYFIN_KEYSTORE_PASSWORD"
 val keystorePasswordProperty = "gameyfin.keystorePassword"
+val keystorePathEnvironmentVariable = "GAMEYFIN_KEYSTORE_PATH"
+val keystoreTypeEnvironmentVariable = "GAMEYFIN_KEYSTORE_TYPE"
 
-val keystorePath: String = rootProject.file("certs/gameyfin.jks").absolutePath
-val keystoreAlias = "gameyfin-plugins"
+val keystorePath: String = System.getenv(keystorePathEnvironmentVariable)
+    ?: rootProject.file("certs/gameyfin.p12").absolutePath
+val keystoreType: String = System.getenv(keystoreTypeEnvironmentVariable) ?: "PKCS12"
+val keystoreAlias = "niborian-gameyfin-plugins"
 val keystorePasswordProvider: Provider<String> = provider {
     (findProperty(keystorePasswordProperty) as String?)
         ?: System.getenv(keystorePasswordEnvironmentVariable)
@@ -104,6 +108,7 @@ subprojects {
         commandLine(
             "jarsigner",
             "-keystore", keystorePath,
+            "-storetype", keystoreType,
             "-storepass", keystorePassword,
             jarFile.absolutePath,
             keystoreAlias

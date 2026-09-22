@@ -1,1 +1,12 @@
-jarsigner -keystore gameyfin.jks <name of the plugin file>.jar gameyfin-plugins
+Fork signing material is intentionally not committed.
+
+For a local production build, provide a PKCS#12 keystore through:
+  GAMEYFIN_KEYSTORE_PATH
+  GAMEYFIN_KEYSTORE_PASSWORD
+  GAMEYFIN_KEYSTORE_TYPE=PKCS12
+
+The release workflow restores it from GitHub Actions secrets:
+  GAMEYFIN_KEYSTORE_BASE64
+  GAMEYFIN_KEYSTORE_PASSWORD
+
+The fork signing alias is: niborian-gameyfin-plugins

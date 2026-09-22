@@ -1,0 +1,36 @@
+name: Pull request governance
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  requires-linked-issue:
+    name: Require a milestone-backed issue
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: read
+      pull-requests: read
+    steps:
+      - name: Validate the PR description and linked issue
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const body = context.payload.pull_request.body || "";
+            const reference = body.match(/(?:close[sd]?|fixe[sd]?|resolve[sd]?)\s+#(\d+)/i);
+            if (!reference) {
+              core.setFailed("Add 'Closes #<issue>' to the PR description.");
+              return;
+            }
+
+            const { data: issue } = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number(reference[1]),
+            });
+            if (issue.pull_request) {
+              core.setFailed("The linked item must be an issue, not another pull request.");
+            } else if (!issue.milestone) {
+              core.setFailed("Assign the linked issue to a milestone before merging.");
+            }

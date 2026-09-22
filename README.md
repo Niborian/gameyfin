@@ -89,13 +89,14 @@ See the [issue backlog](https://github.com/Niborian/gameyfin/issues) for concret
 
 `build.gradle.kts` is the canonical release version. The build synchronizes it into the frontend, where it is displayed
 in the Gameyfin footer. A reviewed release publishes the same version as a package tag, for example
-`ghcr.io/niborian/gameyfin:2.4.1`; every candidate also receives an immutable `sha-<commit>` tag. The newest reviewed
-release also updates `ghcr.io/niborian/gameyfin:latest`.
+`ghcr.io/niborian/gameyfin:2.4.2`. The newest reviewed release also updates
+`ghcr.io/niborian/gameyfin:latest`. The workflow no longer creates SHA-named tags.
 
-Pull requests run tests but cannot publish an image. A merge to `main` produces an immutable SHA candidate, and a
-manual reviewed release run adds the matching semantic version tag and updates `latest`. Deploy a reviewed version tag
-or pinned digest when repeatability matters. A semantic release tag is refused if it already exists, so it cannot be
-moved to a different revision; only `latest` moves to the newest reviewed release.
+Pull requests run tests and build an unpublished image. A merge to `main` does not publish a package version; a
+manual reviewed release run publishes the matching semantic version tag and updates `latest`. Deploy the reviewed
+image by digest for repeatability, using the version tag to find the intended release. Its exact fork commit remains
+in OCI revision metadata and build provenance. A semantic release tag is refused if it already exists, so it cannot
+be moved to a different revision; only `latest` moves to the newest reviewed release.
 
 Official plugins bundled by this fork are signed with a Niborian-owned key. Its private key and password are held only
 as GitHub Actions secrets and are never included in the repository or container image.

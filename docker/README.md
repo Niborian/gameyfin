@@ -3,12 +3,14 @@
 ## Published fork image
 
 GitHub Actions verifies pull requests and publishes the AMD64 image for this
-unofficial variant build to `ghcr.io/niborian/gameyfin`. A merge to `main`
-creates only an immutable `sha-<commit>` candidate. After review, a manually
-started workflow adds the matching Gradle/web version tag (for example,
-`2.4.1`) and updates `latest` to that release build. Deploy that reviewed
-version tag or its digest when repeatability matters; `latest` intentionally
-tracks the newest reviewed release.
+unofficial variant build to `ghcr.io/niborian/gameyfin`. Pull requests verify
+the image without publishing it, and merging to `main` does not publish a
+package version. After review, a manually started workflow publishes the
+matching Gradle/web version tag (for example, `2.4.2`) and updates `latest`.
+It does not create SHA-named tags. Deploy the reviewed image by digest when
+repeatability matters; `latest` intentionally tracks the newest reviewed
+release. The exact commit remains in the image's OCI revision metadata and
+build provenance.
 
 The workflow deliberately does not publish to the upstream Gameyfin package or
 Maven Central. Before changing a running instance, back up its H2 database and

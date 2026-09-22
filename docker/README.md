@@ -32,6 +32,12 @@ After promotion, confirm the version tag and `latest` resolve to the same
 digest before telling anyone to switch images. If the candidate does not meet
 the cutover gate, leave `latest` unchanged. Once production uses this fork,
 continue testing future versions separately and promote only after review.
+Before a cutover, record the running image reference and digest, save an H2
+backup, and retain the existing deployment configuration. If the replacement
+regresses, stop it and restart the recorded image with the original
+configuration; restore the saved database only if a migration or write has
+made the old image unable to use the current database. Do not remove or rename
+torrent-managed source files during either transition.
 
 The workflow deliberately does not publish to the upstream Gameyfin package or
 Maven Central. Before changing a running instance, back up its H2 database and

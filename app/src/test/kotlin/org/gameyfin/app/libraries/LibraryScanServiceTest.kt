@@ -11,9 +11,15 @@ import org.gameyfin.app.core.plugins.PluginService
 import org.gameyfin.app.core.plugins.dto.PluginDto
 import org.gameyfin.app.games.entities.Game
 import org.gameyfin.app.games.entities.GameMetadata
+import org.gameyfin.app.games.entities.GameVariant
+import org.gameyfin.app.games.entities.VariantContent
 import org.gameyfin.app.games.repositories.GameRepository
 import org.gameyfin.app.games.variants.GameVariantGroupingService
+import org.gameyfin.app.games.variants.VariantLibraryFixture
+import org.gameyfin.app.libraries.entities.DirectoryMapping
 import org.gameyfin.app.libraries.entities.IgnoredPath
+import org.gameyfin.app.libraries.entities.IgnoredPathGroupedVariantSource
+import org.gameyfin.app.libraries.entities.IgnoredPathUserSource
 import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.app.libraries.enums.ScanType
 import org.gameyfin.app.libraries.scan.LibraryGameProcessor
@@ -21,6 +27,7 @@ import org.gameyfin.pluginapi.gamemetadata.GameMetadataProvider
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.assertThrows
 import org.pf4j.PluginState
@@ -275,6 +282,85 @@ class LibraryScanServiceTest {
 
         Thread.sleep(200)
         verify(atLeast = 1) { libraryGameProcessor.processExistingGame(existingGame) }
+    }
+
+    @Test
+    fun `repeated quick and full scans preserve attached fixture sources`(@TempDir tempDir: java.nio.file.Path) {
+        val fixture = VariantLibraryFixture.create(tempDir)
+        val library = Library(id = 1L, name = "Fixture", directories = mutableListOf(
+            DirectoryMapping(internalPath = fixture.root.toString())
+        ))
+        val game = Game(id = 1L, library = library, metadata = GameMetadata(path = fixture.gamePath.toString()))
+        listOf("Normal 1.0", "Normal 1.1", "Multiplayer Fix 1.1").forEachIndexed { index, name ->
+            val variantPath = fixture.gamePath.resolve(name).toString()
+            val variant = GameVariant(
+                id = index.toLong() + 1,
+                game = game,
+                name = name,
+                version = if (index == 0) "1.0" else "1.1",
+                path = variantPath,
+                isDefault = index == 0,
+                defaultLocked = index == 0
+            )
+            variant.contents.add(VariantContent(
+                id = index.toLong() + 1,
+                variant = variant,
+                name = "Base game",
+                path = fixture.gamePath.resolve(name).resolve("game.bin").toString(),
+                required = true
+            ))
+            game.variants.add(variant)
+        }
+        library.games.add(game)
+        library.ignoredPaths.add(IgnoredPath(
+            path = fixture.ignoredAttachedSourcePath.toString(),
+            source = IgnoredPathGroupedVariantSource()
+        ))
+        library.ignoredPaths.add(IgnoredPath(
+            path = fixture.root.resolve("hardlinks").toString(),
+            source = IgnoredPathUserSource(mockk())
+        ))
+
+        every { configService.get(ConfigProperties.Libraries.Scan.GameFileExtensions) } returns arrayOf("rar", "zip")
+        every { configService.get(ConfigProperties.Libraries.Scan.ScanEmptyDirectories) } returns false
+        every { libraryRepository.findAllById(listOf(1L)) } returns listOf(library)
+        every { libraryGameProcessor.processExistingGame(game) } returns game
+        every { gameRepository.findAllById(emptyList<Long>()) } returns emptyList()
+        every { libraryCoreService.addGamesToLibrary(emptyList(), library, false) } returns library
+        every { libraryRepository.save(library) } returns library
+
+        val scanner = LibraryScanService(
+            libraryRepository, FilesystemService(configService), libraryCoreService,
+            libraryGameProcessor, gameRepository, gameVariantGroupingService,
+            ignoredPathRepository, pluginService, configService, ScanMetrics(meterRegistry)
+        )
+        val sourceSnapshot = fixture.snapshot()
+        val relationshipCounts = Triple(library.games.size, game.variants.size, game.variants.sumOf { it.contents.size })
+        val expectedCompletions = mutableMapOf<ScanType, Double>()
+
+        listOf(ScanType.QUICK, ScanType.FULL, ScanType.QUICK, ScanType.FULL).forEach { type ->
+            val expected = expectedCompletions.getOrDefault(type, 0.0) + 1.0
+            expectedCompletions[type] = expected
+            scanner.triggerScan(type, listOf(1L))
+            val completed = meterRegistry.find("gameyfin.scans.completed")
+                .tag("type", type.name.lowercase()).counter()!!
+            var attempts = 0
+            while (completed.count() < expected && attempts++ < 100) {
+                Thread.sleep(20)
+            }
+            assertEquals(expected, completed.count())
+            Thread.sleep(20) // Let the scan's in-progress marker clear after completion.
+        }
+
+        assertEquals(relationshipCounts, Triple(library.games.size, game.variants.size, game.variants.sumOf { it.contents.size }))
+        assertEquals(2, library.ignoredPaths.size)
+        assertTrue(game.variants.single { it.isDefault }.defaultLocked)
+        assertEquals(sourceSnapshot, fixture.snapshot())
+        assertEquals(0.0, meterRegistry.find("gameyfin.scans.failed").tag("type", "quick").counter()!!.count())
+        assertEquals(0.0, meterRegistry.find("gameyfin.scans.failed").tag("type", "full").counter()!!.count())
+        verify(exactly = 0) { libraryGameProcessor.processNewGame(any(), any()) }
+        verify(exactly = 2) { libraryGameProcessor.processExistingGame(game) }
+        verify(exactly = 4) { libraryRepository.save(library) }
     }
 
     @Test

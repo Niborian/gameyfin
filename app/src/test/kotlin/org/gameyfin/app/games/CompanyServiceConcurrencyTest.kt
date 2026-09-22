@@ -1,5 +1,6 @@
 package org.gameyfin.app.games
 
+import jakarta.persistence.EntityManager
 import org.gameyfin.app.games.entities.Company
 import org.gameyfin.app.games.entities.CompanyType
 import org.gameyfin.app.games.repositories.CompanyRepository
@@ -15,13 +16,23 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 @DataJpaTest
 @Import(CompanyService::class, CompanyInsertService::class)
 class CompanyServiceConcurrencyTest @Autowired constructor(
     private val companyService: CompanyService,
-    private val companyRepository: CompanyRepository
+    private val companyRepository: CompanyRepository,
+    private val entityManager: EntityManager
 ) {
+    @Test
+    fun `new company is managed in the caller transaction`() {
+        val company = companyService.createOrGet(Company(
+            name = "Managed-${UUID.randomUUID()}", type = CompanyType.PUBLISHER
+        ))
+        assertTrue(entityManager.contains(company))
+    }
+
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun `concurrent metadata updates reuse one committed company`() {

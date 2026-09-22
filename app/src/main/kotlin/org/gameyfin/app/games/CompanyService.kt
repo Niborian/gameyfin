@@ -17,6 +17,10 @@ class CompanyService(
             // The insert must commit independently of the caller's game update. A save in
             // that transaction can fail only on flush/commit, after this method returns.
             companyInsertService.insert(company)
+            // Re-read in the caller's persistence context. New games cascade PERSIST to
+            // their companies, so returning the insert transaction's detached entity fails.
+            companyRepository.findByNameAndType(company.name, company.type)
+                ?: error("Committed company was not found: ${company.name}")
         } catch (e: DataIntegrityViolationException) {
             // Another game update committed the same (name, type) first.
             companyRepository.findByNameAndType(company.name, company.type)

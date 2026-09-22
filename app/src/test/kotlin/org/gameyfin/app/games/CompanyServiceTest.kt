@@ -47,13 +47,13 @@ class CompanyServiceTest {
         val newCompany = Company(name = "NewCompany", type = CompanyType.PUBLISHER)
         val savedCompany = Company(id = 2L, name = "NewCompany", type = CompanyType.PUBLISHER)
 
-        every { companyRepository.findByNameAndType("NewCompany", CompanyType.PUBLISHER) } returns null
+        every { companyRepository.findByNameAndType("NewCompany", CompanyType.PUBLISHER) } returnsMany listOf(null, savedCompany)
         every { companyInsertService.insert(any()) } returns savedCompany
 
         val result = companyService.createOrGet(newCompany)
 
         assertEquals(savedCompany, result)
-        verify(exactly = 1) { companyRepository.findByNameAndType("NewCompany", CompanyType.PUBLISHER) }
+        verify(exactly = 2) { companyRepository.findByNameAndType("NewCompany", CompanyType.PUBLISHER) }
         verify(exactly = 1) { companyInsertService.insert(match { it.name == "NewCompany" && it.type == CompanyType.PUBLISHER }) }
     }
 
@@ -101,8 +101,8 @@ class CompanyServiceTest {
         val savedDeveloper = Company(id = 4L, name = "SameCompany", type = CompanyType.DEVELOPER)
         val savedPublisher = Company(id = 5L, name = "SameCompany", type = CompanyType.PUBLISHER)
 
-        every { companyRepository.findByNameAndType("SameCompany", CompanyType.DEVELOPER) } returns null
-        every { companyRepository.findByNameAndType("SameCompany", CompanyType.PUBLISHER) } returns null
+        every { companyRepository.findByNameAndType("SameCompany", CompanyType.DEVELOPER) } returnsMany listOf(null, savedDeveloper)
+        every { companyRepository.findByNameAndType("SameCompany", CompanyType.PUBLISHER) } returnsMany listOf(null, savedPublisher)
         every { companyInsertService.insert(match { it.type == CompanyType.DEVELOPER }) } returns savedDeveloper
         every { companyInsertService.insert(match { it.type == CompanyType.PUBLISHER }) } returns savedPublisher
 
@@ -111,8 +111,8 @@ class CompanyServiceTest {
 
         assertEquals(savedDeveloper, resultDeveloper)
         assertEquals(savedPublisher, resultPublisher)
-        verify(exactly = 1) { companyRepository.findByNameAndType("SameCompany", CompanyType.DEVELOPER) }
-        verify(exactly = 1) { companyRepository.findByNameAndType("SameCompany", CompanyType.PUBLISHER) }
+        verify(exactly = 2) { companyRepository.findByNameAndType("SameCompany", CompanyType.DEVELOPER) }
+        verify(exactly = 2) { companyRepository.findByNameAndType("SameCompany", CompanyType.PUBLISHER) }
     }
 
     @Test
@@ -121,7 +121,7 @@ class CompanyServiceTest {
         val company = Company(name = companyName, type = CompanyType.DEVELOPER)
         val savedCompany = Company(id = 6L, name = companyName, type = CompanyType.DEVELOPER)
 
-        every { companyRepository.findByNameAndType(companyName, CompanyType.DEVELOPER) } returns null
+        every { companyRepository.findByNameAndType(companyName, CompanyType.DEVELOPER) } returnsMany listOf(null, savedCompany)
         every { companyInsertService.insert(any()) } returns savedCompany
 
         val result = companyService.createOrGet(company)
@@ -138,7 +138,7 @@ class CompanyServiceTest {
         val company = Company(name = "", type = CompanyType.DEVELOPER)
         val savedCompany = Company(id = 7L, name = "", type = CompanyType.DEVELOPER)
 
-        every { companyRepository.findByNameAndType("", CompanyType.DEVELOPER) } returns null
+        every { companyRepository.findByNameAndType("", CompanyType.DEVELOPER) } returnsMany listOf(null, savedCompany)
         every { companyInsertService.insert(any()) } returns savedCompany
 
         val result = companyService.createOrGet(company)

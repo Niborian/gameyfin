@@ -189,7 +189,11 @@ class LibraryScanService(
                 unmatchedPaths = newUnmatchedPaths.size
             )
         } catch (e: Exception) {
-            scanMetrics.recordScanFailed(ScanType.QUICK, System.currentTimeMillis() - scanStartTime)
+            scanMetrics.recordScanFailed(
+                ScanType.QUICK,
+                System.currentTimeMillis() - scanStartTime,
+                ScanMetrics.FailureKind.from(e)
+            )
             handleScanError(e, library, progress, "quick scan")
         }
     }
@@ -258,7 +262,11 @@ class LibraryScanService(
                 updatedGames = updatedGames.size
             )
         } catch (e: Exception) {
-            scanMetrics.recordScanFailed(scanType, System.currentTimeMillis() - scanStartTime)
+            scanMetrics.recordScanFailed(
+                scanType,
+                System.currentTimeMillis() - scanStartTime,
+                ScanMetrics.FailureKind.from(e)
+            )
             handleScanError(e, library, progress, "full scan")
         }
     }
@@ -328,7 +336,10 @@ class LibraryScanService(
     }
 
     private fun handleScanError(e: Exception, library: Library, progress: LibraryScanProgress, scanType: String) {
-        log.error { "Error during $scanType for library ${library.id}: ${e.message}" }
+        log.error {
+            "Error during $scanType for library ${library.id} " +
+                "(${ScanMetrics.FailureKind.from(e)}: ${e.javaClass.simpleName})"
+        }
         log.debug(e) {}
         progress.status = LibraryScanStatus.FAILED
         progress.finishedAt = Instant.now()

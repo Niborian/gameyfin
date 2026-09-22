@@ -126,7 +126,7 @@ class DownloadService(
             variant.contents.filter { it.id in selectedIds || it.required }
         }
 
-        return selected.ifEmpty {
+        val contents = selected.ifEmpty {
             listOf(
                 VariantContent(
                     variant = variant,
@@ -137,6 +137,22 @@ class DownloadService(
                     defaultSelected = true
                 )
             )
+        }
+
+        validateContentPaths(variant, contents)
+        return contents
+    }
+
+    private fun validateContentPaths(variant: GameVariant, contents: List<VariantContent>) {
+        val variantPath = Path.of(variant.path).toRealPath()
+        val contentRoot = if (Files.isDirectory(variantPath)) variantPath else variantPath.parent
+            ?: throw IllegalArgumentException("Variant ${variant.id} has no content root")
+
+        contents.flatMap { it.effectivePaths() }.forEach { contentPath ->
+            val resolvedPath = Path.of(contentPath).toRealPath()
+            require(resolvedPath.startsWith(contentRoot)) {
+                "Content path '$contentPath' is outside variant ${variant.id} content root '$contentRoot'"
+            }
         }
     }
 

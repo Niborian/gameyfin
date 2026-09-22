@@ -21,6 +21,7 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
+import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RestController
@@ -38,7 +39,7 @@ class ActuatorSecurityTest {
     @BeforeEach
     fun setup() {
         mvc = MockMvcBuilders.webAppContextSetup(context)
-            .addFilters(context.getBean(FilterChainProxy::class.java))
+            .addFilters<DefaultMockMvcBuilder>(context.getBean(FilterChainProxy::class.java))
             .build()
     }
 

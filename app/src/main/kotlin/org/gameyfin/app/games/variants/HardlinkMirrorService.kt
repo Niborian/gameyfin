@@ -34,6 +34,11 @@ class HardlinkMirrorService(
 
     fun mirror(source: Path, library: Library, gamePath: Path, targetName: String): LinkResult {
         val target = mirrorTarget(library, gamePath, targetName)
+        require(source.exists()) { "Hardlink source path does not exist: $source" }
+        mirrorRoot.createDirectories()
+        require(Files.getFileStore(source) == Files.getFileStore(mirrorRoot)) {
+            "Hardlink mirror requires source and mirror storage on the same filesystem"
+        }
         deleteTargetIfPresent(target)
 
         return try {
@@ -59,7 +64,6 @@ class HardlinkMirrorService(
     }
 
     private fun linkTree(source: Path, target: Path) {
-        if (!source.exists()) throw IOException("Source path does not exist")
         if (!source.isDirectory()) {
             target.parent.createDirectories()
             Files.createLink(target, source)

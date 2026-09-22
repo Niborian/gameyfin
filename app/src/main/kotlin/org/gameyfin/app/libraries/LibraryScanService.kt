@@ -381,6 +381,10 @@ class LibraryScanService(
 
                     return@Callable persisted
                 } catch (e: Exception) {
+                    // A database failure invalidates the scan as a whole. Do not silently
+                    // count the affected source as merely unmatched.
+                    if (ScanMetrics.FailureKind.from(e) == ScanMetrics.FailureKind.DATABASE) throw e
+
                     // Error, mark as unmatched by all current metadata providers
                     val pluginSource = IgnoredPathPluginSource(
                         pluginService.getPluginManagementEntries(GameMetadataProvider::class.java).toMutableList()
@@ -391,7 +395,7 @@ class LibraryScanService(
                     )
                     newUnmatchedPaths.add(ignoredPath)
 
-                    log.warn { "Processing of new game at '$path' failed: ${e.message}" }
+                    log.warn { "Processing a new game in library ${library.id} failed (${e.javaClass.simpleName})" }
                     log.debug(e) {}
 
                     return@Callable null
@@ -471,7 +475,8 @@ class LibraryScanService(
                     val updated = libraryGameProcessor.processExistingGame(game)
                     return@Callable updated
                 } catch (e: Exception) {
-                    log.error { "Error updating game with id '${game.id}': ${e.message}" }
+                    if (ScanMetrics.FailureKind.from(e) == ScanMetrics.FailureKind.DATABASE) throw e
+                    log.error { "Error updating game ${game.id} (${e.javaClass.simpleName})" }
                     log.debug(e) {}
                     return@Callable null
                 } finally {

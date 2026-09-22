@@ -4,21 +4,21 @@ import org.gameyfin.app.games.entities.Company
 import org.gameyfin.app.games.repositories.CompanyRepository
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
 
 @Service
 class CompanyService(
-    private val companyRepository: CompanyRepository
+    private val companyRepository: CompanyRepository,
+    private val companyInsertService: CompanyInsertService
 ) {
-    @Transactional
     fun createOrGet(company: Company): Company {
         companyRepository.findByNameAndType(company.name, company.type)?.let { return it }
 
         return try {
-            val toSave = Company(name = company.name, type = company.type)
-            companyRepository.save(toSave)
+            // The insert must commit independently of the caller's game update. A save in
+            // that transaction can fail only on flush/commit, after this method returns.
+            companyInsertService.insert(company)
         } catch (e: DataIntegrityViolationException) {
-            // Another transaction may have inserted the same unique (name,type) concurrently; fetch and return
+            // Another game update committed the same (name, type) first.
             companyRepository.findByNameAndType(company.name, company.type)
                 ?: throw e
         }

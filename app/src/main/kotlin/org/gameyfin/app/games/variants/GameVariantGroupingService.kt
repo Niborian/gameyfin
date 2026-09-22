@@ -28,7 +28,8 @@ import kotlin.io.path.isDirectory
 class GameVariantGroupingService(
     private val gameRepository: GameRepository,
     private val ignoredPathRepository: IgnoredPathRepository,
-    private val filesystemService: FilesystemService
+    private val filesystemService: FilesystemService,
+    private val releaseNameSuggestionService: ReleaseNameSuggestionService = ReleaseNameSuggestionService()
 ) {
     private val trailingVersionPattern =
         Regex("""(?i)(?:^|[\s._-])v?(\d+(?:\.\d+)*(?:[-+_][a-z0-9._-]+)?)$""")
@@ -40,6 +41,8 @@ class GameVariantGroupingService(
 
     @Transactional
     fun tryAutoGroup(candidate: Game, discovery: DiscoveredGameVariants, library: Library): Game? {
+        // A release marker is only a suggestion; it must never be applied by an automatic scan.
+        if (releaseNameSuggestionService.suggest(Path.of(candidate.metadata.path).fileName.toString()) != null) return null
         val exactTargets = library.games
             .filter { it.id != candidate.id && it.metadata.path != candidate.metadata.path }
             .filter { confidence(candidate, it).confidence == 100 }
@@ -618,6 +621,14 @@ class GameVariantGroupingService(
                         target = target,
                         discovery = DiscoveredGameVariants(Path.of(source.metadata.path), emptyList())
                     )
+                    val releaseHint = releaseNameSuggestionService.suggest(
+                        Path.of(source.metadata.path).fileName.toString()
+                    )
+                    val suggestionConfidence = when {
+                        releaseHint == null -> match.confidence
+                        releaseHint.variantLabel == null -> minOf(match.confidence, 50)
+                        else -> minOf(match.confidence, (releaseHint.confidence * 100).toInt())
+                    }
 
                     GameGroupingSuggestionDto(
                         targetGameId = target.id!!,
@@ -626,11 +637,11 @@ class GameVariantGroupingService(
                         sourceGameId = source.id!!,
                         sourceTitle = source.title,
                         sourcePath = source.metadata.path,
-                        confidence = match.confidence,
-                        autoGroup = match.confidence == 100,
-                        reason = match.reason,
-                        suggestedVariantName = variantMetadata.name,
-                        suggestedVariantVersion = variantMetadata.version
+                        confidence = suggestionConfidence,
+                        autoGroup = suggestionConfidence == 100 && releaseHint == null,
+                        reason = match.reason + (releaseHint?.evidence?.joinToString("; ", prefix = "; ") ?: ""),
+                        suggestedVariantName = releaseHint?.variantLabel ?: variantMetadata.name,
+                        suggestedVariantVersion = releaseHint?.versionHint ?: variantMetadata.version
                     )
                 }
             }

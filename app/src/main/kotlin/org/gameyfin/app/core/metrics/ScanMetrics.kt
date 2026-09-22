@@ -5,6 +5,8 @@ import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
 import org.gameyfin.app.libraries.enums.ScanType
 import org.springframework.stereotype.Component
+import org.springframework.dao.DataAccessException
+import java.sql.SQLException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -24,6 +26,17 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 @Component
 class ScanMetrics(private val registry: MeterRegistry) {
+
+    enum class FailureKind {
+        DATABASE,
+        OTHER;
+
+        companion object {
+            fun from(error: Throwable): FailureKind =
+                if (generateSequence(error) { it.cause }.take(8).any { it is SQLException || it is DataAccessException })
+                    DATABASE else OTHER
+        }
+    }
 
     private val activeScans = AtomicInteger(0)
 
@@ -48,6 +61,16 @@ class ScanMetrics(private val registry: MeterRegistry) {
             .tag("type", type.name.lowercase())
             .register(registry)
     }
+
+    private val failuresByKind = ScanType.entries.flatMap { type ->
+        FailureKind.entries.map { kind ->
+            (type to kind) to Counter.builder("gameyfin.scans.failures.by.kind")
+                .description("Library scan failures by bounded cause category")
+                .tag("type", type.name.lowercase())
+                .tag("kind", kind.name.lowercase())
+                .register(registry)
+        }
+    }.toMap()
 
     private val scanDuration = ScanType.entries.associateWith { type ->
         Timer.builder("gameyfin.scans.duration")
@@ -102,9 +125,10 @@ class ScanMetrics(private val registry: MeterRegistry) {
     }
 
     /** Call when a scan fails. */
-    fun recordScanFailed(type: ScanType, durationMillis: Long) {
+    fun recordScanFailed(type: ScanType, durationMillis: Long, kind: FailureKind) {
         activeScans.decrementAndGet()
         scansFailed.getValue(type).increment()
+        failuresByKind.getValue(type to kind).increment()
         scanDuration.getValue(type).record(durationMillis, TimeUnit.MILLISECONDS)
     }
 }

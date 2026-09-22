@@ -14,12 +14,14 @@ import kotlin.test.assertNotNull
 class CompanyServiceTest {
 
     private lateinit var companyRepository: CompanyRepository
+    private lateinit var companyInsertService: CompanyInsertService
     private lateinit var companyService: CompanyService
 
     @BeforeEach
     fun setup() {
         companyRepository = mockk()
-        companyService = CompanyService(companyRepository)
+        companyInsertService = mockk()
+        companyService = CompanyService(companyRepository, companyInsertService)
     }
 
     @AfterEach
@@ -37,7 +39,7 @@ class CompanyServiceTest {
 
         assertEquals(existingCompany, result)
         verify(exactly = 1) { companyRepository.findByNameAndType("TestCompany", CompanyType.DEVELOPER) }
-        verify(exactly = 0) { companyRepository.save(any()) }
+        verify(exactly = 0) { companyInsertService.insert(any()) }
     }
 
     @Test
@@ -45,14 +47,14 @@ class CompanyServiceTest {
         val newCompany = Company(name = "NewCompany", type = CompanyType.PUBLISHER)
         val savedCompany = Company(id = 2L, name = "NewCompany", type = CompanyType.PUBLISHER)
 
-        every { companyRepository.findByNameAndType("NewCompany", CompanyType.PUBLISHER) } returns null
-        every { companyRepository.save(any()) } returns savedCompany
+        every { companyRepository.findByNameAndType("NewCompany", CompanyType.PUBLISHER) } returnsMany listOf(null, savedCompany)
+        every { companyInsertService.insert(any()) } returns savedCompany
 
         val result = companyService.createOrGet(newCompany)
 
         assertEquals(savedCompany, result)
-        verify(exactly = 1) { companyRepository.findByNameAndType("NewCompany", CompanyType.PUBLISHER) }
-        verify(exactly = 1) { companyRepository.save(match { it.name == "NewCompany" && it.type == CompanyType.PUBLISHER }) }
+        verify(exactly = 2) { companyRepository.findByNameAndType("NewCompany", CompanyType.PUBLISHER) }
+        verify(exactly = 1) { companyInsertService.insert(match { it.name == "NewCompany" && it.type == CompanyType.PUBLISHER }) }
     }
 
     @Test
@@ -64,13 +66,13 @@ class CompanyServiceTest {
             null,
             existingCompany
         )
-        every { companyRepository.save(any()) } throws DataIntegrityViolationException("Duplicate key")
+        every { companyInsertService.insert(any()) } throws DataIntegrityViolationException("Duplicate key")
 
         val result = companyService.createOrGet(company)
 
         assertEquals(existingCompany, result)
         verify(exactly = 2) { companyRepository.findByNameAndType("ConcurrentCompany", CompanyType.DEVELOPER) }
-        verify(exactly = 1) { companyRepository.save(any()) }
+        verify(exactly = 1) { companyInsertService.insert(any()) }
     }
 
     @Test
@@ -79,7 +81,7 @@ class CompanyServiceTest {
         val exception = DataIntegrityViolationException("Database error")
 
         every { companyRepository.findByNameAndType("FailedCompany", CompanyType.PUBLISHER) } returns null
-        every { companyRepository.save(any()) } throws exception
+        every { companyInsertService.insert(any()) } throws exception
 
         try {
             companyService.createOrGet(company)
@@ -89,7 +91,7 @@ class CompanyServiceTest {
         }
 
         verify(exactly = 2) { companyRepository.findByNameAndType("FailedCompany", CompanyType.PUBLISHER) }
-        verify(exactly = 1) { companyRepository.save(any()) }
+        verify(exactly = 1) { companyInsertService.insert(any()) }
     }
 
     @Test
@@ -99,18 +101,18 @@ class CompanyServiceTest {
         val savedDeveloper = Company(id = 4L, name = "SameCompany", type = CompanyType.DEVELOPER)
         val savedPublisher = Company(id = 5L, name = "SameCompany", type = CompanyType.PUBLISHER)
 
-        every { companyRepository.findByNameAndType("SameCompany", CompanyType.DEVELOPER) } returns null
-        every { companyRepository.findByNameAndType("SameCompany", CompanyType.PUBLISHER) } returns null
-        every { companyRepository.save(match { it.type == CompanyType.DEVELOPER }) } returns savedDeveloper
-        every { companyRepository.save(match { it.type == CompanyType.PUBLISHER }) } returns savedPublisher
+        every { companyRepository.findByNameAndType("SameCompany", CompanyType.DEVELOPER) } returnsMany listOf(null, savedDeveloper)
+        every { companyRepository.findByNameAndType("SameCompany", CompanyType.PUBLISHER) } returnsMany listOf(null, savedPublisher)
+        every { companyInsertService.insert(match { it.type == CompanyType.DEVELOPER }) } returns savedDeveloper
+        every { companyInsertService.insert(match { it.type == CompanyType.PUBLISHER }) } returns savedPublisher
 
         val resultDeveloper = companyService.createOrGet(developer)
         val resultPublisher = companyService.createOrGet(publisher)
 
         assertEquals(savedDeveloper, resultDeveloper)
         assertEquals(savedPublisher, resultPublisher)
-        verify(exactly = 1) { companyRepository.findByNameAndType("SameCompany", CompanyType.DEVELOPER) }
-        verify(exactly = 1) { companyRepository.findByNameAndType("SameCompany", CompanyType.PUBLISHER) }
+        verify(exactly = 2) { companyRepository.findByNameAndType("SameCompany", CompanyType.DEVELOPER) }
+        verify(exactly = 2) { companyRepository.findByNameAndType("SameCompany", CompanyType.PUBLISHER) }
     }
 
     @Test
@@ -119,15 +121,15 @@ class CompanyServiceTest {
         val company = Company(name = companyName, type = CompanyType.DEVELOPER)
         val savedCompany = Company(id = 6L, name = companyName, type = CompanyType.DEVELOPER)
 
-        every { companyRepository.findByNameAndType(companyName, CompanyType.DEVELOPER) } returns null
-        every { companyRepository.save(any()) } returns savedCompany
+        every { companyRepository.findByNameAndType(companyName, CompanyType.DEVELOPER) } returnsMany listOf(null, savedCompany)
+        every { companyInsertService.insert(any()) } returns savedCompany
 
         val result = companyService.createOrGet(company)
 
         assertNotNull(result)
         assertEquals(companyName, result.name)
         verify(exactly = 1) {
-            companyRepository.save(match { it.name == companyName && it.type == CompanyType.DEVELOPER })
+            companyInsertService.insert(match { it.name == companyName && it.type == CompanyType.DEVELOPER })
         }
     }
 
@@ -136,8 +138,8 @@ class CompanyServiceTest {
         val company = Company(name = "", type = CompanyType.DEVELOPER)
         val savedCompany = Company(id = 7L, name = "", type = CompanyType.DEVELOPER)
 
-        every { companyRepository.findByNameAndType("", CompanyType.DEVELOPER) } returns null
-        every { companyRepository.save(any()) } returns savedCompany
+        every { companyRepository.findByNameAndType("", CompanyType.DEVELOPER) } returnsMany listOf(null, savedCompany)
+        every { companyInsertService.insert(any()) } returns savedCompany
 
         val result = companyService.createOrGet(company)
 
@@ -146,18 +148,17 @@ class CompanyServiceTest {
     }
 
     @Test
-    fun `createOrGet should not copy id from input company`() {
+    fun `insert should not copy id from input company`() {
         val company = Company(id = 999L, name = "TestCompany", type = CompanyType.DEVELOPER)
         val savedCompany = Company(id = 8L, name = "TestCompany", type = CompanyType.DEVELOPER)
 
-        every { companyRepository.findByNameAndType("TestCompany", CompanyType.DEVELOPER) } returns null
-        every { companyRepository.save(any()) } returns savedCompany
+        every { companyRepository.saveAndFlush(any()) } returns savedCompany
 
-        val result = companyService.createOrGet(company)
+        val result = CompanyInsertService(companyRepository).insert(company)
 
         assertEquals(8L, result.id)
         verify(exactly = 1) {
-            companyRepository.save(match { it.id == null && it.name == "TestCompany" })
+            companyRepository.saveAndFlush(match { it.id == null && it.name == "TestCompany" })
         }
     }
 }

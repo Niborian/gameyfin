@@ -101,6 +101,7 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-test") {
         exclude(group = "org.mockito", module = "mockito-core")
     }
+    testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")
     testImplementation("io.mockk:mockk:${rootProject.extra["mockkVersion"]}")
     testImplementation("org.springframework.security:spring-security-test")
     testImplementation("io.projectreactor:reactor-test")

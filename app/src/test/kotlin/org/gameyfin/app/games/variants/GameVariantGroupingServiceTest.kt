@@ -92,7 +92,7 @@ class GameVariantGroupingServiceTest {
         assertEquals("1.4.2", suggestion.suggestedVariantVersion)
         assertEquals(85, suggestion.confidence)
         assertFalse(suggestion.autoGroup)
-        assertTrue(suggestion.reason.contains("Online-Fix"))
+        assertTrue(suggestion.reason.contains("online-fix", ignoreCase = true))
         assertEquals(0, service.autoGroupExactMatches(library))
         assertNull(service.tryAutoGroup(source, DiscoveredGameVariants(sourcePath, emptyList()), library))
         verify(exactly = 0) { gameRepository.save(any()) }

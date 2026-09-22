@@ -12,7 +12,7 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user
-import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity
+import org.springframework.security.web.FilterChainProxy
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.test.context.ContextConfiguration
 import org.springframework.test.context.junit.jupiter.SpringExtension
@@ -37,7 +37,9 @@ class ActuatorSecurityTest {
 
     @BeforeEach
     fun setup() {
-        mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build()
+        mvc = MockMvcBuilders.webAppContextSetup(context)
+            .addFilters(context.getBean(FilterChainProxy::class.java))
+            .build()
     }
 
     @Test

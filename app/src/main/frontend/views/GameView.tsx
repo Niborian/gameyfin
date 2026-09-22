@@ -390,6 +390,9 @@ export default function GameView() {
                             <p className="text-default-500 text-sm">
                                 Estimated download: {humanFileSize(estimatedDownloadSize)}
                             </p>
+                            <p className="text-default-500 text-sm">
+                                Downloading: {selectedVariant.name} {selectedVariant.version}
+                            </p>
                             <div className="flex flex-row gap-1">
                                 {selectedVariant.tags.map((tag) =>
                                     <Chip key={tag} size="sm" variant="flat">{tag}</Chip>

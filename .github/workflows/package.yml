@@ -67,7 +67,7 @@ jobs:
           report_paths: "**/build/test-results/test/TEST-*.xml"
 
   package:
-    name: Build AMD64 image
+    name: Publish AMD64 candidate
     needs: verify
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'candidate'
     concurrency:
@@ -93,7 +93,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
 
       - name: Restore fork plugin signing key
-        if: github.event_name != 'pull_request'
         env:
           GAMEYFIN_KEYSTORE_BASE64: ${{ secrets.GAMEYFIN_KEYSTORE_BASE64 }}
         run: |
@@ -102,7 +101,6 @@ jobs:
           chmod 600 "$RUNNER_TEMP/gameyfin-plugin-signing.p12"
 
       - name: Build production application artifact
-        if: github.event_name != 'pull_request'
         env:
           GAMEYFIN_KEYSTORE_PASSWORD: ${{ secrets.GAMEYFIN_KEYSTORE_PASSWORD }}
           GAMEYFIN_KEYSTORE_PATH: ${{ runner.temp }}/gameyfin-plugin-signing.p12
@@ -113,14 +111,13 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Determine release image tags
+      - name: Determine immutable candidate tag
         id: tags
         shell: bash
         run: |
@@ -138,7 +135,7 @@ jobs:
           context: .
           file: docker/Dockerfile.ubuntu
           platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.tags.outputs.tags }}
           # GitHub stores the signed provenance below. Registry attestations
           # otherwise appear as additional sha256-* GHCR package versions.
@@ -154,7 +151,6 @@ jobs:
           cache-to: type=gha,mode=max,scope=gameyfin-amd64
 
       - name: Attest build provenance
-        if: github.event_name != 'pull_request'
         uses: actions/attest-build-provenance@v3
         with:
           subject-name: ${{ env.IMAGE_NAME }}
@@ -164,7 +160,6 @@ jobs:
           push-to-registry: false
 
       - name: Export SPDX software bill of materials
-        if: github.event_name != 'pull_request'
         uses: anchore/sbom-action@v0
         with:
           image: ${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
@@ -172,7 +167,6 @@ jobs:
           output-file: gameyfin-sbom.spdx.json
 
       - uses: actions/upload-artifact@v7
-        if: github.event_name != 'pull_request'
         with:
           name: gameyfin-sbom-${{ github.sha }}
           path: gameyfin-sbom.spdx.json

@@ -21,9 +21,11 @@ import org.gameyfin.pluginapi.gamemetadata.GameMetadataProvider
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.assertThrows
 import org.pf4j.PluginState
 import java.nio.file.Path
+import java.sql.SQLException
 import java.time.Instant
 import kotlin.io.path.Path
 
@@ -39,6 +41,7 @@ class LibraryScanServiceTest {
     private lateinit var ignoredPathRepository: IgnoredPathRepository
     private lateinit var pluginService: PluginService
     private lateinit var configService: ConfigService
+    private lateinit var meterRegistry: SimpleMeterRegistry
 
     @BeforeEach
     fun setup() {
@@ -60,6 +63,7 @@ class LibraryScanServiceTest {
         // Return default max-concurrency value
         every { configService.get(ConfigProperties.Libraries.Scan.MaxConcurrency) } returns ConfigProperties.Libraries.Scan.MaxConcurrency.default
 
+        meterRegistry = SimpleMeterRegistry()
         libraryScanService = LibraryScanService(
             libraryRepository,
             filesystemService,
@@ -70,7 +74,7 @@ class LibraryScanServiceTest {
             ignoredPathRepository,
             pluginService,
             configService,
-            ScanMetrics(SimpleMeterRegistry())
+            ScanMetrics(meterRegistry)
         )
         every { gameVariantGroupingService.autoGroupExactMatches(any()) } returns 0
     }
@@ -232,6 +236,31 @@ class LibraryScanServiceTest {
 
         Thread.sleep(200)
         verify(atLeast = 1) { libraryGameProcessor.processNewGame(unmatchedPath, library) }
+    }
+
+    @Test
+    fun `database error in an individual game fails the entire scan`() {
+        val library = createTestLibrary(1L)
+        val sourcePath = Path("/private/library/game")
+        every { libraryRepository.findAllById(listOf(1L)) } returns listOf(library)
+        every { filesystemService.scanLibraryForGamefiles(library) } returns FilesystemScanResult(
+            newPaths = listOf(sourcePath),
+            removedGamePaths = emptyList(),
+            removedIgnoredPaths = emptyList()
+        )
+        every { libraryGameProcessor.processNewGame(sourcePath, library) } throws
+            IllegalStateException("private path", SQLException("database unavailable"))
+
+        libraryScanService.triggerScan(ScanType.QUICK, listOf(1L))
+
+        val failures = meterRegistry.find("gameyfin.scans.failures.by.kind")
+            .tags("type", "quick", "kind", "database").counter()!!
+        var attempts = 0
+        while (failures.count() == 0.0 && attempts++ < 100) {
+            Thread.sleep(20)
+        }
+        assertEquals(1.0, failures.count())
+        verify(exactly = 0) { libraryRepository.save(any()) }
     }
 
     @Test

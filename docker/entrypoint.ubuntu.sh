@@ -48,6 +48,7 @@ DEFAULT_JVM_OPTS="\
   -XX:+UseCompactObjectHeaders \
   -XX:MaxMetaspaceSize=192m \
   -XX:MaxDirectMemorySize=64m \
+  -XX:+ExitOnOutOfMemoryError \
   -Xss512k"
 
 # Append AOT Cache flag if a non-empty training cache file exists

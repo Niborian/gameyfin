@@ -1,10 +1,15 @@
 services:
   gameyfin:
-    # Replace this SHA tag with a reviewed image produced by this fork's
-    # GitHub Actions package workflow.
-    image: ghcr.io/niborian/gameyfin:sha-REPLACE_WITH_COMMIT
+    # Use a reviewed fork release. For repeatable deployment, resolve its
+    # digest and pin ghcr.io/niborian/gameyfin@sha256:<digest> instead.
+    image: ghcr.io/niborian/gameyfin:2.4.2
     container_name: gameyfin
     restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "5"
     # (optional) Limit the memory usage of the container. Recommended minimum is 1024m.
     # mem_limit: 1024m
     environment:

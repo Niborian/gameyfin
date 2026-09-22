@@ -313,6 +313,49 @@ class DownloadServiceTest {
     }
 
     @Test
+    fun `every nonempty optional selection includes exactly those ZIP entries`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+        val variant = game.variants.single()
+        val optional = listOf(
+            Triple(21L, VariantContentType.DLC, "DLC"),
+            Triple(22L, VariantContentType.EXTRA, "Soundtrack"),
+            Triple(23L, VariantContentType.PATCH, "Patch"),
+            Triple(24L, VariantContentType.MOD, "Mod"),
+            Triple(25L, VariantContentType.DEDICATED_SERVER, "Dedicated server")
+        )
+        optional.drop(2).forEach { (id, type, name) ->
+            val path = tempDir.resolve("$name.bin").createFile().also { it.writeText(name) }
+            variant.contents.add(VariantContent(id, variant, type, name, path.toString()))
+        }
+
+        for (selection in 1 until (1 shl optional.size)) {
+            val selectedIds = optional.indices.filter { selection and (1 shl it) != 0 }
+                .map { optional[it].first }
+            val expectedEntries = listOf("Base game.bin") + optional.indices
+                .filter { selection and (1 shl it) != 0 }
+                .map { "${optional[it].third}.bin" }
+            val result = service.getDownload(game, TestProvider::class.java.name, 10L, selectedIds) as FileDownload
+            val entries = mutableListOf<String>()
+            ZipInputStream(result.data).use { zip ->
+                while (true) {
+                    entries.add(zip.nextEntry?.name ?: break)
+                }
+            }
+
+            assertEquals(expectedEntries, entries, "Unexpected ZIP entries for selection $selectedIds")
+        }
+
+        val defaultDownload = service.getDownload(game, TestProvider::class.java.name, 10L, null) as FileDownload
+        val defaultEntries = mutableListOf<String>()
+        ZipInputStream(defaultDownload.data).use { zip ->
+            while (true) {
+                defaultEntries.add(zip.nextEntry?.name ?: break)
+            }
+        }
+        assertEquals(listOf("Base game.bin", "Soundtrack.bin"), defaultEntries)
+    }
+
+    @Test
     fun `getDownload should reject selected content outside the variant content root`(@TempDir tempDir: java.nio.file.Path) {
         val game = createVariantGame(tempDir.resolve("game").also { java.nio.file.Files.createDirectory(it) })
         val outsidePath = tempDir.resolve("outside.bin").createFile().also { it.writeText("outside") }

@@ -27,6 +27,10 @@ test scanning plus variant behavior against a fixture library that includes
 torrent-managed paths, versions, selectable content, grouped archives, and
 hardlinks.
 
+Use the [H2 backup and restore rehearsal checklist](BACKUP-RESTORE.md) before
+any live image or scan change. A backup is not considered ready until a copy
+has been restored and checked in isolation.
+
 Use these scripts when you want to build a local Gameyfin image from this checkout and replace your running container with it.
 
 ## Windows PowerShell

@@ -20,25 +20,17 @@ class LoginRedirectController(
     fun loginRedirect(request: HttpServletRequest, response: HttpServletResponse) {
         val continueParam = request.getParameter("continue")
         val directParam = request.getParameter("direct")
+        val continueTarget = SafeRedirectTarget.from(continueParam)
 
         // Check if SSO is enabled
         val isSsoEnabled = config.get(ConfigProperties.SSO.OIDC.Enabled) == true
 
         if (isSsoEnabled && directParam != "1") {
-            // Redirect to SSO provider with continue parameter if present
+            // Preserve only a validated local destination through the SSO round trip.
             val ssoUrl = "/oauth2/authorization/${SecurityConfig.SSO_PROVIDER_KEY}"
-            if (!continueParam.isNullOrBlank()) {
-                response.sendRedirect("$ssoUrl?continue=$continueParam")
-            } else {
-                response.sendRedirect(ssoUrl)
-            }
+            response.sendRedirect("$ssoUrl?continue=${SafeRedirectTarget.asQueryParameter(continueTarget)}")
         } else {
-            // Redirect to direct login page with continue parameter if present
-            if (!continueParam.isNullOrBlank()) {
-                response.sendRedirect("/login?continue=$continueParam")
-            } else {
-                response.sendRedirect("/login")
-            }
+            response.sendRedirect("/login?continue=${SafeRedirectTarget.asQueryParameter(continueTarget)}")
         }
     }
 }

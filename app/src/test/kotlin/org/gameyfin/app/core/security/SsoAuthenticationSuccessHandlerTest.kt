@@ -412,6 +412,25 @@ class SsoAuthenticationSuccessHandlerTest {
         verify { response.sendRedirect("/") }
     }
 
+    @Test
+    fun `rejects protocol relative continuation after SSO`() {
+        val oidcUser = oidcUser()
+
+        every { config.get(ConfigProperties.SSO.OIDC.UsernameClaim) } returns "preferred_username"
+        every { config.get(ConfigProperties.SSO.OIDC.MatchExistingUsersBy) } returns MatchUsersBy.username
+        every { authentication.principal } returns oidcUser
+        every { authentication.credentials } returns null
+        every { request.getParameter("continue") } returns "//evil.example/games"
+
+        every { userService.findByOidcProviderId(any()) } returns null
+        every { userService.getByUsername(any()) } returns null
+        every { userService.registerOrUpdateUser(any()) } returns mockk(relaxed = true)
+
+        handler.onAuthenticationSuccess(request, response, authentication)
+
+        verify { response.sendRedirect("/") }
+    }
+
     // ── Unknown MatchExistingUsersBy ──────────────────────────────────────────
 
     @Test

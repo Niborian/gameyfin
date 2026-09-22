@@ -5,7 +5,7 @@ import org.gameyfin.app.games.entities.CompanyType
 import org.gameyfin.app.games.repositories.CompanyRepository
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest
+import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest
 import org.springframework.context.annotation.Import
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional

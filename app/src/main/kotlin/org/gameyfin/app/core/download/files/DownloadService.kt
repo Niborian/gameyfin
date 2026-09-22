@@ -145,13 +145,21 @@ class DownloadService(
 
     private fun validateContentPaths(variant: GameVariant, contents: List<VariantContent>) {
         val variantPath = Path.of(variant.path).toRealPath()
-        val contentRoot = if (Files.isDirectory(variantPath)) variantPath else variantPath.parent
+        // Variants can be folders below a game root, or files linked into a managed mirror.
+        // Their parent is the smallest stable root that permits shared, sibling content without
+        // allowing a selection to reach outside the game/mirror tree.
+        val contentRoot = variantPath.parent
             ?: throw IllegalArgumentException("Variant ${variant.id} has no content root")
 
-        contents.flatMap { it.effectivePaths() }.forEach { contentPath ->
-            val resolvedPath = Path.of(contentPath).toRealPath()
-            require(resolvedPath.startsWith(contentRoot)) {
-                "Content path '$contentPath' is outside variant ${variant.id} content root '$contentRoot'"
+        contents.forEach { content ->
+            val contentPaths = content.effectivePaths()
+            require(contentPaths.isNotEmpty()) { "Content '${content.name}' has no download paths" }
+
+            contentPaths.forEach { contentPath ->
+                val resolvedPath = Path.of(contentPath).toRealPath()
+                require(resolvedPath.startsWith(contentRoot)) {
+                    "Content path '$contentPath' is outside variant ${variant.id} content root '$contentRoot'"
+                }
             }
         }
     }

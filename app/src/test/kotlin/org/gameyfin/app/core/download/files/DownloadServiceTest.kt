@@ -28,6 +28,7 @@ import org.pf4j.PluginWrapper
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.nio.file.NoSuchFileException
 import java.time.Instant
 import java.util.zip.ZipInputStream
 import kotlin.io.path.Path
@@ -206,7 +207,7 @@ class DownloadServiceTest {
                 fileSize = null,
                 required = true,
                 defaultSelected = true,
-                paths = mutableListOf(firstPart.toString(), secondPart.toString())
+                paths = mutableListOf(firstPart.toString(), secondPart.toString(), firstPart.toString())
             )
         )
 
@@ -222,6 +223,63 @@ class DownloadServiceTest {
         assertEquals("zip", result.fileExtension)
         assertEquals(8L, service.estimateDownloadSize(game, 10L, listOf(20L)))
         assertEquals(listOf("Base archive/part01.rar", "Base archive/part02.rar"), entries)
+    }
+
+    @Test
+    fun `shared optional content should be available only from its eligible variant`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+        val eligibleVariant = game.variants.single()
+        eligibleVariant.contents.single { it.id == 22L }.name = "Shared extras"
+        val olderVariant = GameVariant(
+            id = 11L,
+            game = game,
+            name = "Normal",
+            version = "0.9",
+            path = eligibleVariant.path,
+            fileSize = 5L
+        )
+        olderVariant.contents.add(
+            VariantContent(
+                id = 30L,
+                variant = olderVariant,
+                name = "Base game",
+                path = eligibleVariant.path,
+                fileSize = 5L,
+                required = true,
+                defaultSelected = true
+            )
+        )
+        game.variants.add(olderVariant)
+
+        assertEquals(9L, service.estimateDownloadSize(game, 10L, listOf(22L)))
+        assertEquals(5L, service.estimateDownloadSize(game, 11L, listOf(22L)))
+    }
+
+    @Test
+    fun `getDownload should reject groups with missing or empty members`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+        val variant = game.variants.single()
+        variant.contents.clear()
+        variant.contents.add(
+            VariantContent(
+                id = 20L,
+                variant = variant,
+                name = "Incomplete archive",
+                path = tempDir.resolve("base.bin").toString(),
+                required = true,
+                paths = mutableListOf(tempDir.resolve("missing.part02.rar").toString())
+            )
+        )
+
+        assertThrows(NoSuchFileException::class.java) {
+            service.getDownload(game, TestProvider::class.java.name, 10L, listOf(20L))
+        }
+
+        variant.contents.single().paths = mutableListOf(" ")
+        val exception = assertThrows(IllegalArgumentException::class.java) {
+            service.getDownload(game, TestProvider::class.java.name, 10L, listOf(20L))
+        }
+        assertTrue(exception.message!!.contains("no download paths"))
     }
 
     @Test

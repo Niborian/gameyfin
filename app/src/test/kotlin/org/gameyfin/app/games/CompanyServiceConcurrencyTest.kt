@@ -10,6 +10,8 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest
 import org.springframework.context.annotation.Import
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 import java.util.UUID
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
@@ -23,7 +25,8 @@ import kotlin.test.assertTrue
 class CompanyServiceConcurrencyTest @Autowired constructor(
     private val companyService: CompanyService,
     private val companyRepository: CompanyRepository,
-    private val entityManager: EntityManager
+    private val entityManager: EntityManager,
+    private val transactionManager: PlatformTransactionManager
 ) {
     @Test
     fun `new company is managed in the caller transaction`() {
@@ -43,7 +46,9 @@ class CompanyServiceConcurrencyTest @Autowired constructor(
             val results = (1..6).map {
                 executor.submit(Callable {
                     start.await()
-                    companyService.createOrGet(Company(name = name, type = CompanyType.DEVELOPER)).id
+                    TransactionTemplate(transactionManager).execute {
+                        companyService.createOrGet(Company(name = name, type = CompanyType.DEVELOPER)).id
+                    }
                 })
             }
             start.countDown()

@@ -16,6 +16,7 @@ class SafeRedirectTargetTest {
             "//attacker.example",
             "/\\attacker.example",
             "/%2f%2fattacker.example",
+            "/library%0d%0aLocation:%20//attacker.example",
             "javascript:alert(1)",
             "\u0000/library"
         ).forEach { target -> assertEquals("/", SafeRedirectTarget.from(target)) }

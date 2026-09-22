@@ -31,6 +31,7 @@ data class VariantContentDto(
     val path: String?,
     val paths: List<String>?,
     val pathCount: Int,
+    val memberNames: List<String>,
     val fileSize: Long,
     val required: Boolean,
     val defaultSelected: Boolean,

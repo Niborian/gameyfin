@@ -8,6 +8,8 @@ import org.gameyfin.app.games.dto.GameUserDto
 import org.gameyfin.app.games.entities.Company
 import org.gameyfin.app.games.entities.CompanyType
 import org.gameyfin.app.games.entities.Game
+import org.gameyfin.app.games.entities.GameVariant
+import org.gameyfin.app.games.entities.VariantContent
 import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.app.media.Image
 import org.gameyfin.app.media.ImageType
@@ -92,6 +94,24 @@ class GameExtensionsTest {
         val result = games.toDtos()
 
         assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun `grouped content exposes member filenames but not server paths to users`() {
+        val content = VariantContent(
+            id = 1L,
+            variant = mockk<GameVariant>(relaxed = true),
+            name = "Base archive",
+            path = "/library/game/part01.rar",
+            paths = mutableListOf("/library/game/part01.rar", "/library/game/part02.rar")
+        )
+
+        val dto = content.toDto(includeAdminFields = false)
+
+        assertEquals(2, dto.pathCount)
+        assertEquals(listOf("part01.rar", "part02.rar"), dto.memberNames)
+        assertEquals(null, dto.path)
+        assertEquals(null, dto.paths)
     }
 
     @Test

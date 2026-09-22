@@ -211,23 +211,32 @@ export default function GameView() {
 
     function renderContentItem(content: VariantContentDto) {
         return (
-            <Checkbox
-                key={content.id}
-                size="sm"
-                className="py-1"
-                isSelected={content.required || selectedContentIds.has(content.id)}
-                isDisabled={content.required}
-                onValueChange={(selected) => setContentSelected(content, selected)}
-            >
-                <span className="flex flex-col gap-0.5 leading-snug">
-                    <span className="text-sm">
-                        {content.name} ({content.pathCount > 1 ? `${content.pathCount} files, ` : ""}{humanFileSize(content.fileSize)})
-                        {content.required && <span className="text-default-500"> · required</span>}
+            <div key={content.id}>
+                <Checkbox
+                    size="sm"
+                    className="py-1"
+                    isSelected={content.required || selectedContentIds.has(content.id)}
+                    isDisabled={content.required}
+                    onValueChange={(selected) => setContentSelected(content, selected)}
+                >
+                    <span className="flex flex-col gap-0.5 leading-snug">
+                        <span className="text-sm">
+                            {content.name} ({content.pathCount > 1 ? `${content.pathCount} files, ` : ""}{humanFileSize(content.fileSize)})
+                            {content.required && <span className="text-default-500"> · required</span>}
+                        </span>
+                        {content.defaultSelected && !content.required &&
+                            <span className="text-xs text-default-500">Selected by default</span>}
                     </span>
-                    {content.defaultSelected && !content.required &&
-                        <span className="text-xs text-default-500">Selected by default</span>}
-                </span>
-            </Checkbox>
+                </Checkbox>
+                {content.memberNames.length > 1 && (
+                    <details className="pl-6 text-xs text-default-500">
+                        <summary className="cursor-pointer">Show included files</summary>
+                        <ul className="list-disc pl-5">
+                            {content.memberNames.map((name, index) => <li key={index}>{name}</li>)}
+                        </ul>
+                    </details>
+                )}
+            </div>
         );
     }
 

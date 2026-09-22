@@ -4,6 +4,7 @@ import org.gameyfin.app.core.security.isCurrentUserAdmin
 import org.gameyfin.app.games.dto.*
 import org.gameyfin.app.games.entities.*
 import org.gameyfin.app.media.toDto
+import java.nio.file.Path
 import java.time.ZoneOffset
 
 
@@ -112,6 +113,7 @@ fun VariantContent.toDto(includeAdminFields: Boolean): VariantContentDto {
         path = path.takeIf { includeAdminFields },
         paths = effectivePaths.takeIf { includeAdminFields },
         pathCount = effectivePaths.size,
+        memberNames = effectivePaths.map { Path.of(it).fileName.toString() },
         fileSize = fileSize ?: 0L,
         required = required,
         defaultSelected = defaultSelected,

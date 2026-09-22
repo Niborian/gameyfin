@@ -6,8 +6,9 @@ GitHub Actions verifies pull requests and publishes the AMD64 image for this
 unofficial variant build to `ghcr.io/niborian/gameyfin`. A merge to `main`
 creates only an immutable `sha-<commit>` candidate. After review, a manually
 started workflow adds the matching Gradle/web version tag (for example,
-`2.4.0-variants.1`) to that release build. Deploy that reviewed version tag or
-its digest; never a mutable tag.
+`2.4.1`) and updates `latest` to that release build. Deploy that reviewed
+version tag or its digest when repeatability matters; `latest` intentionally
+tracks the newest reviewed release.
 
 The workflow deliberately does not publish to the upstream Gameyfin package or
 Maven Central. Before changing a running instance, back up its H2 database and

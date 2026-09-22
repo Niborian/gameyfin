@@ -110,7 +110,7 @@ jobs:
               echo "Release tag ${{ needs.verify.outputs.version }} already exists and must not be moved." >&2
               exit 1
             fi
-            tags="${IMAGE_NAME}:${{ needs.verify.outputs.version }},${tags}"
+            tags="${IMAGE_NAME}:${{ needs.verify.outputs.version }},${IMAGE_NAME}:latest,${tags}"
           fi
           echo "tags=${tags}" >> "$GITHUB_OUTPUT"
 

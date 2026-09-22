@@ -151,7 +151,7 @@ export default function MainLayout() {
             <Divider className="mt-8"/>
             <div className="flex flex-col w-full 2xl:px-[12.5%]">
                 <footer className="flex flex-row items-center justify-between py-4">
-                    <p>Gameyfin {PackageJson.version}</p>
+                    <p>Unofficial Gameyfin {PackageJson.version}</p>
                     <p className="flex flex-row gap-1 items-baseline">
                         Made with
                         <HeartIcon size={16} weight="fill" className="text-primary" onClick={easterEgg}/>

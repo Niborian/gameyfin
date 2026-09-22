@@ -47,6 +47,32 @@ class GameVariantServiceTest {
     }
 
     @Test
+    fun `syncVariants should remain stable across a repeated scan of attached variants`() {
+        val (service, repository, filesystemService, library, game, gamePath) = variantTestContext()
+        val discovery = discoveredVariantsWithContent(gamePath)
+        every { repository.save(game) } returns game
+        every { filesystemService.calculateFileSize(any()) } returns 0L
+
+        service.syncVariants(game, discovery, library)
+        val pinnedVariant = game.variants.single { it.name == "Normal" && it.version == "1.0" }
+        pinnedVariant.defaultLocked = true
+        val firstScan = game.variants.associate { variant ->
+            "${variant.name}:${variant.version}" to variant.contents.map { "${it.type}:${it.name}:${it.path}" }.sorted()
+        }
+
+        service.syncVariants(game, discovery, library)
+        val secondScan = game.variants.associate { variant ->
+            "${variant.name}:${variant.version}" to variant.contents.map { "${it.type}:${it.name}:${it.path}" }.sorted()
+        }
+
+        assertEquals(firstScan, secondScan)
+        assertEquals(3, game.variants.size)
+        assertEquals(6, game.variants.sumOf { it.contents.size })
+        assertEquals("1.0", game.variants.single { it.isDefault }.version)
+        assertTrue(game.variants.single { it.version == "1.0" }.defaultLocked)
+    }
+
+    @Test
     fun `syncVariants should not overwrite unmanaged variant for same scanner path`() {
         val gameRepository = mockk<GameRepository>()
         val filesystemService = mockk<FilesystemService>()
@@ -122,6 +148,26 @@ class GameVariantServiceTest {
         listOf("1.0", "1.1").map { version ->
             ParsedVariantMetadata("Normal", version, gamePath.resolve("Normal $version"), emptySet(), null, null, null, emptyList())
         } + ParsedVariantMetadata("Multiplayer Fix", "1.1", gamePath.resolve("Multiplayer Fix 1.1"), setOf("multiplayer"), null, null, null, emptyList())
+    )
+
+    private fun discoveredVariantsWithContent(gamePath: Path): DiscoveredGameVariants = DiscoveredGameVariants(
+        gamePath,
+        listOf("1.0", "1.1").map { version ->
+            val variantPath = gamePath.resolve("Normal $version")
+            ParsedVariantMetadata(
+                "Normal", version, variantPath, emptySet(), null, null, null,
+                listOf(
+                    ParsedVariantContent("base", VariantContentType.BASE, "Base game", variantPath, true, true, emptySet()),
+                    ParsedVariantContent("dlc", VariantContentType.DLC, "DLC", variantPath.resolve("dlc"), false, false, emptySet())
+                )
+            )
+        } + ParsedVariantMetadata(
+            "Multiplayer Fix", "1.1", gamePath.resolve("Multiplayer Fix 1.1"), setOf("multiplayer"), null, null, null,
+            listOf(
+                ParsedVariantContent("base", VariantContentType.BASE, "Base game", gamePath.resolve("Multiplayer Fix 1.1"), true, true, emptySet()),
+                ParsedVariantContent("archive", VariantContentType.EXTRA, "Archives", gamePath.resolve("Multiplayer Fix 1.1/archives"), false, false, emptySet())
+            )
+        )
     )
 
     private data class VariantTestContext(

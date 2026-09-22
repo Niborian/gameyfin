@@ -31,6 +31,7 @@ import kotlin.io.path.createDirectory
 import kotlin.io.path.createFile
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class GameVariantGroupingServiceTest {
@@ -70,6 +71,54 @@ class GameVariantGroupingServiceTest {
         assertEquals(2L, suggestions.single().sourceGameId)
         assertEquals("Normal", suggestions.single().suggestedVariantName)
         assertEquals("2025.07.25", suggestions.single().suggestedVariantVersion)
+    }
+
+    @Test
+    fun `online fix release stays an admin review suggestion and is never auto grouped`(@TempDir tempDir: Path) {
+        val library = createLibrary()
+        val plugin = PluginManagementEntry("igdb")
+        val targetPath = tempDir.resolve("Craftopia.v1.3.0.rar").createFile()
+        val sourcePath = tempDir.resolve("Craftopia.v1.4.2.Online-Fix.rar").createFile()
+        val target = createGame(1L, library, targetPath.toString(), plugin, "123")
+        val source = createGame(2L, library, sourcePath.toString(), plugin, "123")
+        library.games.addAll(listOf(target, source))
+
+        every { gameRepository.findAllByLibraryId(1L) } returns listOf(target, source)
+        every { filesystemService.calculateFileSize(any()) } returns 2048L
+
+        val suggestion = service.getGroupingSuggestions(1L).single()
+
+        assertEquals("multiplayer compatibility fix", suggestion.suggestedVariantName)
+        assertEquals("1.4.2", suggestion.suggestedVariantVersion)
+        assertEquals(85, suggestion.confidence)
+        assertFalse(suggestion.autoGroup)
+        assertTrue(suggestion.reason.contains("online-fix", ignoreCase = true))
+        assertEquals(0, service.autoGroupExactMatches(library))
+        assertNull(service.tryAutoGroup(source, DiscoveredGameVariants(sourcePath, emptyList()), library))
+        verify(exactly = 0) { gameRepository.save(any()) }
+    }
+
+    @Test
+    fun `older marked release cannot become the automatic canonical target`(@TempDir tempDir: Path) {
+        val library = createLibrary()
+        val plugin = PluginManagementEntry("igdb")
+        val markedPath = tempDir.resolve("Craftopia.v1.2.Online-Fix.rar").createFile()
+        val normalPath = tempDir.resolve("Craftopia.v1.3.rar").createFile()
+        val marked = createGame(1L, library, markedPath.toString(), plugin, "123")
+        val normal = createGame(2L, library, normalPath.toString(), plugin, "123")
+        library.games.addAll(listOf(marked, normal))
+
+        every { gameRepository.findAllByLibraryId(1L) } returns listOf(marked, normal)
+        every { filesystemService.calculateFileSize(any()) } returns 2048L
+
+        val suggestion = service.getGroupingSuggestions(1L).single()
+
+        assertEquals(normal.id, suggestion.targetGameId)
+        assertEquals(marked.id, suggestion.sourceGameId)
+        assertFalse(suggestion.autoGroup)
+        assertEquals(0, service.autoGroupExactMatches(library))
+        assertNull(service.tryAutoGroup(normal, DiscoveredGameVariants(normalPath, emptyList()), library))
+        verify(exactly = 0) { gameRepository.save(any()) }
     }
 
     @Test

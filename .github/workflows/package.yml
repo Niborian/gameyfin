@@ -136,7 +136,9 @@ jobs:
         with:
           subject-name: ${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: true
+          # Keep the signed attestation in GitHub; GHCR stores registry
+          # attestations as additional sha256-* package versions.
+          push-to-registry: false
 
       - name: Export SPDX software bill of materials
         if: github.event_name != 'pull_request'

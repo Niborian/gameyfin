@@ -7,10 +7,19 @@ unofficial variant build to `ghcr.io/niborian/gameyfin`. Pull requests verify
 the image without publishing it, and merging to `main` does not publish a
 package version. After review, a manually started workflow publishes the
 matching Gradle/web version tag (for example, `2.4.2`) and updates `latest`.
-It does not create SHA-named tags. Deploy the reviewed image by digest when
-repeatability matters; `latest` intentionally tracks the newest reviewed
-release. The exact commit remains in the image's OCI revision metadata and
-build provenance.
+It does not create SHA-named image tags or registry attestation versions.
+Deploy the reviewed image by digest when repeatability matters; `latest`
+intentionally tracks the newest reviewed release. The exact commit remains in
+the image's OCI revision metadata and signed build provenance stored in GitHub.
+Verify provenance for a selected digest with GitHub CLI (authenticate to GHCR
+first for a private package):
+
+```bash
+gh attestation verify oci://ghcr.io/niborian/gameyfin@sha256:<digest> --repo Niborian/gameyfin
+```
+
+This change prevents new `sha256-*` package entries; it does not remove
+historical entries already in GHCR.
 
 The workflow deliberately does not publish to the upstream Gameyfin package or
 Maven Central. Before changing a running instance, back up its H2 database and

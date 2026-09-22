@@ -10,7 +10,6 @@ import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.SimpleFileVisitor
-import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.BasicFileAttributes
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
@@ -35,19 +34,22 @@ class HardlinkMirrorService(
 
     fun mirror(source: Path, library: Library, gamePath: Path, targetName: String): LinkResult {
         val target = mirrorTarget(library, gamePath, targetName)
+        require(source.exists()) { "Hardlink source path does not exist: $source" }
+        mirrorRoot.createDirectories()
+        require(Files.getFileStore(source) == Files.getFileStore(mirrorRoot)) {
+            "Hardlink mirror requires source and mirror storage on the same filesystem"
+        }
         deleteTargetIfPresent(target)
 
         return try {
             linkTree(source, target)
             LinkResult(target, VariantLinkStatus.HARDLINKED, null)
         } catch (e: Exception) {
-            log.warn { "Hardlinking '$source' to '$target' failed: ${e.message}; copying instead" }
+            log.warn { "Hardlinking '$source' to '$target' failed: ${e.message}" }
             deleteTargetIfPresent(target)
-            copyTree(source, target)
-            LinkResult(
-                path = target,
-                status = VariantLinkStatus.COPIED_FALLBACK,
-                fallbackReason = e.message ?: e.javaClass.simpleName
+            throw IllegalStateException(
+                "Hardlink mirror requires source and mirror storage on the same filesystem: ${e.message ?: e.javaClass.simpleName}",
+                e
             )
         }
     }
@@ -62,7 +64,6 @@ class HardlinkMirrorService(
     }
 
     private fun linkTree(source: Path, target: Path) {
-        if (!source.exists()) throw IOException("Source path does not exist")
         if (!source.isDirectory()) {
             target.parent.createDirectories()
             Files.createLink(target, source)
@@ -79,29 +80,6 @@ class HardlinkMirrorService(
                 val targetFile = target.resolve(source.relativize(file))
                 targetFile.parent.createDirectories()
                 Files.createLink(targetFile, file)
-                return FileVisitResult.CONTINUE
-            }
-        })
-    }
-
-    private fun copyTree(source: Path, target: Path) {
-        if (!source.exists()) throw IOException("Source path does not exist")
-        if (!source.isDirectory()) {
-            target.parent.createDirectories()
-            Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING)
-            return
-        }
-
-        Files.walkFileTree(source, object : SimpleFileVisitor<Path>() {
-            override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
-                target.resolve(source.relativize(dir)).createDirectories()
-                return FileVisitResult.CONTINUE
-            }
-
-            override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
-                val targetFile = target.resolve(source.relativize(file))
-                targetFile.parent.createDirectories()
-                Files.copy(file, targetFile, StandardCopyOption.REPLACE_EXISTING)
                 return FileVisitResult.CONTINUE
             }
         })

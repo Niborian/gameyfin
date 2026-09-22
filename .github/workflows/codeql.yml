@@ -31,6 +31,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
 
       - name: Compile production code
-        run: ./gradlew clean build -Dkotlin.compiler.execution.strategy=in-process --no-daemon --console=plain
+        # CodeQL must observe compiler processes; restoring Gradle task outputs leaves it with no source to analyze.
+        run: ./gradlew clean build -Dkotlin.compiler.execution.strategy=in-process --no-build-cache --no-daemon --console=plain
 
       - uses: github/codeql-action/analyze@v4

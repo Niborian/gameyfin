@@ -52,3 +52,27 @@ services:
   gameyfin:
     image: gameyfin:variant-local
 ```
+
+## Readiness and scan failures
+
+The container health check polls the management-port readiness endpoint from
+inside the container. It allows three minutes for a cold start and reports
+`unhealthy` if the application or its plugins never become ready. Port 8081
+does not need to be published to the host for this check.
+
+After starting a reviewed image, check `docker inspect --format '{{.State.Health.Status}}' gameyfin`
+and `docker logs --since 30m gameyfin`. A healthy container is not proof that
+the last library scan succeeded: monitor `gameyfin_scans_failed_total` and
+`gameyfin_scans_active` on the private Prometheus endpoint as separate
+signals. `gameyfin_scans_failures_by_kind_total` separates database failures
+from other errors with fixed `type` and `kind` labels, without putting paths
+or exception messages in metrics. An increase in failed scans, or an active
+scan that never returns to zero, warrants inspection of the corresponding
+scan progress and logs.
+
+The default JVM options exit on Java heap exhaustion so the restart policy can
+recover the process. An unexpected container restart or an `OutOfMemoryError`
+in logs is an incident, not a successful scan. Preserve the logs and H2 backup,
+check available memory and database errors, and do not retry a large scan or
+change the live image until the backup has been restored in isolation. Keep
+management and Prometheus endpoints private; do not publish port 8081.

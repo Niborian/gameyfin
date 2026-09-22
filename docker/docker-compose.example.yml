@@ -5,6 +5,11 @@ services:
     image: ghcr.io/niborian/gameyfin:2.4.2
     container_name: gameyfin
     restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "5"
     # (optional) Limit the memory usage of the container. Recommended minimum is 1024m.
     # mem_limit: 1024m
     environment:

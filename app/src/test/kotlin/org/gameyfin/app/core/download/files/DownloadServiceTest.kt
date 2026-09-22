@@ -225,6 +225,50 @@ class DownloadServiceTest {
     }
 
     @Test
+    fun `getDownload should include only required and explicitly selected optional content`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+        val variant = game.variants.single()
+        val patchPath = tempDir.resolve("patch.bin").createFile().also { it.writeText("patch") }
+        val modPath = tempDir.resolve("mod.bin").createFile().also { it.writeText("mod") }
+        val serverPath = tempDir.resolve("server.bin").createFile().also { it.writeText("server") }
+        variant.contents.addAll(
+            listOf(
+                VariantContent(23L, variant, VariantContentType.PATCH, "Patch", patchPath.toString()),
+                VariantContent(24L, variant, VariantContentType.MOD, "Mod", modPath.toString()),
+                VariantContent(25L, variant, VariantContentType.DEDICATED_SERVER, "Dedicated server", serverPath.toString())
+            )
+        )
+
+        val result = service.getDownload(game, TestProvider::class.java.name, 10L, listOf(21L, 22L, 23L, 24L, 25L)) as FileDownload
+        val entries = mutableListOf<String>()
+        ZipInputStream(result.data).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                entries.add(entry.name)
+            }
+        }
+
+        assertEquals(
+            listOf("Base game.bin", "DLC.bin", "Soundtrack.bin", "Patch.bin", "Mod.bin", "Dedicated server.bin"),
+            entries
+        )
+    }
+
+    @Test
+    fun `getDownload should reject selected content outside the variant content root`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir.resolve("game").also { java.nio.file.Files.createDirectory(it) })
+        val outsidePath = tempDir.resolve("outside.bin").createFile().also { it.writeText("outside") }
+        val variant = game.variants.single()
+        variant.contents.add(VariantContent(23L, variant, VariantContentType.EXTRA, "Outside", outsidePath.toString()))
+
+        val exception = assertThrows(IllegalArgumentException::class.java) {
+            service.getDownload(game, TestProvider::class.java.name, 10L, listOf(23L))
+        }
+
+        assertTrue(exception.message!!.contains("outside variant"))
+    }
+
+    @Test
     fun `processDownload should use throttled stream when bandwidth limiting enabled`() {
         val inputStream = ByteArrayInputStream("test data".toByteArray())
         val outputStream = ByteArrayOutputStream()

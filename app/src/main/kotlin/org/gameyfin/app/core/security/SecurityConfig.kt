@@ -13,6 +13,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity
 import org.springframework.security.config.http.SessionCreationPolicy
+import org.springframework.security.config.Customizer.withDefaults
 import org.springframework.security.core.session.SessionRegistry
 import org.springframework.security.oauth2.client.registration.ClientRegistration
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository
@@ -40,8 +41,11 @@ class SecurityConfig(
     @Bean
     fun actuatorFilterChain(http: HttpSecurity): SecurityFilterChain {
         http.securityMatcher("/actuator/**")
-            .authorizeHttpRequests { auth -> auth.anyRequest().permitAll() }
-            .csrf { csrf -> csrf.disable() }
+            .authorizeHttpRequests { auth ->
+                auth.requestMatchers("/actuator/health/**", "/actuator/info", "/actuator/prometheus").permitAll()
+                    .anyRequest().hasRole("ADMIN")
+            }
+            .csrf(withDefaults())
         return http.build()
     }
 

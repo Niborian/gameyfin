@@ -6,10 +6,20 @@ GitHub Actions verifies pull requests and publishes the AMD64 image for this
 unofficial variant build to `ghcr.io/niborian/gameyfin`. Pull requests verify
 the image without publishing it, and merging to `main` does not publish a
 package version. After review, a manually started workflow publishes the
-matching Gradle/web version tag (for example, `2.4.2`) and updates `latest`.
-It does not create SHA-named image tags or registry attestation versions.
-Deploy the reviewed image by digest when repeatability matters; `latest`
-intentionally tracks the newest reviewed release. The exact commit remains in
+matching Gradle/web version tag (for example, `2.4.3`) as an immutable
+**candidate**. This does not move `latest`. Compare that exact digest with the
+running instance using the [cutover evidence issue](https://github.com/Niborian/gameyfin/issues/61),
+including the isolated restore and torrent-managed source-path checks. Only
+then manually select **promote**, supplying the reviewed version and digest.
+Promotion retags that digest as `latest` without rebuilding the image, and
+fails if the version tag has changed. Ordinary pull requests and main pushes
+never publish or promote.
+
+The workflow does not create SHA-named image tags and keeps signed provenance
+in GitHub rather than as registry attestation versions. Verify that behavior
+on the next candidate publication; historical `sha256-*` package entries are
+not removed by this workflow. Deploy the reviewed image by digest when
+repeatability matters. The exact commit remains in
 the image's OCI revision metadata and signed build provenance stored in GitHub.
 Verify provenance for a selected digest with GitHub CLI (authenticate to GHCR
 first for a private package):
@@ -18,8 +28,16 @@ first for a private package):
 gh attestation verify oci://ghcr.io/niborian/gameyfin@sha256:<digest> --repo Niborian/gameyfin
 ```
 
-This change prevents new `sha256-*` package entries; it does not remove
-historical entries already in GHCR.
+After promotion, confirm the version tag and `latest` resolve to the same
+digest before telling anyone to switch images. If the candidate does not meet
+the cutover gate, leave `latest` unchanged. Once production uses this fork,
+continue testing future versions separately and promote only after review.
+Before a cutover, record the running image reference and digest, save an H2
+backup, and retain the existing deployment configuration. If the replacement
+regresses, stop it and restart the recorded image with the original
+configuration; restore the saved database only if a migration or write has
+made the old image unable to use the current database. Do not remove or rename
+torrent-managed source files during either transition.
 
 The workflow deliberately does not publish to the upstream Gameyfin package or
 Maven Central. Before changing a running instance, back up its H2 database and

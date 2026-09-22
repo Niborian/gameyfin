@@ -6,6 +6,23 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Publish a version candidate or promote a reviewed digest to latest
+        required: true
+        type: choice
+        default: candidate
+        options:
+          - candidate
+          - promote
+      version:
+        description: Exact existing version tag to promote (promotion only)
+        required: false
+        type: string
+      digest:
+        description: Reviewed sha256 digest of that version (promotion only)
+        required: false
+        type: string
 
 env:
   IMAGE_NAME: ghcr.io/niborian/gameyfin
@@ -50,9 +67,12 @@ jobs:
           report_paths: "**/build/test-results/test/TEST-*.xml"
 
   package:
-    name: Build AMD64 image
+    name: Publish AMD64 candidate
     needs: verify
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'candidate'
+    concurrency:
+      group: gameyfin-manual-release
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -73,7 +93,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
 
       - name: Restore fork plugin signing key
-        if: github.event_name != 'pull_request'
         env:
           GAMEYFIN_KEYSTORE_BASE64: ${{ secrets.GAMEYFIN_KEYSTORE_BASE64 }}
         run: |
@@ -82,7 +101,6 @@ jobs:
           chmod 600 "$RUNNER_TEMP/gameyfin-plugin-signing.p12"
 
       - name: Build production application artifact
-        if: github.event_name != 'pull_request'
         env:
           GAMEYFIN_KEYSTORE_PASSWORD: ${{ secrets.GAMEYFIN_KEYSTORE_PASSWORD }}
           GAMEYFIN_KEYSTORE_PATH: ${{ runner.temp }}/gameyfin-plugin-signing.p12
@@ -93,14 +111,13 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Determine release image tags
+      - name: Determine immutable candidate tag
         id: tags
         shell: bash
         run: |
@@ -108,7 +125,7 @@ jobs:
             echo "Release tag ${{ needs.verify.outputs.version }} already exists and must not be moved." >&2
             exit 1
           fi
-          tags="${IMAGE_NAME}:${{ needs.verify.outputs.version }},${IMAGE_NAME}:latest"
+          tags="${IMAGE_NAME}:${{ needs.verify.outputs.version }}"
           echo "tags=${tags}" >> "$GITHUB_OUTPUT"
 
       - name: Build image
@@ -118,8 +135,11 @@ jobs:
           context: .
           file: docker/Dockerfile.ubuntu
           platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.tags.outputs.tags }}
+          # GitHub stores the signed provenance below. Registry attestations
+          # otherwise appear as additional sha256-* GHCR package versions.
+          provenance: false
           labels: |
             org.opencontainers.image.source=https://github.com/Niborian/gameyfin
             org.opencontainers.image.revision=${{ github.sha }}
@@ -131,7 +151,6 @@ jobs:
           cache-to: type=gha,mode=max,scope=gameyfin-amd64
 
       - name: Attest build provenance
-        if: github.event_name != 'pull_request'
         uses: actions/attest-build-provenance@v3
         with:
           subject-name: ${{ env.IMAGE_NAME }}
@@ -141,7 +160,6 @@ jobs:
           push-to-registry: false
 
       - name: Export SPDX software bill of materials
-        if: github.event_name != 'pull_request'
         uses: anchore/sbom-action@v0
         with:
           image: ${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
@@ -149,12 +167,59 @@ jobs:
           output-file: gameyfin-sbom.spdx.json
 
       - uses: actions/upload-artifact@v7
-        if: github.event_name != 'pull_request'
         with:
           name: gameyfin-sbom-${{ github.sha }}
           path: gameyfin-sbom.spdx.json
           if-no-files-found: error
           retention-days: 90
+
+  promote:
+    name: Promote reviewed digest to latest
+    needs: verify
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'promote'
+    concurrency:
+      group: gameyfin-manual-release
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify candidate and promote without rebuilding
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          EXPECTED_DIGEST: ${{ inputs.digest }}
+        run: |
+          if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Supply an exact semantic version tag to promote." >&2
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "Supply the reviewed sha256 digest." >&2
+            exit 1
+          fi
+          candidate=$(docker buildx imagetools inspect "${IMAGE_NAME}:${RELEASE_VERSION}" --format '{{json .Manifest}}' | jq -er '.digest')
+          if [[ "$candidate" != "$EXPECTED_DIGEST" ]]; then
+            echo "Version tag digest does not match the reviewed digest." >&2
+            exit 1
+          fi
+          docker buildx imagetools create --prefer-index=false --tag "${IMAGE_NAME}:latest" "${IMAGE_NAME}@${EXPECTED_DIGEST}"
+          promoted=$(docker buildx imagetools inspect "${IMAGE_NAME}:latest" --format '{{json .Manifest}}' | jq -er '.digest')
+          if [[ "$promoted" != "$EXPECTED_DIGEST" ]]; then
+            echo "Promotion did not preserve the reviewed digest." >&2
+            exit 1
+          fi
 
   pull-request-image:
     name: Build AMD64 image (PR)

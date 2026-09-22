@@ -49,14 +49,14 @@ RUN chmod +x aot-training.sh && ./aot-training.sh
 FROM eclipse-temurin:25-jre
 
 # OCI labels
-LABEL maintainer="grimsi" \
+LABEL maintainer="Niborian" \
       org.opencontainers.image.title="Gameyfin" \
-      org.opencontainers.image.description="Manage your video games. simple/fast/FOSS" \
-      org.opencontainers.image.url="https://gameyfin.org" \
-      org.opencontainers.image.source="https://github.com/gameyfin/gameyfin" \
+      org.opencontainers.image.description="Unofficial Gameyfin variant build for preserving torrent-managed game paths" \
+      org.opencontainers.image.url="https://github.com/Niborian/gameyfin" \
+      org.opencontainers.image.source="https://github.com/Niborian/gameyfin" \
       org.opencontainers.image.licenses="AGPL-3.0-only" \
-      org.opencontainers.image.vendor="Gameyfin" \
-      org.opencontainers.image.authors="Gameyfin maintainers"
+      org.opencontainers.image.vendor="Niborian" \
+      org.opencontainers.image.authors="Niborian"
 
 # Indicate docker runtime environment
 ENV RUNTIME_ENV=docker

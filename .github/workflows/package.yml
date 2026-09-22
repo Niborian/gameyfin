@@ -52,6 +52,7 @@ jobs:
   package:
     name: Build AMD64 image
     needs: verify
+    if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -88,10 +89,6 @@ jobs:
           GAMEYFIN_KEYSTORE_TYPE: PKCS12
         run: ./gradlew clean build -Pvaadin.productionMode=true --no-daemon --console=plain
 
-      - name: Build pull request application artifact
-        if: github.event_name == 'pull_request'
-        run: ./gradlew clean build --no-daemon --console=plain
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -107,11 +104,12 @@ jobs:
         id: tags
         shell: bash
         run: |
-          tags="${IMAGE_NAME}:pr-${GITHUB_SHA}"
-          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
-            tags="${IMAGE_NAME}:sha-${GITHUB_SHA}"
-          fi
+          tags="${IMAGE_NAME}:sha-${GITHUB_SHA}"
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            if docker buildx imagetools inspect "${IMAGE_NAME}:${{ needs.verify.outputs.version }}" >/dev/null 2>&1; then
+              echo "Release tag ${{ needs.verify.outputs.version }} already exists and must not be moved." >&2
+              exit 1
+            fi
             tags="${IMAGE_NAME}:${{ needs.verify.outputs.version }},${tags}"
           fi
           echo "tags=${tags}" >> "$GITHUB_OUTPUT"
@@ -130,6 +128,8 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ needs.verify.outputs.version }}
             org.opencontainers.image.description=Unofficial Gameyfin variant build for preserving torrent-managed game paths
+            org.opencontainers.image.vendor=Niborian
+            org.opencontainers.image.authors=Niborian
           cache-from: type=gha,scope=gameyfin-amd64
           cache-to: type=gha,mode=max,scope=gameyfin-amd64
 
@@ -156,3 +156,43 @@ jobs:
           path: gameyfin-sbom.spdx.json
           if-no-files-found: error
           retention-days: 90
+
+  pull-request-image:
+    name: Build AMD64 image (PR)
+    if: github.event_name == 'pull_request'
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Build pull request application artifact
+        run: ./gradlew clean build --no-daemon --console=plain
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image without publishing
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.ubuntu
+          platforms: linux/amd64
+          push: false
+          tags: ${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.head.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/Niborian/gameyfin
+            org.opencontainers.image.revision=${{ github.event.pull_request.head.sha }}
+            org.opencontainers.image.version=${{ needs.verify.outputs.version }}
+            org.opencontainers.image.description=Unofficial Gameyfin variant build for preserving torrent-managed game paths
+            org.opencontainers.image.vendor=Niborian
+            org.opencontainers.image.authors=Niborian
+          cache-from: type=gha,scope=gameyfin-amd64

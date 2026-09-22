@@ -27,7 +27,10 @@ class GameVariantService(
             .groupBy { it.name }
             .mapValues { (_, variants) -> VariantVersionComparator.newest(variants.map { it.version }) }
 
-        val defaultKey = selectDefaultVariant(discovery.variants)
+        val defaultKey = game.variants
+            .firstOrNull { it.defaultLocked && VariantKey(it.name, it.version) in desiredKeys }
+            ?.let { VariantKey(it.name, it.version) }
+            ?: selectDefaultVariant(discovery.variants)
 
         discovery.variants.forEach { parsed ->
             val key = VariantKey(parsed.name, parsed.version)

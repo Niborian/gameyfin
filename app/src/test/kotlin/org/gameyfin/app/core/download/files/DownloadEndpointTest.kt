@@ -82,6 +82,16 @@ class DownloadEndpointTest {
     }
 
     @Test
+    fun `explicit empty selection is forwarded instead of using defaults`() {
+        val game = createTestGame(1L, "Test Game", "/path/to/game", fileSize = 1024L)
+        every { gameService.getById(1L) } returns game
+        every { downloadService.estimateDownloadSize(game, 10L, emptyList()) } returns 1024L
+
+        assertEquals(1024L, endpoint.estimateDownloadSize(1L, 10L, null, explicitSelection = true))
+        verify(exactly = 1) { downloadService.estimateDownloadSize(game, 10L, emptyList()) }
+    }
+
+    @Test
     fun `downloadGame should return file download with correct headers`() {
         val gameId = 1L
         val provider = "TestProvider"

@@ -82,6 +82,38 @@ class DownloadEndpointTest {
     }
 
     @Test
+    fun `explicit empty selection is forwarded instead of using defaults`() {
+        val game = createTestGame(1L, "Test Game", "/path/to/game", fileSize = 1024L)
+        every { gameService.getById(1L) } returns game
+        every { downloadService.estimateDownloadSize(game, 10L, emptyList()) } returns 1024L
+
+        assertEquals(1024L, endpoint.estimateDownloadSize(1L, 10L, null, explicitSelection = true))
+        verify(exactly = 1) { downloadService.estimateDownloadSize(game, 10L, emptyList()) }
+    }
+
+    @Test
+    fun `rejected content selection does not increment download count`() {
+        val game = createTestGame(1L, "Test Game", "/path/to/game", fileSize = 1024L)
+        mockkStatic("org.gameyfin.app.core.UtilsKt")
+        every { request.getRemoteIp(any()) } returns "192.168.1.1"
+        every { gameService.getById(1L) } returns game
+        every { downloadService.getDownload(game, "TestProvider", 10L, emptyList()) } throws
+            IllegalArgumentException("Unknown content")
+
+        val deferredResult = endpoint.downloadGame(1L, "TestProvider", 10L, null, request, explicitSelection = true)
+        val latch = CountDownLatch(1)
+        var result: Any? = null
+        deferredResult.setResultHandler { value ->
+            result = value
+            latch.countDown()
+        }
+
+        assertTrue(latch.await(5, TimeUnit.SECONDS))
+        assertTrue(result is IllegalArgumentException)
+        verify(exactly = 0) { gameService.incrementDownloadCount(game) }
+    }
+
+    @Test
     fun `downloadGame should return file download with correct headers`() {
         val gameId = 1L
         val provider = "TestProvider"

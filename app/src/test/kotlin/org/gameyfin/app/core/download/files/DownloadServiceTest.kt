@@ -252,7 +252,26 @@ class DownloadServiceTest {
         game.variants.add(olderVariant)
 
         assertEquals(9L, service.estimateDownloadSize(game, 10L, listOf(22L)))
-        assertEquals(5L, service.estimateDownloadSize(game, 11L, listOf(22L)))
+        assertThrows(IllegalArgumentException::class.java) {
+            service.estimateDownloadSize(game, 11L, listOf(22L))
+        }
+    }
+
+    @Test
+    fun `explicit empty selection excludes default selected extras`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+
+        assertEquals(5L, service.estimateDownloadSize(game, 10L, emptyList()))
+        assertEquals(9L, service.estimateDownloadSize(game, 10L, null))
+    }
+
+    @Test
+    fun `unknown selected content is rejected instead of silently downloading the default`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            service.getDownload(game, TestProvider::class.java.name, 10L, listOf(999L))
+        }
     }
 
     @Test

@@ -33,10 +33,12 @@ class DownloadEndpoint(
     fun estimateDownloadSize(
         @PathVariable gameId: Long,
         @RequestParam(required = false) variantId: Long?,
-        @RequestParam(required = false) contentIds: List<Long>?
+        @RequestParam(required = false) contentIds: List<Long>?,
+        @RequestParam(defaultValue = "false") explicitSelection: Boolean = false
     ): Long {
         val game = gameService.getById(gameId)
-        return downloadService.estimateDownloadSize(game, variantId, contentIds)
+        val selectedIds = if (explicitSelection) contentIds ?: emptyList() else contentIds
+        return downloadService.estimateDownloadSize(game, variantId, selectedIds)
     }
 
     @GetMapping("/{gameId}")
@@ -45,18 +47,21 @@ class DownloadEndpoint(
         @RequestParam provider: String,
         @RequestParam(required = false) variantId: Long?,
         @RequestParam(required = false) contentIds: List<Long>?,
-        request: HttpServletRequest
+        request: HttpServletRequest,
+        @RequestParam(defaultValue = "false") explicitSelection: Boolean = false
     ): DeferredResult<ResponseEntity<StreamingResponseBody>> {
         val deferredResult = DeferredResult<ResponseEntity<StreamingResponseBody>>()
 
         downloadExecutor.execute {
             try {
                 val game = gameService.getById(gameId)
-                gameService.incrementDownloadCount(game)
                 val sessionId = request.session.id
                 val remoteIp = request.getRemoteIp(LookupPolicy.IPV4_PREFERRED)
+                val selectedIds = if (explicitSelection) contentIds ?: emptyList() else contentIds
+                val download = downloadService.getDownload(game, provider, variantId, selectedIds)
+                gameService.incrementDownloadCount(game)
 
-                val result = when (val download = downloadService.getDownload(game, provider, variantId, contentIds)) {
+                val result = when (download) {
                     is FileDownload -> {
                         val baseFilename = game.title?.replace("[\\\\/:*?\"<>|]".toRegex(), "") // Remove common invalid filename chars
                             ?: "download"

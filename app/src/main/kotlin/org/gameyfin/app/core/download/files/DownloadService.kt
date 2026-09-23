@@ -119,10 +119,14 @@ class DownloadService(
     }
 
     private fun selectContents(variant: GameVariant, contentIds: List<Long>?): List<VariantContent> {
-        val selected = if (contentIds.isNullOrEmpty()) {
+        val selected = if (contentIds == null) {
             variant.contents.filter { it.required || it.defaultSelected }
         } else {
             val selectedIds = contentIds.toSet()
+            val availableIds = variant.contents.mapNotNull { it.id }.toSet()
+            require(availableIds.containsAll(selectedIds)) {
+                "Selected content does not belong to variant ${variant.id}"
+            }
             variant.contents.filter { it.id in selectedIds || it.required }
         }
 

@@ -8,7 +8,7 @@ import java.nio.file.Files
 group = "org.gameyfin"
 // Canonical release identifier. The build syncs this value into the web UI and
 // GitHub Actions uses the same value for the published GHCR package tag.
-version = "2.4.2"
+version = "2.4.3"
 
 allprojects {
     repositories {

@@ -4,7 +4,7 @@ This is the Niborian fork, **not an original Gameyfin release**. The version in 
 
 Changes since the last published `2.4.2` build:
 
-- Exact optional-content download selection and broader combination tests ([#42](https://github.com/Niborian/gameyfin/pull/42), [#59](https://github.com/Niborian/gameyfin/pull/59)); grouped archive members now show their filenames ([#60](https://github.com/Niborian/gameyfin/pull/60)).
+- Exact optional-content download selection and broader combination tests ([#42](https://github.com/Niborian/gameyfin/pull/42), [#59](https://github.com/Niborian/gameyfin/pull/59)); grouped archive members now show their filenames ([#60](https://github.com/Niborian/gameyfin/pull/60)). Explicit empty selections and unknown content IDs are handled predictably ([#72](https://github.com/Niborian/gameyfin/pull/72)).
 - Release-name suggestions, including a neutral multiplayer-fix label, with review rather than destructive automatic regrouping ([#56](https://github.com/Niborian/gameyfin/pull/56)).
 - Hardlink/source-integrity and repeated-rescan fixture coverage ([#46](https://github.com/Niborian/gameyfin/pull/46), [#62](https://github.com/Niborian/gameyfin/pull/62)).
 - CSRF and login-redirect hardening ([#50](https://github.com/Niborian/gameyfin/pull/50), [#51](https://github.com/Niborian/gameyfin/pull/51)).

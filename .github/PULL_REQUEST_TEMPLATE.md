@@ -19,3 +19,10 @@ Closes #
 ## Verification
 
 <!-- Commands run, browser steps, fixture data, or a reason a check cannot run. -->
+
+## Upstream synchronization (only when applicable)
+
+- [ ] The previous fork base and the exact upstream revision are recorded.
+- [ ] Schema/migration compatibility and isolated restore implications are recorded.
+- [ ] Variant fixture, exact-download, and full application test results are included.
+- [ ] Release notes distinguish upstream changes from fork behavior preserved.

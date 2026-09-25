@@ -74,6 +74,8 @@ milestone-backed issue, describe the visible behavior it adds, and pass the requ
 | [Library intelligence and request automation](https://github.com/Niborian/gameyfin/milestone/6) | Explainable release grouping, lawful update discovery, and reviewed request automation. |
 
 See the [issue backlog](https://github.com/Niborian/gameyfin/issues) for concrete acceptance criteria.
+The [upstream synchronization procedure](docs/UPSTREAM-SYNC.md) defines how upstream changes are evaluated without
+silently losing the fork's variant, hardlink, source-path, or exact-download guarantees.
 
 ### Non-negotiable library guarantees
 

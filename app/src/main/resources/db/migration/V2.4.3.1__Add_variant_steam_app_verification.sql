@@ -1,0 +1,5 @@
+-- Flyway Migration: V2.4.3.1
+-- Purpose: Record when an administrator verifies a variant's Steam app link.
+
+ALTER TABLE GAME_VARIANT
+    ADD STEAM_APP_ID_VERIFIED_AT TIMESTAMP WITH TIME ZONE;

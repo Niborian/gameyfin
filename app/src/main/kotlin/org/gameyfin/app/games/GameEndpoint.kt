@@ -10,6 +10,7 @@ import org.gameyfin.app.core.security.isCurrentUserAdmin
 import org.gameyfin.app.games.dto.*
 import org.gameyfin.app.games.extensions.toAdminDto
 import org.gameyfin.app.games.variants.GameVariantGroupingService
+import org.gameyfin.app.games.variants.VariantRetirementPreviewService
 import org.gameyfin.app.libraries.LibraryCoreService
 import org.gameyfin.app.libraries.LibraryService
 import org.gameyfin.pluginapi.gamemetadata.Platform
@@ -23,7 +24,8 @@ class GameEndpoint(
     private val gameService: GameService,
     private val libraryService: LibraryService,
     private val libraryCoreService: LibraryCoreService,
-    private val gameVariantGroupingService: GameVariantGroupingService
+    private val gameVariantGroupingService: GameVariantGroupingService,
+    private val variantRetirementPreviewService: VariantRetirementPreviewService
 ) {
     fun subscribe(): Flux<out List<GameEvent>> {
         return if (isCurrentUserAdmin()) {
@@ -45,6 +47,11 @@ class GameEndpoint(
     @RolesAllowed(Role.Names.ADMIN)
     fun getGroupingSuggestions(libraryId: Long): List<GameGroupingSuggestionDto> {
         return gameVariantGroupingService.getGroupingSuggestions(libraryId)
+    }
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun getVariantRetirementPreview(gameId: Long): List<VariantRetirementPreviewDto> {
+        return variantRetirementPreviewService.preview(gameId)
     }
 
     @RolesAllowed(Role.Names.ADMIN)

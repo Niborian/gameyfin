@@ -94,6 +94,7 @@ fun GameVariant.toDto(includeAdminFields: Boolean): GameVariantDto {
         tags = tags,
         steamAppId = steamAppId,
         steamAppIdVerifiedAt = steamAppIdVerifiedAt.takeIf { includeAdminFields },
+        steamAppIdManualOverride = steamAppIdManualOverride.takeIf { includeAdminFields },
         launchArgs = launchArgs,
         patchInfo = patchInfo,
         isDefault = isDefault,

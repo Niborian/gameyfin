@@ -604,11 +604,13 @@ class GameVariantGroupingServiceTest {
 
         assertEquals("1307550", variant.steamAppId)
         assertTrue(variant.steamAppIdVerifiedAt != null)
+        assertTrue(variant.steamAppIdManualOverride)
 
         service.setVariantSteamAppId(1L, 10L, " ")
 
         assertNull(variant.steamAppId)
         assertNull(variant.steamAppIdVerifiedAt)
+        assertTrue(variant.steamAppIdManualOverride)
     }
 
     @Test

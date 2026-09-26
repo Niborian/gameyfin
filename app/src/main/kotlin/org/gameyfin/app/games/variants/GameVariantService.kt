@@ -53,7 +53,9 @@ class GameVariantService(
             existing.fileSize = filesystemService.calculateFileSize(variantLink.path.toString())
             existing.tags.clear()
             existing.tags.addAll(parsed.tags)
-            existing.steamAppId = parsed.steamAppId
+            if (!existing.steamAppIdManualOverride) {
+                existing.steamAppId = parsed.steamAppId
+            }
             existing.launchArgs = parsed.launchArgs
             existing.patchInfo = parsed.patchInfo
             existing.isLatestForVariant = newestVersionByName[parsed.name] == parsed.version

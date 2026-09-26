@@ -14,6 +14,7 @@ data class GameVariantDto(
     val tags: Set<String>,
     val steamAppId: String?,
     val steamAppIdVerifiedAt: java.time.Instant?,
+    val steamAppIdManualOverride: Boolean?,
     val launchArgs: String?,
     val patchInfo: String?,
     val isDefault: Boolean,

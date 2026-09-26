@@ -213,6 +213,7 @@ class GameVariantGroupingService(
 
         variant.steamAppId = normalizedAppId
         variant.steamAppIdVerifiedAt = normalizedAppId?.let { Instant.now() }
+        variant.steamAppIdManualOverride = true
         return gameRepository.save(target)
     }
 

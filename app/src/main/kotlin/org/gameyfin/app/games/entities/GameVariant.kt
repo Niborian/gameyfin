@@ -31,6 +31,9 @@ class GameVariant(
 
     var steamAppIdVerifiedAt: Instant? = null,
 
+    @Column(nullable = false)
+    var steamAppIdManualOverride: Boolean = false,
+
     @Lob
     var launchArgs: String? = null,
 

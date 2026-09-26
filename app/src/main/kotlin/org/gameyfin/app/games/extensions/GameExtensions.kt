@@ -93,6 +93,7 @@ fun GameVariant.toDto(includeAdminFields: Boolean): GameVariantDto {
         fileSize = fileSize ?: 0L,
         tags = tags,
         steamAppId = steamAppId,
+        steamAppIdVerifiedAt = steamAppIdVerifiedAt.takeIf { includeAdminFields },
         launchArgs = launchArgs,
         patchInfo = patchInfo,
         isDefault = isDefault,

@@ -33,6 +33,7 @@ import kotlin.io.path.createDirectory
 import kotlin.io.path.createFile
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -588,6 +589,38 @@ class GameVariantGroupingServiceTest {
         assertTrue(oldVariant.defaultLocked)
         assertFalse(latestVariant.isDefault)
         assertFalse(latestVariant.defaultLocked)
+    }
+
+    @Test
+    fun `setVariantSteamAppId records an administrator-verified positive app ID and can clear it`() {
+        val library = createLibrary()
+        val target = createGame(1L, library, "/mnt/Games/Craftopia.rar", PluginManagementEntry("igdb"), "123")
+        val variant = createBaseVariant(target, 10L, "/mnt/Games/Craftopia.rar")
+        target.variants.add(variant)
+        every { gameRepository.findById(1L) } returns Optional.of(target)
+        every { gameRepository.save(target) } returns target
+
+        service.setVariantSteamAppId(1L, 10L, " 1307550 ")
+
+        assertEquals("1307550", variant.steamAppId)
+        assertTrue(variant.steamAppIdVerifiedAt != null)
+
+        service.setVariantSteamAppId(1L, 10L, " ")
+
+        assertNull(variant.steamAppId)
+        assertNull(variant.steamAppIdVerifiedAt)
+    }
+
+    @Test
+    fun `setVariantSteamAppId rejects non-positive or non-decimal values`() {
+        val library = createLibrary()
+        val target = createGame(1L, library, "/mnt/Games/Craftopia.rar", PluginManagementEntry("igdb"), "123")
+        val variant = createBaseVariant(target, 10L, "/mnt/Games/Craftopia.rar")
+        target.variants.add(variant)
+        every { gameRepository.findById(1L) } returns Optional.of(target)
+
+        assertFailsWith<IllegalArgumentException> { service.setVariantSteamAppId(1L, 10L, "0") }
+        assertFailsWith<IllegalArgumentException> { service.setVariantSteamAppId(1L, 10L, "123abc") }
     }
 
     @Test

@@ -14,8 +14,10 @@ import org.gameyfin.app.requests.dto.GameRequestCreationDto
 import org.gameyfin.app.requests.dto.GameRequestDto
 import org.gameyfin.app.requests.dto.GameRequestEvent
 import org.gameyfin.app.requests.entities.GameRequest
+import org.gameyfin.app.requests.entities.GameRequestStatusChange
 import org.gameyfin.app.requests.extensions.toDto
 import org.gameyfin.app.requests.extensions.toDtos
+import org.gameyfin.app.requests.extensions.toDto as statusChangeToDto
 import org.gameyfin.app.requests.status.GameRequestStatus
 import org.gameyfin.app.users.UserService
 import org.gameyfin.app.users.entities.User
@@ -36,7 +38,8 @@ class GameRequestService(
     private val config: ConfigService,
     private val userService: UserService,
     private val gameRequestRepository: GameRequestRepository,
-    private val gameRepository: GameRepository
+    private val gameRepository: GameRepository,
+    private val statusChangeRepository: GameRequestStatusChangeRepository
 ) {
 
     companion object {
@@ -81,6 +84,10 @@ class GameRequestService(
         val entities = gameRequestRepository.findAll().toList()
         return entities.toDtos()
     }
+
+    fun getStatusChanges(gameRequestId: Long) = statusChangeRepository
+        .findAllByGameRequestIdOrderByChangedAtAsc(gameRequestId)
+        .map { it.statusChangeToDto() }
 
     fun createRequest(gameRequest: GameRequestCreationDto) {
 
@@ -162,7 +169,7 @@ class GameRequestService(
         gameRequestRepository.delete(gameRequest)
     }
 
-    fun changeRequestStatus(id: Long, status: GameRequestStatus) {
+    fun changeRequestStatus(id: Long, status: GameRequestStatus, reason: String? = null) {
         val gameRequest = gameRequestRepository.findById(id)
             .orElseThrow { NoSuchElementException("No game request found with id $id") }
 
@@ -171,8 +178,19 @@ class GameRequestService(
             return
         }
 
+        if (gameRequest.status == status) return
+        val previousStatus = gameRequest.status
         gameRequest.status = status
         gameRequestRepository.save(gameRequest)
+        statusChangeRepository.save(
+            GameRequestStatusChange(
+                gameRequest = gameRequest,
+                previousStatus = previousStatus,
+                newStatus = status,
+                actor = getCurrentAuth()?.name ?: "system",
+                reason = reason?.trim()?.ifBlank { null }
+            )
+        )
     }
 
     @Transactional

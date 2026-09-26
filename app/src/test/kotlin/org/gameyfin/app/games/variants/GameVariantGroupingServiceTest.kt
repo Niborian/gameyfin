@@ -5,6 +5,8 @@ import io.mockk.just
 import io.mockk.mockk
 import io.mockk.Runs
 import io.mockk.verify
+import org.gameyfin.app.config.ConfigProperties
+import org.gameyfin.app.config.ConfigService
 import org.gameyfin.app.core.filesystem.FilesystemService
 import org.gameyfin.app.core.plugins.management.PluginManagementEntry
 import org.gameyfin.app.games.dto.AttachVariantContentEntryDto
@@ -39,6 +41,7 @@ class GameVariantGroupingServiceTest {
     private lateinit var gameRepository: GameRepository
     private lateinit var ignoredPathRepository: IgnoredPathRepository
     private lateinit var filesystemService: FilesystemService
+    private lateinit var configService: ConfigService
     private lateinit var service: GameVariantGroupingService
 
     @BeforeEach
@@ -46,7 +49,9 @@ class GameVariantGroupingServiceTest {
         gameRepository = mockk()
         ignoredPathRepository = mockk()
         filesystemService = mockk()
-        service = GameVariantGroupingService(gameRepository, ignoredPathRepository, filesystemService)
+        configService = mockk()
+        every { configService.get(ConfigProperties.Libraries.Scan.ReleaseMarkerAliases) } returns emptyArray()
+        service = GameVariantGroupingService(gameRepository, ignoredPathRepository, filesystemService, configService)
     }
 
     @Test
@@ -93,6 +98,32 @@ class GameVariantGroupingServiceTest {
         assertEquals(85, suggestion.confidence)
         assertFalse(suggestion.autoGroup)
         assertTrue(suggestion.reason.contains("online-fix", ignoreCase = true))
+        assertEquals(0, service.autoGroupExactMatches(library))
+        assertNull(service.tryAutoGroup(source, DiscoveredGameVariants(sourcePath, emptyList()), library))
+        verify(exactly = 0) { gameRepository.save(any()) }
+    }
+
+    @Test
+    fun `administrator release marker alias creates a review-only suggestion`(@TempDir tempDir: Path) {
+        val library = createLibrary()
+        val plugin = PluginManagementEntry("igdb")
+        val targetPath = tempDir.resolve("Craftopia.v1.3.0.rar").createFile()
+        val sourcePath = tempDir.resolve("Craftopia.v1.4.2.LAN-Build.rar").createFile()
+        val target = createGame(1L, library, targetPath.toString(), plugin, "123")
+        val source = createGame(2L, library, sourcePath.toString(), plugin, "123")
+        library.games.addAll(listOf(target, source))
+
+        every { configService.get(ConfigProperties.Libraries.Scan.ReleaseMarkerAliases) } returns
+            arrayOf("lan-build=LAN compatibility build")
+        every { gameRepository.findAllByLibraryId(1L) } returns listOf(target, source)
+        every { filesystemService.calculateFileSize(any()) } returns 2048L
+
+        val suggestion = service.getGroupingSuggestions(1L).single()
+
+        assertEquals("LAN compatibility build", suggestion.suggestedVariantName)
+        assertEquals("1.4.2", suggestion.suggestedVariantVersion)
+        assertEquals(85, suggestion.confidence)
+        assertFalse(suggestion.autoGroup)
         assertEquals(0, service.autoGroupExactMatches(library))
         assertNull(service.tryAutoGroup(source, DiscoveredGameVariants(sourcePath, emptyList()), library))
         verify(exactly = 0) { gameRepository.save(any()) }

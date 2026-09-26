@@ -1,6 +1,8 @@
 package org.gameyfin.app.games.variants
 
 import org.gameyfin.app.core.filesystem.FilesystemService
+import org.gameyfin.app.config.ConfigProperties
+import org.gameyfin.app.config.ConfigService
 import org.gameyfin.app.games.dto.AttachVariantContentEntryDto
 import org.gameyfin.app.games.dto.AttachVariantContentRequestDto
 import org.gameyfin.app.games.dto.GameGroupingSuggestionDto
@@ -29,6 +31,7 @@ class GameVariantGroupingService(
     private val gameRepository: GameRepository,
     private val ignoredPathRepository: IgnoredPathRepository,
     private val filesystemService: FilesystemService,
+    private val configService: ConfigService,
     private val releaseNameSuggestionService: ReleaseNameSuggestionService = ReleaseNameSuggestionService()
 ) {
     private val trailingVersionPattern =
@@ -42,7 +45,8 @@ class GameVariantGroupingService(
     @Transactional
     fun tryAutoGroup(candidate: Game, discovery: DiscoveredGameVariants, library: Library): Game? {
         // A release marker is only a suggestion; it must never be applied by an automatic scan.
-        if (releaseNameSuggestionService.suggest(Path.of(candidate.metadata.path).fileName.toString()) != null) return null
+        val aliases = configuredReleaseAliases()
+        if (releaseSuggestion(Path.of(candidate.metadata.path).fileName.toString(), aliases) != null) return null
         val exactTargets = library.games
             .filter { it.id != candidate.id && it.metadata.path != candidate.metadata.path }
             .filter { confidence(candidate, it).confidence == 100 }
@@ -50,7 +54,7 @@ class GameVariantGroupingService(
         if (exactTargets.size != 1) return null
 
         val target = exactTargets.single()
-        if (releaseNameSuggestionService.suggest(Path.of(target.metadata.path).fileName.toString()) != null) return null
+        if (releaseSuggestion(Path.of(target.metadata.path).fileName.toString(), aliases) != null) return null
         val variantMetadata = variantMetadataFromCandidate(candidate, target, discovery)
         addOrUpdateExternalVariant(target, variantMetadata)
         addGroupedIgnoredPath(library, variantMetadata.path)
@@ -609,6 +613,7 @@ class GameVariantGroupingService(
     }
 
     private fun buildSuggestions(games: List<Game>, includeAutoGroups: Boolean): List<GameGroupingSuggestionDto> {
+        val aliases = configuredReleaseAliases()
         return games
             .flatMapIndexed { index, first ->
                 games.drop(index + 1).mapNotNull { second ->
@@ -616,15 +621,13 @@ class GameVariantGroupingService(
                     if (match.confidence < 85) return@mapNotNull null
                     if (!includeAutoGroups && match.confidence == 100) return@mapNotNull null
 
-                    val (target, source) = chooseTargetAndSource(first, second)
+                    val (target, source) = chooseTargetAndSource(first, second, aliases)
                     val variantMetadata = variantMetadataFromCandidate(
                         candidate = source,
                         target = target,
                         discovery = DiscoveredGameVariants(Path.of(source.metadata.path), emptyList())
                     )
-                    val releaseHint = releaseNameSuggestionService.suggest(
-                        Path.of(source.metadata.path).fileName.toString()
-                    )
+                    val releaseHint = releaseSuggestion(Path.of(source.metadata.path).fileName.toString(), aliases)
                     val suggestionConfidence = when {
                         releaseHint == null -> match.confidence
                         releaseHint.variantLabel == null -> minOf(match.confidence, 50)
@@ -649,13 +652,13 @@ class GameVariantGroupingService(
             .sortedWith(compareByDescending<GameGroupingSuggestionDto> { it.confidence }.thenBy { it.sourcePath })
     }
 
-    private fun chooseTargetAndSource(first: Game, second: Game): Pair<Game, Game> {
+    private fun chooseTargetAndSource(first: Game, second: Game, aliases: Map<String, String>): Pair<Game, Game> {
         val firstPath = Path.of(first.metadata.path)
         val secondPath = Path.of(second.metadata.path)
 
         // Keep a marked compatibility build as the review source, not the canonical target.
-        val firstHint = releaseNameSuggestionService.suggest(firstPath.fileName.toString())
-        val secondHint = releaseNameSuggestionService.suggest(secondPath.fileName.toString())
+        val firstHint = releaseSuggestion(firstPath.fileName.toString(), aliases)
+        val secondHint = releaseSuggestion(secondPath.fileName.toString(), aliases)
         if (firstHint != null && secondHint == null) return second to first
         if (secondHint != null && firstHint == null) return first to second
 
@@ -670,6 +673,20 @@ class GameVariantGroupingService(
 
         return if ((first.id ?: Long.MAX_VALUE) <= (second.id ?: Long.MAX_VALUE)) first to second else second to first
     }
+
+    private fun configuredReleaseAliases(): Map<String, String> =
+        configService.get(ConfigProperties.Libraries.Scan.ReleaseMarkerAliases)
+            .orEmpty()
+            .mapNotNull { entry ->
+                val parts = entry.split('=', limit = 2).map(String::trim)
+                val marker = parts.getOrNull(0).orEmpty()
+                val label = parts.getOrNull(1).orEmpty()
+                if (marker.isBlank() || label.isBlank()) null else marker to label
+            }
+            .toMap()
+
+    private fun releaseSuggestion(observedName: String, aliases: Map<String, String>) =
+        releaseNameSuggestionService.suggest(observedName, aliases)
 
     private fun confidence(first: Game, second: Game): MatchConfidence {
         val sharedIds = sharedOriginalIds(first, second)

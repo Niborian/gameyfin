@@ -115,6 +115,14 @@ sealed class ConfigProperties<T : Serializable>(
                 max = 16,
                 step = 1
             )
+
+            data object ReleaseMarkerAliases : ConfigProperties<Array<String>>(
+                Array<String>::class,
+                "library.scan.release-marker-aliases",
+                "Release marker aliases",
+                "One `marker=display label` entry per line. Markers only create review suggestions; they never move, rename, or automatically group source paths.",
+                emptyArray()
+            )
         }
 
         sealed class Metadata {

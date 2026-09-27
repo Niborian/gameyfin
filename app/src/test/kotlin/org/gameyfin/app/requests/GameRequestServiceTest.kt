@@ -13,6 +13,7 @@ import org.gameyfin.app.games.repositories.GameRepository
 import org.gameyfin.app.requests.dto.GameRequestCreationDto
 import org.gameyfin.app.requests.dto.GameRequestEvent
 import org.gameyfin.app.requests.entities.GameRequest
+import org.gameyfin.app.requests.entities.GameRequestStatusChange
 import org.gameyfin.app.requests.status.GameRequestStatus
 import org.gameyfin.app.users.UserService
 import org.gameyfin.app.users.entities.User
@@ -38,6 +39,7 @@ class GameRequestServiceTest {
     private lateinit var config: ConfigService
     private lateinit var userService: UserService
     private lateinit var gameRequestRepository: GameRequestRepository
+    private lateinit var statusChangeRepository: GameRequestStatusChangeRepository
     private lateinit var gameRepository: GameRepository
     private lateinit var gameRequestService: GameRequestService
     private lateinit var securityContext: SecurityContext
@@ -48,14 +50,23 @@ class GameRequestServiceTest {
         config = mockk()
         userService = mockk()
         gameRequestRepository = mockk()
+        statusChangeRepository = mockk()
         gameRepository = mockk()
 
-        gameRequestService = GameRequestService(config, userService, gameRequestRepository, gameRepository)
+        gameRequestService = GameRequestService(
+            config,
+            userService,
+            gameRequestRepository,
+            gameRepository,
+            statusChangeRepository
+        )
+        every { statusChangeRepository.save(any()) } answers { firstArg() }
 
         securityContext = mockk()
         authentication = mockk()
         mockkStatic(SecurityContextHolder::class)
         every { SecurityContextHolder.getContext() } returns securityContext
+        every { securityContext.authentication } returns null
     }
 
     @AfterEach
@@ -508,14 +519,20 @@ class GameRequestServiceTest {
     @Test
     fun `changeRequestStatus should update status when valid`() {
         val request = createTestGameRequest(1L, "Game")
+        val change = slot<GameRequestStatusChange>()
 
         every { gameRequestRepository.findById(1L) } returns Optional.of(request)
         every { gameRequestRepository.save(any()) } answers { firstArg() }
+        every { statusChangeRepository.save(capture(change)) } answers { firstArg() }
 
-        gameRequestService.changeRequestStatus(1L, GameRequestStatus.APPROVED)
+        gameRequestService.changeRequestStatus(1L, GameRequestStatus.APPROVED, "licensed source confirmed")
 
         assertEquals(GameRequestStatus.APPROVED, request.status)
+        assertEquals(GameRequestStatus.PENDING, change.captured.previousStatus)
+        assertEquals(GameRequestStatus.APPROVED, change.captured.newStatus)
+        assertEquals("licensed source confirmed", change.captured.reason)
         verify(exactly = 1) { gameRequestRepository.save(request) }
+        verify(exactly = 1) { statusChangeRepository.save(any()) }
     }
 
     @Test

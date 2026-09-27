@@ -8,6 +8,7 @@ import org.gameyfin.app.core.Role
 import org.gameyfin.app.core.annotations.DynamicPublicAccess
 import org.gameyfin.app.requests.dto.GameRequestCreationDto
 import org.gameyfin.app.requests.dto.GameRequestEvent
+import org.gameyfin.app.requests.dto.GameRequestStatusChangeDto
 import org.gameyfin.app.requests.status.GameRequestStatus
 import org.springframework.stereotype.Service
 import reactor.core.publisher.Flux
@@ -43,5 +44,10 @@ class GameRequestEndpoint(
     @RolesAllowed(Role.Names.ADMIN)
     fun changeStatus(gameRequestId: Long, newStatus: GameRequestStatus) {
         gameRequestService.changeRequestStatus(gameRequestId, newStatus)
+    }
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun getStatusChanges(gameRequestId: Long): List<GameRequestStatusChangeDto> {
+        return gameRequestService.getStatusChanges(gameRequestId)
     }
 }

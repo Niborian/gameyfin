@@ -7,6 +7,7 @@ import org.gameyfin.app.games.dto.*
 import org.gameyfin.app.games.entities.Game
 import org.gameyfin.app.games.variants.GameVariantGroupingService
 import org.gameyfin.app.games.variants.VariantRetirementPreviewService
+import org.gameyfin.app.games.variants.VariantRetirementDecisionService
 import org.gameyfin.app.libraries.LibraryCoreService
 import org.gameyfin.app.libraries.LibraryService
 import org.gameyfin.app.libraries.entities.Library
@@ -26,6 +27,7 @@ class GameEndpointTest {
     private lateinit var libraryCoreService: LibraryCoreService
     private lateinit var gameVariantGroupingService: GameVariantGroupingService
     private lateinit var variantRetirementPreviewService: VariantRetirementPreviewService
+    private lateinit var variantRetirementDecisionService: VariantRetirementDecisionService
     private lateinit var gameEndpoint: GameEndpoint
 
     @BeforeEach
@@ -35,12 +37,14 @@ class GameEndpointTest {
         libraryCoreService = mockk()
         gameVariantGroupingService = mockk()
         variantRetirementPreviewService = mockk()
+        variantRetirementDecisionService = mockk()
         gameEndpoint = GameEndpoint(
             gameService,
             libraryService,
             libraryCoreService,
             gameVariantGroupingService,
-            variantRetirementPreviewService
+            variantRetirementPreviewService,
+            variantRetirementDecisionService
         )
 
         mockkStatic("org.gameyfin.app.core.security.SecurityUtilsKt")

@@ -54,6 +54,12 @@ class GameVariant(
     @Lob
     var linkFallbackReason: String? = null,
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    var retirementState: VariantRetirementState = VariantRetirementState.ACTIVE,
+
+    var retirementReviewAt: Instant? = null,
+
     @OneToMany(mappedBy = "variant", cascade = [ALL], orphanRemoval = true, fetch = FetchType.EAGER)
     var contents: MutableList<VariantContent> = mutableListOf()
 )

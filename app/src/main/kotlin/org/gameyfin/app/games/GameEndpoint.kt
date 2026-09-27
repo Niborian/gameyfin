@@ -11,6 +11,7 @@ import org.gameyfin.app.games.dto.*
 import org.gameyfin.app.games.extensions.toAdminDto
 import org.gameyfin.app.games.variants.GameVariantGroupingService
 import org.gameyfin.app.games.variants.VariantRetirementPreviewService
+import org.gameyfin.app.games.variants.VariantRetirementDecisionService
 import org.gameyfin.app.libraries.LibraryCoreService
 import org.gameyfin.app.libraries.LibraryService
 import org.gameyfin.pluginapi.gamemetadata.Platform
@@ -25,7 +26,8 @@ class GameEndpoint(
     private val libraryService: LibraryService,
     private val libraryCoreService: LibraryCoreService,
     private val gameVariantGroupingService: GameVariantGroupingService,
-    private val variantRetirementPreviewService: VariantRetirementPreviewService
+    private val variantRetirementPreviewService: VariantRetirementPreviewService,
+    private val variantRetirementDecisionService: VariantRetirementDecisionService
 ) {
     fun subscribe(): Flux<out List<GameEvent>> {
         return if (isCurrentUserAdmin()) {
@@ -52,6 +54,18 @@ class GameEndpoint(
     @RolesAllowed(Role.Names.ADMIN)
     fun getVariantRetirementPreview(gameId: Long): List<VariantRetirementPreviewDto> {
         return variantRetirementPreviewService.preview(gameId)
+    }
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun setVariantRetirementState(
+        gameId: Long,
+        variantId: Long,
+        request: SetVariantRetirementStateRequestDto
+    ): VariantRetirementDecisionDto = variantRetirementDecisionService.setState(gameId, variantId, request)
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun getVariantRetirementHistory(gameId: Long, variantId: Long): List<VariantRetirementDecisionDto> {
+        return variantRetirementDecisionService.history(gameId, variantId)
     }
 
     @RolesAllowed(Role.Names.ADMIN)

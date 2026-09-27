@@ -6,6 +6,7 @@ import org.gameyfin.app.core.security.isCurrentUserAdmin
 import org.gameyfin.app.games.dto.*
 import org.gameyfin.app.games.entities.Game
 import org.gameyfin.app.games.variants.GameVariantGroupingService
+import org.gameyfin.app.games.variants.SteamUpdateCandidateService
 import org.gameyfin.app.games.variants.VariantRetirementPreviewService
 import org.gameyfin.app.games.variants.VariantRetirementDecisionService
 import org.gameyfin.app.games.variants.VariantTimestampEvidenceService
@@ -27,6 +28,7 @@ class GameEndpointTest {
     private lateinit var libraryService: LibraryService
     private lateinit var libraryCoreService: LibraryCoreService
     private lateinit var gameVariantGroupingService: GameVariantGroupingService
+    private lateinit var steamUpdateCandidateService: SteamUpdateCandidateService
     private lateinit var variantRetirementPreviewService: VariantRetirementPreviewService
     private lateinit var variantRetirementDecisionService: VariantRetirementDecisionService
     private lateinit var variantTimestampEvidenceService: VariantTimestampEvidenceService
@@ -38,6 +40,7 @@ class GameEndpointTest {
         libraryService = mockk()
         libraryCoreService = mockk()
         gameVariantGroupingService = mockk()
+        steamUpdateCandidateService = mockk()
         variantRetirementPreviewService = mockk()
         variantRetirementDecisionService = mockk()
         variantTimestampEvidenceService = mockk()
@@ -46,6 +49,7 @@ class GameEndpointTest {
             libraryService,
             libraryCoreService,
             gameVariantGroupingService,
+            steamUpdateCandidateService,
             variantRetirementPreviewService,
             variantRetirementDecisionService,
             variantTimestampEvidenceService

@@ -103,6 +103,15 @@ class GameEndpoint(
     }
 
     @RolesAllowed(Role.Names.ADMIN)
+    fun recordVariantSteamMetadata(
+        targetGameId: Long,
+        variantId: Long,
+        request: RecordVariantSteamMetadataRequestDto
+    ): GameAdminDto {
+        return gameVariantGroupingService.recordVariantSteamMetadata(targetGameId, variantId, request).toAdminDto()
+    }
+
+    @RolesAllowed(Role.Names.ADMIN)
     fun deleteVariantContent(targetGameId: Long, variantId: Long, contentId: Long): GameAdminDto {
         return gameVariantGroupingService.deleteVariantContent(targetGameId, variantId, contentId).toAdminDto()
     }

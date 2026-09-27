@@ -217,6 +217,40 @@ class GameVariantGroupingService(
         return gameRepository.save(target)
     }
 
+    /** Records owner-provided public metadata only; it deliberately does not contact Steam or a download provider. */
+    @Transactional
+    fun recordVariantSteamMetadata(
+        targetGameId: Long,
+        variantId: Long,
+        request: org.gameyfin.app.games.dto.RecordVariantSteamMetadataRequestDto
+    ): Game {
+        val target = gameRepository.findByIdOrNull(targetGameId)
+            ?: throw IllegalArgumentException("Target game $targetGameId not found")
+        val variant = findVariant(target, variantId)
+        require(!variant.steamAppId.isNullOrBlank() && variant.steamAppIdVerifiedAt != null) {
+            "An administrator-verified Steam app ID is required before recording Steam metadata"
+        }
+        val localBuildVersion = normalizeMetadataValue(request.localBuildVersion, "Local build version")
+        val updateMarker = normalizeMetadataValue(request.steamUpdateMarker, "Steam update marker")
+        val source = normalizeMetadataValue(request.source, "Steam metadata source", 2048)
+        require(!request.observedAt.isAfter(Instant.now())) { "Steam metadata observation time cannot be in the future" }
+
+        variant.localBuildVersion = localBuildVersion
+        variant.localBuildObservedAt = Instant.now()
+        variant.steamUpdateMarker = updateMarker
+        variant.steamMetadataObservedAt = request.observedAt
+        variant.steamMetadataSource = source
+        variant.steamMetadataCheckedAt = Instant.now()
+        return gameRepository.save(target)
+    }
+
+    private fun normalizeMetadataValue(value: String, label: String, maxLength: Int = 512): String {
+        val normalized = value.trim()
+        require(normalized.isNotEmpty()) { "$label is required" }
+        require(normalized.length <= maxLength) { "$label must not exceed $maxLength characters" }
+        return normalized
+    }
+
     @Transactional
     fun updateVariantContent(
         targetGameId: Long,

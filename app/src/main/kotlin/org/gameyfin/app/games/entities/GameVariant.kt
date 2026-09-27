@@ -34,6 +34,19 @@ class GameVariant(
     @Column(nullable = false)
     var steamAppIdManualOverride: Boolean = false,
 
+    var localBuildVersion: String? = null,
+
+    var localBuildObservedAt: Instant? = null,
+
+    var steamUpdateMarker: String? = null,
+
+    var steamMetadataObservedAt: Instant? = null,
+
+    @Lob
+    var steamMetadataSource: String? = null,
+
+    var steamMetadataCheckedAt: Instant? = null,
+
     @Lob
     var launchArgs: String? = null,
 

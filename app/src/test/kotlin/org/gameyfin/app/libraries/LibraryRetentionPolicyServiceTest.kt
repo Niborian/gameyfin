@@ -1,6 +1,8 @@
 package org.gameyfin.app.libraries
 
 import io.mockk.*
+import jakarta.annotation.security.RolesAllowed
+import org.gameyfin.app.core.Role
 import org.gameyfin.app.libraries.dto.UpdateLibraryRetentionPolicyRequestDto
 import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.app.libraries.entities.LibraryRetentionPolicy
@@ -65,5 +67,11 @@ class LibraryRetentionPolicyServiceTest {
         }
         verify(exactly = 0) { policies.save(any()) }
         verify(exactly = 0) { changes.save(any()) }
+    }
+
+    @Test fun `retention policy endpoint is restricted to administrators`() {
+        val roles = requireNotNull(LibraryRetentionPolicyEndpoint::class.java.getAnnotation(RolesAllowed::class.java))
+
+        assertEquals(listOf(Role.Names.ADMIN), roles.value.toList())
     }
 }

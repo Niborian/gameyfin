@@ -66,6 +66,7 @@ class GameRequestServiceTest {
         authentication = mockk()
         mockkStatic(SecurityContextHolder::class)
         every { SecurityContextHolder.getContext() } returns securityContext
+        every { securityContext.authentication } returns null
     }
 
     @AfterEach

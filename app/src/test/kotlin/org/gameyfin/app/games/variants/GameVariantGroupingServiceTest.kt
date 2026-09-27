@@ -13,6 +13,7 @@ import org.gameyfin.app.games.dto.AttachVariantContentEntryDto
 import org.gameyfin.app.games.dto.AttachVariantContentRequestDto
 import org.gameyfin.app.games.dto.GroupGameAsVariantRequestDto
 import org.gameyfin.app.games.dto.UpdateVariantContentRequestDto
+import org.gameyfin.app.games.dto.RecordVariantSteamMetadataRequestDto
 import org.gameyfin.app.games.entities.Game
 import org.gameyfin.app.games.entities.GameMetadata
 import org.gameyfin.app.games.entities.GameVariant
@@ -623,6 +624,59 @@ class GameVariantGroupingServiceTest {
 
         assertFailsWith<IllegalArgumentException> { service.setVariantSteamAppId(1L, 10L, "0") }
         assertFailsWith<IllegalArgumentException> { service.setVariantSteamAppId(1L, 10L, "123abc") }
+    }
+
+    @Test
+    fun `recordVariantSteamMetadata keeps local and public markers separate after app ID verification`() {
+        val library = createLibrary()
+        val target = createGame(1L, library, "/mnt/Games/Craftopia.rar", PluginManagementEntry("igdb"), "123")
+        val variant = createBaseVariant(target, 10L, "/mnt/Games/Craftopia.rar")
+        target.variants.add(variant)
+        every { gameRepository.findById(1L) } returns Optional.of(target)
+        every { gameRepository.save(target) } returns target
+        service.setVariantSteamAppId(1L, 10L, "1307550")
+
+        service.recordVariantSteamMetadata(
+            1L,
+            10L,
+            RecordVariantSteamMetadataRequestDto(
+                localBuildVersion = " 1.4.2-local ",
+                steamUpdateMarker = " build-2026-09-25 ",
+                observedAt = Instant.parse("2026-09-25T12:00:00Z"),
+                source = " Steam public app metadata "
+            )
+        )
+
+        assertEquals("1.4.2-local", variant.localBuildVersion)
+        assertTrue(variant.localBuildObservedAt != null)
+        assertEquals("build-2026-09-25", variant.steamUpdateMarker)
+        assertEquals(Instant.parse("2026-09-25T12:00:00Z"), variant.steamMetadataObservedAt)
+        assertEquals("Steam public app metadata", variant.steamMetadataSource)
+        assertTrue(variant.steamMetadataCheckedAt != null)
+    }
+
+    @Test
+    fun `recordVariantSteamMetadata requires a verified app ID and valid values`() {
+        val library = createLibrary()
+        val target = createGame(1L, library, "/mnt/Games/Craftopia.rar", PluginManagementEntry("igdb"), "123")
+        val variant = createBaseVariant(target, 10L, "/mnt/Games/Craftopia.rar")
+        target.variants.add(variant)
+        every { gameRepository.findById(1L) } returns Optional.of(target)
+
+        assertFailsWith<IllegalArgumentException> {
+            service.recordVariantSteamMetadata(
+                1L, 10L,
+                RecordVariantSteamMetadataRequestDto("1.4", "build-1", Instant.now(), "public metadata")
+            )
+        }
+
+        service.setVariantSteamAppId(1L, 10L, "1307550")
+        assertFailsWith<IllegalArgumentException> {
+            service.recordVariantSteamMetadata(
+                1L, 10L,
+                RecordVariantSteamMetadataRequestDto(" ", "build-1", Instant.now(), "public metadata")
+            )
+        }
     }
 
     @Test

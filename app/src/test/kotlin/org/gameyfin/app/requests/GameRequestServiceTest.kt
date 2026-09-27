@@ -564,6 +564,14 @@ class GameRequestServiceTest {
         val statuses = listOf(
             GameRequestStatus.PENDING,
             GameRequestStatus.APPROVED,
+            GameRequestStatus.SEARCHING,
+            GameRequestStatus.CANDIDATES_FOUND,
+            GameRequestStatus.AWAITING_APPROVAL,
+            GameRequestStatus.QUEUED,
+            GameRequestStatus.DOWNLOADING,
+            GameRequestStatus.IMPORTED_FOR_REVIEW,
+            GameRequestStatus.FAILED,
+            GameRequestStatus.CANCELLED,
             GameRequestStatus.REJECTED,
             GameRequestStatus.FULFILLED
         )

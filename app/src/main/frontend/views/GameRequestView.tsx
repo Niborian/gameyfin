@@ -71,11 +71,19 @@ export default function GameRequestView() {
                     }
                     break;
                 case "status":
-                    const statusOrder = {
+                    const statusOrder: Record<GameRequestStatus, number> = {
                         [GameRequestStatus.PENDING]: 1,
-                        [GameRequestStatus.APPROVED]: 2,
-                        [GameRequestStatus.REJECTED]: 3,
-                        [GameRequestStatus.FULFILLED]: 4
+                        [GameRequestStatus.SEARCHING]: 2,
+                        [GameRequestStatus.CANDIDATES_FOUND]: 3,
+                        [GameRequestStatus.AWAITING_APPROVAL]: 4,
+                        [GameRequestStatus.APPROVED]: 5,
+                        [GameRequestStatus.QUEUED]: 6,
+                        [GameRequestStatus.DOWNLOADING]: 7,
+                        [GameRequestStatus.IMPORTED_FOR_REVIEW]: 8,
+                        [GameRequestStatus.FULFILLED]: 9,
+                        [GameRequestStatus.FAILED]: 10,
+                        [GameRequestStatus.CANCELLED]: 11,
+                        [GameRequestStatus.REJECTED]: 12
                     };
                     cmp = (statusOrder[a.status] || 99) - (statusOrder[b.status] || 99);
                     break;
@@ -152,6 +160,22 @@ export default function GameRequestView() {
             case GameRequestStatus.REJECTED:
                 return <Chip size="sm" radius="sm"
                              className="text-xs bg-danger-300 text-danger-foreground">Rejected</Chip>;
+            case GameRequestStatus.SEARCHING:
+                return <Chip size="sm" radius="sm" className="text-xs bg-secondary text-secondary-foreground">Searching</Chip>;
+            case GameRequestStatus.CANDIDATES_FOUND:
+                return <Chip size="sm" radius="sm" className="text-xs bg-secondary text-secondary-foreground">Candidates found</Chip>;
+            case GameRequestStatus.AWAITING_APPROVAL:
+                return <Chip size="sm" radius="sm" className="text-xs bg-warning text-warning-foreground">Awaiting approval</Chip>;
+            case GameRequestStatus.QUEUED:
+                return <Chip size="sm" radius="sm" className="text-xs bg-primary text-primary-foreground">Queued</Chip>;
+            case GameRequestStatus.DOWNLOADING:
+                return <Chip size="sm" radius="sm" className="text-xs bg-primary text-primary-foreground">Downloading</Chip>;
+            case GameRequestStatus.IMPORTED_FOR_REVIEW:
+                return <Chip size="sm" radius="sm" className="text-xs bg-warning text-warning-foreground">Imported for review</Chip>;
+            case GameRequestStatus.FAILED:
+                return <Chip size="sm" radius="sm" className="text-xs bg-danger text-danger-foreground">Failed</Chip>;
+            case GameRequestStatus.CANCELLED:
+                return <Chip size="sm" radius="sm" className="text-xs">Cancelled</Chip>;
             case GameRequestStatus.PENDING:
             default:
                 return <Chip size="sm" radius="sm" className="text-xs">Pending</Chip>;
@@ -194,7 +218,15 @@ export default function GameRequestView() {
                 className="w-64"
             >
                 <SelectItem key={GameRequestStatus.PENDING}>Pending</SelectItem>
+                <SelectItem key={GameRequestStatus.SEARCHING}>Searching</SelectItem>
+                <SelectItem key={GameRequestStatus.CANDIDATES_FOUND}>Candidates found</SelectItem>
+                <SelectItem key={GameRequestStatus.AWAITING_APPROVAL}>Awaiting approval</SelectItem>
                 <SelectItem key={GameRequestStatus.APPROVED}>Approved</SelectItem>
+                <SelectItem key={GameRequestStatus.QUEUED}>Queued</SelectItem>
+                <SelectItem key={GameRequestStatus.DOWNLOADING}>Downloading</SelectItem>
+                <SelectItem key={GameRequestStatus.IMPORTED_FOR_REVIEW}>Imported for review</SelectItem>
+                <SelectItem key={GameRequestStatus.FAILED}>Failed</SelectItem>
+                <SelectItem key={GameRequestStatus.CANCELLED}>Cancelled</SelectItem>
                 <SelectItem key={GameRequestStatus.REJECTED}>Rejected</SelectItem>
                 <SelectItem key={GameRequestStatus.FULFILLED}>Fulfilled</SelectItem>
             </Select>

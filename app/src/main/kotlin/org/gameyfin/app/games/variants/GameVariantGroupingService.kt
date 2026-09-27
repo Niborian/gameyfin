@@ -47,7 +47,7 @@ class GameVariantGroupingService(
     fun tryAutoGroup(candidate: Game, discovery: DiscoveredGameVariants, library: Library): Game? {
         // A release marker is only a suggestion; it must never be applied by an automatic scan.
         val aliases = configuredReleaseAliases()
-        if (releaseSuggestion(Path.of(candidate.metadata.path).fileName.toString(), aliases) != null) return null
+        if (releaseSuggestion(Path.of(candidate.metadata.path), aliases) != null) return null
         val exactTargets = library.games
             .filter { it.id != candidate.id && it.metadata.path != candidate.metadata.path }
             .filter { confidence(candidate, it).confidence == 100 }
@@ -55,7 +55,7 @@ class GameVariantGroupingService(
         if (exactTargets.size != 1) return null
 
         val target = exactTargets.single()
-        if (releaseSuggestion(Path.of(target.metadata.path).fileName.toString(), aliases) != null) return null
+        if (releaseSuggestion(Path.of(target.metadata.path), aliases) != null) return null
         val variantMetadata = variantMetadataFromCandidate(candidate, target, discovery)
         addOrUpdateExternalVariant(target, variantMetadata)
         addGroupedIgnoredPath(library, variantMetadata.path)
@@ -678,7 +678,7 @@ class GameVariantGroupingService(
                         target = target,
                         discovery = DiscoveredGameVariants(Path.of(source.metadata.path), emptyList())
                     )
-                    val releaseHint = releaseSuggestion(Path.of(source.metadata.path).fileName.toString(), aliases)
+                    val releaseHint = releaseSuggestion(Path.of(source.metadata.path), aliases)
                     val suggestionConfidence = when {
                         releaseHint == null -> match.confidence
                         releaseHint.variantLabel == null -> minOf(match.confidence, 50)
@@ -708,8 +708,8 @@ class GameVariantGroupingService(
         val secondPath = Path.of(second.metadata.path)
 
         // Keep a marked compatibility build as the review source, not the canonical target.
-        val firstHint = releaseSuggestion(firstPath.fileName.toString(), aliases)
-        val secondHint = releaseSuggestion(secondPath.fileName.toString(), aliases)
+        val firstHint = releaseSuggestion(firstPath, aliases)
+        val secondHint = releaseSuggestion(secondPath, aliases)
         if (firstHint != null && secondHint == null) return second to first
         if (secondHint != null && firstHint == null) return first to second
 
@@ -736,8 +736,8 @@ class GameVariantGroupingService(
             }
             .toMap()
 
-    private fun releaseSuggestion(observedName: String, aliases: Map<String, String>) =
-        releaseNameSuggestionService.suggest(observedName, aliases)
+    private fun releaseSuggestion(path: Path, aliases: Map<String, String>) =
+        releaseNameSuggestionService.suggest(path, aliases)
 
     private fun confidence(first: Game, second: Game): MatchConfidence {
         val sharedIds = sharedOriginalIds(first, second)

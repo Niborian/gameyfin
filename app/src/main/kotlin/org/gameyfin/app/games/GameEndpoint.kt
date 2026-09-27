@@ -10,6 +10,7 @@ import org.gameyfin.app.core.security.isCurrentUserAdmin
 import org.gameyfin.app.games.dto.*
 import org.gameyfin.app.games.extensions.toAdminDto
 import org.gameyfin.app.games.variants.GameVariantGroupingService
+import org.gameyfin.app.games.variants.SteamUpdateCandidateService
 import org.gameyfin.app.games.variants.VariantRetirementPreviewService
 import org.gameyfin.app.games.variants.VariantRetirementDecisionService
 import org.gameyfin.app.games.variants.VariantTimestampEvidenceService
@@ -27,6 +28,7 @@ class GameEndpoint(
     private val libraryService: LibraryService,
     private val libraryCoreService: LibraryCoreService,
     private val gameVariantGroupingService: GameVariantGroupingService,
+    private val steamUpdateCandidateService: SteamUpdateCandidateService,
     private val variantRetirementPreviewService: VariantRetirementPreviewService,
     private val variantRetirementDecisionService: VariantRetirementDecisionService,
     private val variantTimestampEvidenceService: VariantTimestampEvidenceService
@@ -123,6 +125,11 @@ class GameEndpoint(
         request: RecordVariantSteamMetadataRequestDto
     ): GameAdminDto {
         return gameVariantGroupingService.recordVariantSteamMetadata(targetGameId, variantId, request).toAdminDto()
+    }
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun getSteamUpdateCandidates(gameId: Long): List<SteamUpdateCandidateDto> {
+        return steamUpdateCandidateService.candidates(gameId)
     }
 
     @RolesAllowed(Role.Names.ADMIN)

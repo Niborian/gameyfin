@@ -29,7 +29,11 @@ class GameRequestCandidateService(
     }
     @Transactional fun approve(candidateId: Long, request: ApproveGameRequestCandidateDto): GameRequestCandidateApprovalDto {
         val candidate = candidateRepository.findByIdOrNull(candidateId) ?: throw IllegalArgumentException("Request candidate not found")
-        return approvalRepository.save(GameRequestCandidateApproval(candidate, approvedBy = actor(), reason = request.reason?.trim()?.takeIf { it.isNotEmpty() }?.also { require(it.length <= 4096) })).toDto()
+        return approvalRepository.save(GameRequestCandidateApproval(
+            candidate = candidate,
+            approvedBy = actor(),
+            reason = request.reason?.trim()?.takeIf { it.isNotEmpty() }?.also { require(it.length <= 4096) },
+        )).toDto()
     }
     @Transactional fun select(candidateId: Long): GameRequestCandidateDto {
         val candidate = candidateRepository.findByIdOrNull(candidateId) ?: throw IllegalArgumentException("Request candidate not found")

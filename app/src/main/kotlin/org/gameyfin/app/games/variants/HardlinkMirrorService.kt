@@ -32,6 +32,9 @@ class HardlinkMirrorService(
         val fallbackReason: String?
     )
 
+    /** Pure path check used by metadata-only retirement decisions; it does not access the filesystem. */
+    fun isManagedMirrorPath(path: Path): Boolean = path.toAbsolutePath().normalize().startsWith(mirrorRoot.toAbsolutePath())
+
     fun mirror(source: Path, library: Library, gamePath: Path, targetName: String): LinkResult {
         val target = mirrorTarget(library, gamePath, targetName)
         require(source.exists()) { "Hardlink source path does not exist: $source" }

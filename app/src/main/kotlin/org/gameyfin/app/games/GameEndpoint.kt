@@ -12,6 +12,7 @@ import org.gameyfin.app.games.extensions.toAdminDto
 import org.gameyfin.app.games.variants.GameVariantGroupingService
 import org.gameyfin.app.games.variants.VariantRetirementPreviewService
 import org.gameyfin.app.games.variants.VariantRetirementDecisionService
+import org.gameyfin.app.games.variants.VariantTimestampEvidenceService
 import org.gameyfin.app.libraries.LibraryCoreService
 import org.gameyfin.app.libraries.LibraryService
 import org.gameyfin.pluginapi.gamemetadata.Platform
@@ -27,7 +28,8 @@ class GameEndpoint(
     private val libraryCoreService: LibraryCoreService,
     private val gameVariantGroupingService: GameVariantGroupingService,
     private val variantRetirementPreviewService: VariantRetirementPreviewService,
-    private val variantRetirementDecisionService: VariantRetirementDecisionService
+    private val variantRetirementDecisionService: VariantRetirementDecisionService,
+    private val variantTimestampEvidenceService: VariantTimestampEvidenceService
 ) {
     fun subscribe(): Flux<out List<GameEvent>> {
         return if (isCurrentUserAdmin()) {
@@ -66,6 +68,18 @@ class GameEndpoint(
     @RolesAllowed(Role.Names.ADMIN)
     fun getVariantRetirementHistory(gameId: Long, variantId: Long): List<VariantRetirementDecisionDto> {
         return variantRetirementDecisionService.history(gameId, variantId)
+    }
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun recordVariantTimestampEvidence(
+        gameId: Long,
+        variantId: Long,
+        request: RecordVariantTimestampEvidenceRequestDto
+    ): VariantTimestampEvidenceDto = variantTimestampEvidenceService.record(gameId, variantId, request)
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun getVariantTimestampEvidence(gameId: Long, variantId: Long): List<VariantTimestampEvidenceDto> {
+        return variantTimestampEvidenceService.history(gameId, variantId)
     }
 
     @RolesAllowed(Role.Names.ADMIN)

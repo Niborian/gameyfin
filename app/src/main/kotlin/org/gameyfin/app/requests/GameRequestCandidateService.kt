@@ -4,6 +4,8 @@ import org.gameyfin.app.core.security.getCurrentAuth
 import org.gameyfin.app.requests.dto.*
 import org.gameyfin.app.requests.entities.GameRequestCandidate
 import org.gameyfin.app.requests.entities.GameRequestCandidateApproval
+import org.gameyfin.app.requests.entities.GameRequestStatusChange
+import org.gameyfin.app.requests.status.GameRequestStatus
 import org.springframework.data.repository.findByIdOrNull
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -14,6 +16,7 @@ class GameRequestCandidateService(
     private val requestRepository: GameRequestRepository,
     private val candidateRepository: GameRequestCandidateRepository,
     private val approvalRepository: GameRequestCandidateApprovalRepository,
+    private val statusChangeRepository: GameRequestStatusChangeRepository,
 ) {
     @Transactional fun record(requestId: Long, request: RecordGameRequestCandidateDto): GameRequestCandidateDto {
         val gameRequest = requestRepository.findByIdOrNull(requestId) ?: throw IllegalArgumentException("Game request not found")
@@ -38,7 +41,18 @@ class GameRequestCandidateService(
     @Transactional fun select(candidateId: Long): GameRequestCandidateDto {
         val candidate = candidateRepository.findByIdOrNull(candidateId) ?: throw IllegalArgumentException("Request candidate not found")
         require(approvalRepository.existsByCandidateId(candidateId)) { "An administrator approval record is required before selection" }
-        candidateRepository.findAllByGameRequestIdOrderByRecordedAtAsc(requireNotNull(candidate.gameRequest.id)).forEach { it.selected = it.id == candidateId; candidateRepository.save(it) }
+        val request = candidate.gameRequest
+        require(request.status == GameRequestStatus.AWAITING_APPROVAL) { "Only requests awaiting approval can be queued" }
+        candidateRepository.findAllByGameRequestIdOrderByRecordedAtAsc(requireNotNull(request.id)).forEach { it.selected = it.id == candidateId; candidateRepository.save(it) }
+        request.status = GameRequestStatus.QUEUED
+        requestRepository.save(request)
+        statusChangeRepository.save(GameRequestStatusChange(
+            gameRequest = request,
+            previousStatus = GameRequestStatus.AWAITING_APPROVAL,
+            newStatus = GameRequestStatus.QUEUED,
+            actor = actor(),
+            reason = "Approved request candidate selected; no provider action was performed",
+        ))
         return candidate.toDto()
     }
     @Transactional(readOnly = true) fun list(requestId: Long) = candidateRepository.findAllByGameRequestIdOrderByRecordedAtAsc(requestId).map { it.toDto() }

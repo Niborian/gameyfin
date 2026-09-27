@@ -24,6 +24,7 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.nio.file.Path
 import java.time.ZoneOffset
+import java.time.Instant
 import kotlin.io.path.isDirectory
 
 @Service
@@ -197,6 +198,22 @@ class GameVariantGroupingService(
             variant.defaultLocked = isSelected
         }
 
+        return gameRepository.save(target)
+    }
+
+    @Transactional
+    fun setVariantSteamAppId(targetGameId: Long, variantId: Long, steamAppId: String?): Game {
+        val target = gameRepository.findByIdOrNull(targetGameId)
+            ?: throw IllegalArgumentException("Target game $targetGameId not found")
+        val variant = findVariant(target, variantId)
+        val normalizedAppId = steamAppId?.trim()?.ifBlank { null }
+        require(normalizedAppId == null || normalizedAppId.matches(Regex("[1-9]\\d*"))) {
+            "Steam app ID must be a positive decimal value"
+        }
+
+        variant.steamAppId = normalizedAppId
+        variant.steamAppIdVerifiedAt = normalizedAppId?.let { Instant.now() }
+        variant.steamAppIdManualOverride = true
         return gameRepository.save(target)
     }
 

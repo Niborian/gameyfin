@@ -2,6 +2,7 @@ package org.gameyfin.app.games.entities
 
 import jakarta.persistence.*
 import jakarta.persistence.CascadeType.ALL
+import java.time.Instant
 
 @Entity
 class GameVariant(
@@ -27,6 +28,11 @@ class GameVariant(
     var tags: MutableSet<String> = mutableSetOf(),
 
     var steamAppId: String? = null,
+
+    var steamAppIdVerifiedAt: Instant? = null,
+
+    @Column(nullable = false)
+    var steamAppIdManualOverride: Boolean = false,
 
     @Lob
     var launchArgs: String? = null,

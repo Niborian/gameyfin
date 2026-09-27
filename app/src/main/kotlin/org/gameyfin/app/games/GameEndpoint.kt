@@ -80,6 +80,15 @@ class GameEndpoint(
     }
 
     @RolesAllowed(Role.Names.ADMIN)
+    fun setVariantSteamAppId(
+        targetGameId: Long,
+        variantId: Long,
+        request: SetVariantSteamAppIdRequestDto
+    ): GameAdminDto {
+        return gameVariantGroupingService.setVariantSteamAppId(targetGameId, variantId, request.steamAppId).toAdminDto()
+    }
+
+    @RolesAllowed(Role.Names.ADMIN)
     fun deleteVariantContent(targetGameId: Long, variantId: Long, contentId: Long): GameAdminDto {
         return gameVariantGroupingService.deleteVariantContent(targetGameId, variantId, contentId).toAdminDto()
     }

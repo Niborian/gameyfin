@@ -47,6 +47,26 @@ class GameVariantServiceTest {
     }
 
     @Test
+    fun `syncVariants should preserve an administrator Steam app ID override`() {
+        val (service, repository, filesystemService, library, game, gamePath) = variantTestContext()
+        every { repository.save(game) } returns game
+        every { filesystemService.calculateFileSize(any()) } returns 0L
+
+        service.syncVariants(game, discoveredVariants(gamePath), library)
+        val manuallyLinked = game.variants.single { it.name == "Normal" && it.version == "1.0" }
+        manuallyLinked.steamAppId = "1307550"
+        manuallyLinked.steamAppIdManualOverride = true
+
+        val scannedWithDifferentId = DiscoveredGameVariants(
+            gamePath,
+            discoveredVariants(gamePath).variants.map { it.copy(steamAppId = "999999") }
+        )
+        service.syncVariants(game, scannedWithDifferentId, library)
+
+        assertEquals("1307550", manuallyLinked.steamAppId)
+    }
+
+    @Test
     fun `syncVariants should remain stable across a repeated scan of attached variants`() {
         val (service, repository, filesystemService, library, game, gamePath) = variantTestContext()
         val discovery = discoveredVariantsWithContent(gamePath)

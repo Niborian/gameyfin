@@ -1,6 +1,8 @@
 package org.gameyfin.app.games.dto
 
 import org.gameyfin.app.games.entities.VariantLinkStatus
+import org.gameyfin.app.games.entities.VariantRetirementState
+import java.time.Instant
 
 enum class VariantRetirementDisposition {
     RETAIN,
@@ -18,6 +20,11 @@ data class VariantRetirementPreviewDto(
     val managedBytes: Long,
     val selectedContentNames: List<String>,
     val effectivePaths: List<String>,
+    /** Metadata-only state; it does not indicate that a filesystem archive or deletion occurred. */
+    val retirementState: VariantRetirementState,
+    val retirementReviewAt: Instant?,
+    val latestDecisionAt: Instant?,
+    val latestDecisionState: VariantRetirementState?,
     val disposition: VariantRetirementDisposition,
     val reason: String
 )

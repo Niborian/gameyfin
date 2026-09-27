@@ -6,12 +6,14 @@ import org.gameyfin.app.games.entities.GameVariant
 import org.gameyfin.app.games.entities.VariantLinkStatus
 import org.gameyfin.app.games.entities.effectivePaths
 import org.gameyfin.app.games.repositories.GameRepository
+import org.gameyfin.app.games.repositories.VariantRetirementDecisionRepository
 import org.springframework.data.repository.findByIdOrNull
 import org.springframework.stereotype.Service
 
 @Service
 class VariantRetirementPreviewService(
-    private val gameRepository: GameRepository
+    private val gameRepository: GameRepository,
+    private val decisionRepository: VariantRetirementDecisionRepository
 ) {
     fun preview(gameId: Long): List<VariantRetirementPreviewDto> {
         val game = gameRepository.findByIdOrNull(gameId)
@@ -23,6 +25,9 @@ class VariantRetirementPreviewService(
     }
 
     private fun previewVariant(variant: GameVariant): VariantRetirementPreviewDto {
+        val latestDecision = decisionRepository
+            .findAllByVariantIdOrderByDecidedAtAsc(requireNotNull(variant.id))
+            .lastOrNull()
         val effectivePaths = (listOf(variant.path) + variant.contents.flatMap { it.effectivePaths() }).distinct()
         val selectedContent = variant.contents
             .filter { it.required || it.defaultSelected }
@@ -48,6 +53,10 @@ class VariantRetirementPreviewService(
             managedBytes = variant.fileSize ?: 0,
             selectedContentNames = selectedContent,
             effectivePaths = effectivePaths,
+            retirementState = variant.retirementState,
+            retirementReviewAt = variant.retirementReviewAt,
+            latestDecisionAt = latestDecision?.decidedAt,
+            latestDecisionState = latestDecision?.newState,
             disposition = disposition,
             reason = reason
         )

@@ -86,6 +86,8 @@ silently losing the fork's variant, hardlink, source-path, or exact-download gua
   pruned after an explicit review and grace period.
 - Download automation is limited to administrator-approved, authorized sources. It does not bypass store licensing,
   DRM, or access controls.
+- The current fork has no external acquisition-provider integration. See the
+  [authorized acquisition boundary](docs/AUTHORIZED-ACQUISITION.md) before proposing any Prowlarr or qBittorrent work.
 
 ### Version and image identity
 

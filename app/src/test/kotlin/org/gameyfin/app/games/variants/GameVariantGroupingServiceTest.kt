@@ -662,6 +662,7 @@ class GameVariantGroupingServiceTest {
         val variant = createBaseVariant(target, 10L, "/mnt/Games/Craftopia.rar")
         target.variants.add(variant)
         every { gameRepository.findById(1L) } returns Optional.of(target)
+        every { gameRepository.save(target) } returns target
 
         assertFailsWith<IllegalArgumentException> {
             service.recordVariantSteamMetadata(

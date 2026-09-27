@@ -178,7 +178,6 @@ class GameRequestService(
             return
         }
 
-        if (gameRequest.status == status) return
         val previousStatus = gameRequest.status
         gameRequest.status = status
         gameRequestRepository.save(gameRequest)

@@ -1,6 +1,8 @@
 package org.gameyfin.app.requests
 
 import io.mockk.*
+import jakarta.annotation.security.RolesAllowed
+import org.gameyfin.app.core.Role
 import org.gameyfin.app.requests.dto.RecordGameRequestCandidateDto
 import org.gameyfin.app.requests.entities.GameRequest
 import org.gameyfin.app.requests.entities.GameRequestCandidate
@@ -46,5 +48,20 @@ class GameRequestCandidateServiceTest {
 
         assertFailsWith<IllegalArgumentException> { service.select(2L) }
         verify(exactly = 0) { candidates.save(any()) }
+    }
+
+    @Test fun `record rejects blank provider metadata before persistence`() {
+        every { requests.findById(1L) } returns Optional.of(gameRequest)
+
+        assertFailsWith<IllegalArgumentException> {
+            service.record(1L, RecordGameRequestCandidateDto(" ", "Example", "reference"))
+        }
+        verify(exactly = 0) { candidates.save(any()) }
+    }
+
+    @Test fun `candidate endpoint is restricted to administrators`() {
+        val roles = requireNotNull(GameRequestCandidateEndpoint::class.java.getAnnotation(RolesAllowed::class.java))
+
+        assertEquals(listOf(Role.Names.ADMIN), roles.value.toList())
     }
 }

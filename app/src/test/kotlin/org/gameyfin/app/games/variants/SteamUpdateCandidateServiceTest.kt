@@ -7,7 +7,10 @@ import org.gameyfin.app.games.entities.GameMetadata
 import org.gameyfin.app.games.entities.GameVariant
 import org.gameyfin.app.games.repositories.GameRepository
 import org.gameyfin.app.games.dto.ReviewSteamUpdateCandidateRequestDto
+import org.gameyfin.app.games.dto.RouteSteamUpdateCandidateRequestDto
 import org.gameyfin.app.libraries.entities.Library
+import org.gameyfin.app.requests.GameRequestCandidateService
+import org.gameyfin.app.requests.dto.GameRequestCandidateDto
 import org.gameyfin.pluginapi.gamemetadata.Platform
 import org.junit.jupiter.api.Test
 import java.time.Instant
@@ -20,7 +23,8 @@ import kotlin.test.assertTrue
 class SteamUpdateCandidateServiceTest {
     private val repository = mockk<GameRepository>()
     private val newsClient = mockk<SteamNewsClient>()
-    private val service = SteamUpdateCandidateService(repository, newsClient, SteamNewsContentUpdateClassifier())
+    private val requestCandidates = mockk<GameRequestCandidateService>()
+    private val service = SteamUpdateCandidateService(repository, newsClient, SteamNewsContentUpdateClassifier(), requestCandidates)
 
     @Test
     fun `returns explainable marker difference for a verified Steam app`() {
@@ -104,6 +108,18 @@ class SteamUpdateCandidateServiceTest {
 
         assertFalse(candidate.ignored)
         assertEquals(until, candidate.snoozedUntil)
+    }
+
+    @Test
+    fun `routing a candidate records it in request review without a provider action`() {
+        val variant = reviewableVariant()
+        val game = game(variant)
+        every { repository.findById(1L) } returns Optional.of(game)
+        every { requestCandidates.record(9L, any()) } returns GameRequestCandidateDto(1L, "Steam public metadata", "Example", "source", null, Instant.EPOCH, "admin", false)
+
+        service.routeToRequestReview(1L, 10L, RouteSteamUpdateCandidateRequestDto(9L, "build-2026-09-25"))
+
+        io.mockk.verify(exactly = 1) { requestCandidates.record(9L, any()) }
     }
 
     private fun reviewableVariant() = variant().apply {

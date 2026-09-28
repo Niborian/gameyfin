@@ -3,8 +3,12 @@ package org.gameyfin.app.games.variants
 import org.gameyfin.app.games.dto.SteamUpdateCandidateDto
 import org.gameyfin.app.games.dto.SteamNewsEventDto
 import org.gameyfin.app.games.dto.ReviewSteamUpdateCandidateRequestDto
+import org.gameyfin.app.games.dto.RouteSteamUpdateCandidateRequestDto
 import org.gameyfin.app.games.entities.GameVariant
 import org.gameyfin.app.games.repositories.GameRepository
+import org.gameyfin.app.requests.GameRequestCandidateService
+import org.gameyfin.app.requests.dto.GameRequestCandidateDto
+import org.gameyfin.app.requests.dto.RecordGameRequestCandidateDto
 import org.springframework.data.repository.findByIdOrNull
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -14,7 +18,8 @@ import java.time.Instant
 class SteamUpdateCandidateService(
     private val gameRepository: GameRepository,
     private val steamNewsClient: SteamNewsClient,
-    private val newsClassifier: SteamNewsContentUpdateClassifier
+    private val newsClassifier: SteamNewsContentUpdateClassifier,
+    private val requestCandidateService: GameRequestCandidateService
 ) {
     /**
      * Returns evidence that the local build marker and the owner-recorded public marker differ.
@@ -77,6 +82,34 @@ class SteamUpdateCandidateService(
         }
         gameRepository.save(game)
         return requireNotNull(candidateFor(variant))
+    }
+
+    /**
+     * Adds explicitly selected evidence to the existing request-review queue. Approval and later selection
+     * remain separate audited actions in that workflow; this method has no provider or download action.
+     */
+    @Transactional
+    fun routeToRequestReview(gameId: Long, variantId: Long, request: RouteSteamUpdateCandidateRequestDto): GameRequestCandidateDto {
+        require(request.requestId > 0) { "A valid game request is required" }
+        val game = gameRepository.findByIdOrNull(gameId)
+            ?: throw IllegalArgumentException("Target game $gameId not found")
+        val variant = game.variants.firstOrNull { it.id == variantId }
+            ?: throw IllegalArgumentException("Variant $variantId does not belong to game $gameId")
+        val marker = request.marker.trim()
+        require(marker.isNotEmpty() && marker == variant.steamUpdateMarker) { "The observed Steam update marker has changed" }
+        val candidate = requireNotNull(candidateFor(variant)) { "No reviewable Steam update candidate exists" }
+        require(!candidate.ignored) { "The observed Steam update marker is ignored" }
+        require(candidate.snoozedUntil?.isAfter(Instant.now()) != true) { "The observed Steam update marker is snoozed" }
+
+        return requestCandidateService.record(
+            request.requestId,
+            RecordGameRequestCandidateDto(
+                providerLabel = "Steam public metadata",
+                displayName = "${game.title} — ${variant.name} update ${candidate.steamUpdateMarker}",
+                externalReference = candidate.source,
+                notes = "Steam app ${candidate.steamAppId}; local build ${candidate.localBuildVersion}; observed ${candidate.observedAt}."
+            )
+        )
     }
 
     private fun candidateFor(variant: GameVariant): SteamUpdateCandidateDto? {

@@ -16,6 +16,7 @@ import org.gameyfin.app.games.variants.VariantRetirementDecisionService
 import org.gameyfin.app.games.variants.VariantTimestampEvidenceService
 import org.gameyfin.app.libraries.LibraryCoreService
 import org.gameyfin.app.libraries.LibraryService
+import org.gameyfin.app.requests.dto.GameRequestCandidateDto
 import org.gameyfin.pluginapi.gamemetadata.Platform
 import reactor.core.publisher.Flux
 import java.nio.file.Path
@@ -150,6 +151,13 @@ class GameEndpoint(
         variantId: Long,
         request: ReviewSteamUpdateCandidateRequestDto
     ): SteamUpdateCandidateDto = steamUpdateCandidateService.review(gameId, variantId, request, ignore = false)
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun routeSteamUpdateCandidateToRequestReview(
+        gameId: Long,
+        variantId: Long,
+        request: RouteSteamUpdateCandidateRequestDto
+    ): GameRequestCandidateDto = steamUpdateCandidateService.routeToRequestReview(gameId, variantId, request)
 
     @RolesAllowed(Role.Names.ADMIN)
     fun deleteVariantContent(targetGameId: Long, variantId: Long, contentId: Long): GameAdminDto {

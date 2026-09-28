@@ -10,11 +10,13 @@ import org.gameyfin.app.core.security.isCurrentUserAdmin
 import org.gameyfin.app.games.dto.*
 import org.gameyfin.app.games.extensions.toAdminDto
 import org.gameyfin.app.games.variants.GameVariantGroupingService
+import org.gameyfin.app.games.variants.SteamUpdateCandidateService
 import org.gameyfin.app.games.variants.VariantRetirementPreviewService
 import org.gameyfin.app.games.variants.VariantRetirementDecisionService
 import org.gameyfin.app.games.variants.VariantTimestampEvidenceService
 import org.gameyfin.app.libraries.LibraryCoreService
 import org.gameyfin.app.libraries.LibraryService
+import org.gameyfin.app.requests.dto.GameRequestCandidateDto
 import org.gameyfin.pluginapi.gamemetadata.Platform
 import reactor.core.publisher.Flux
 import java.nio.file.Path
@@ -27,6 +29,7 @@ class GameEndpoint(
     private val libraryService: LibraryService,
     private val libraryCoreService: LibraryCoreService,
     private val gameVariantGroupingService: GameVariantGroupingService,
+    private val steamUpdateCandidateService: SteamUpdateCandidateService,
     private val variantRetirementPreviewService: VariantRetirementPreviewService,
     private val variantRetirementDecisionService: VariantRetirementDecisionService,
     private val variantTimestampEvidenceService: VariantTimestampEvidenceService
@@ -124,6 +127,37 @@ class GameEndpoint(
     ): GameAdminDto {
         return gameVariantGroupingService.recordVariantSteamMetadata(targetGameId, variantId, request).toAdminDto()
     }
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun getSteamUpdateCandidates(gameId: Long): List<SteamUpdateCandidateDto> {
+        return steamUpdateCandidateService.candidates(gameId)
+    }
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun getSteamNewsEvents(gameId: Long): List<SteamNewsEventDto> {
+        return steamUpdateCandidateService.newsEvents(gameId)
+    }
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun ignoreSteamUpdateCandidate(
+        gameId: Long,
+        variantId: Long,
+        request: ReviewSteamUpdateCandidateRequestDto
+    ): SteamUpdateCandidateDto = steamUpdateCandidateService.review(gameId, variantId, request, ignore = true)
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun snoozeSteamUpdateCandidate(
+        gameId: Long,
+        variantId: Long,
+        request: ReviewSteamUpdateCandidateRequestDto
+    ): SteamUpdateCandidateDto = steamUpdateCandidateService.review(gameId, variantId, request, ignore = false)
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun routeSteamUpdateCandidateToRequestReview(
+        gameId: Long,
+        variantId: Long,
+        request: RouteSteamUpdateCandidateRequestDto
+    ): GameRequestCandidateDto = steamUpdateCandidateService.routeToRequestReview(gameId, variantId, request)
 
     @RolesAllowed(Role.Names.ADMIN)
     fun deleteVariantContent(targetGameId: Long, variantId: Long, contentId: Long): GameAdminDto {

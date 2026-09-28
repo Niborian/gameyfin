@@ -47,6 +47,12 @@ class GameVariant(
 
     var steamMetadataCheckedAt: Instant? = null,
 
+    /** Marker deliberately ignored by an administrator; it never triggers a download action. */
+    var steamUpdateIgnoredMarker: String? = null,
+
+    /** An administrator may defer review of the currently observed marker until this instant. */
+    var steamUpdateSnoozedUntil: Instant? = null,
+
     @Lob
     var launchArgs: String? = null,
 

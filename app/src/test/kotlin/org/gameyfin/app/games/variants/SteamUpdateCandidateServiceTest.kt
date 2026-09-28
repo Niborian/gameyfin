@@ -6,6 +6,7 @@ import org.gameyfin.app.games.entities.Game
 import org.gameyfin.app.games.entities.GameMetadata
 import org.gameyfin.app.games.entities.GameVariant
 import org.gameyfin.app.games.repositories.GameRepository
+import org.gameyfin.app.games.dto.ReviewSteamUpdateCandidateRequestDto
 import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.pluginapi.gamemetadata.Platform
 import org.junit.jupiter.api.Test

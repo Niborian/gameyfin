@@ -15,8 +15,8 @@ data class SteamNewsEvent(
 
 /** Small adapter for Steam's documented public ISteamNews endpoint. */
 @Component
-class SteamNewsClient(webClientBuilder: WebClient.Builder) {
-    private val client = webClientBuilder.baseUrl("https://api.steampowered.com").build()
+class SteamNewsClient {
+    private val client = WebClient.builder().baseUrl("https://api.steampowered.com").build()
 
     fun latest(appId: String): List<SteamNewsEvent> {
         require(appId.matches(Regex("[1-9]\\d*"))) { "Steam app ID must be a positive decimal value" }

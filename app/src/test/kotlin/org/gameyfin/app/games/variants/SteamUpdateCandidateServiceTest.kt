@@ -10,6 +10,7 @@ import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.pluginapi.gamemetadata.Platform
 import org.junit.jupiter.api.Test
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.Optional
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -74,6 +75,43 @@ class SteamUpdateCandidateServiceTest {
         assertEquals(listOf("patch-1", "misc-1"), events.map { it.eventId })
         assertEquals(SteamNewsClassification.CONTENT_UPDATE, events.first().classification)
         assertEquals(SteamNewsClassification.REVIEW_NEEDED, events.last().classification)
+    }
+
+    @Test
+    fun `ignoring an exact marker only changes review state`() {
+        val variant = reviewableVariant()
+        val game = game(variant)
+        every { repository.findById(1L) } returns Optional.of(game)
+        every { repository.save(game) } returns game
+
+        val candidate = service.review(1L, 10L, ReviewSteamUpdateCandidateRequestDto("build-2026-09-25"), ignore = true)
+
+        assertTrue(candidate.ignored)
+        assertEquals("build-2026-09-25", variant.steamUpdateIgnoredMarker)
+        assertEquals(null, variant.steamUpdateSnoozedUntil)
+    }
+
+    @Test
+    fun `snoozing requires a future expiry and keeps the marker reviewable`() {
+        val variant = reviewableVariant()
+        val game = game(variant)
+        every { repository.findById(1L) } returns Optional.of(game)
+        every { repository.save(game) } returns game
+        val until = Instant.now().plus(1, ChronoUnit.HOURS)
+
+        val candidate = service.review(1L, 10L, ReviewSteamUpdateCandidateRequestDto("build-2026-09-25", until), ignore = false)
+
+        assertFalse(candidate.ignored)
+        assertEquals(until, candidate.snoozedUntil)
+    }
+
+    private fun reviewableVariant() = variant().apply {
+        steamAppId = "1307550"
+        steamAppIdVerifiedAt = Instant.parse("2026-09-20T00:00:00Z")
+        localBuildVersion = "1.4.2"
+        steamUpdateMarker = "build-2026-09-25"
+        steamMetadataObservedAt = Instant.parse("2026-09-25T12:00:00Z")
+        steamMetadataSource = "Steam public app metadata"
     }
 
     private fun game(variant: GameVariant): Game = Game(

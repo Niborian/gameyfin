@@ -2,6 +2,7 @@ package org.gameyfin.app.games.variants
 
 import org.gameyfin.app.games.dto.SteamUpdateCandidateDto
 import org.gameyfin.app.games.dto.SteamNewsEventDto
+import org.gameyfin.app.games.dto.ReviewSteamUpdateCandidateRequestDto
 import org.gameyfin.app.games.entities.GameVariant
 import org.gameyfin.app.games.repositories.GameRepository
 import org.springframework.data.repository.findByIdOrNull
@@ -48,6 +49,34 @@ class SteamUpdateCandidateService(
                 )
             }
         }.filter { it.classification != SteamNewsClassification.NOT_CONTENT_UPDATE }
+    }
+
+    /**
+     * Records an administrator's decision for one exact candidate marker. This only changes review state;
+     * it cannot contact a provider, alter a library path, or initiate a download.
+     */
+    @Transactional
+    fun review(gameId: Long, variantId: Long, request: ReviewSteamUpdateCandidateRequestDto, ignore: Boolean): SteamUpdateCandidateDto {
+        val game = gameRepository.findByIdOrNull(gameId)
+            ?: throw IllegalArgumentException("Target game $gameId not found")
+        val variant = game.variants.firstOrNull { it.id == variantId }
+            ?: throw IllegalArgumentException("Variant $variantId does not belong to game $gameId")
+        val marker = request.marker.trim()
+        require(marker.isNotEmpty()) { "Steam update marker is required" }
+        require(variant.steamUpdateMarker == marker) { "The observed Steam update marker has changed" }
+        require(candidateFor(variant) != null) { "No reviewable Steam update candidate exists" }
+
+        if (ignore) {
+            variant.steamUpdateIgnoredMarker = marker
+            variant.steamUpdateSnoozedUntil = null
+        } else {
+            val until = requireNotNull(request.snoozedUntil) { "A snooze expiry is required" }
+            require(until.isAfter(Instant.now())) { "Snooze expiry must be in the future" }
+            variant.steamUpdateIgnoredMarker = null
+            variant.steamUpdateSnoozedUntil = until
+        }
+        gameRepository.save(game)
+        return requireNotNull(candidateFor(variant))
     }
 
     private fun candidateFor(variant: GameVariant): SteamUpdateCandidateDto? {

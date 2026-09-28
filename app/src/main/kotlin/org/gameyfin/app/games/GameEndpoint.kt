@@ -138,6 +138,20 @@ class GameEndpoint(
     }
 
     @RolesAllowed(Role.Names.ADMIN)
+    fun ignoreSteamUpdateCandidate(
+        gameId: Long,
+        variantId: Long,
+        request: ReviewSteamUpdateCandidateRequestDto
+    ): SteamUpdateCandidateDto = steamUpdateCandidateService.review(gameId, variantId, request, ignore = true)
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun snoozeSteamUpdateCandidate(
+        gameId: Long,
+        variantId: Long,
+        request: ReviewSteamUpdateCandidateRequestDto
+    ): SteamUpdateCandidateDto = steamUpdateCandidateService.review(gameId, variantId, request, ignore = false)
+
+    @RolesAllowed(Role.Names.ADMIN)
     fun deleteVariantContent(targetGameId: Long, variantId: Long, contentId: Long): GameAdminDto {
         return gameVariantGroupingService.deleteVariantContent(targetGameId, variantId, contentId).toAdminDto()
     }

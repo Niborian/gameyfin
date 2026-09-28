@@ -133,6 +133,11 @@ class GameEndpoint(
     }
 
     @RolesAllowed(Role.Names.ADMIN)
+    fun getSteamNewsEvents(gameId: Long): List<SteamNewsEventDto> {
+        return steamUpdateCandidateService.newsEvents(gameId)
+    }
+
+    @RolesAllowed(Role.Names.ADMIN)
     fun deleteVariantContent(targetGameId: Long, variantId: Long, contentId: Long): GameAdminDto {
         return gameVariantGroupingService.deleteVariantContent(targetGameId, variantId, contentId).toAdminDto()
     }

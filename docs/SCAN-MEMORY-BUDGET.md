@@ -51,13 +51,46 @@ a meaningful heap/RSS improvement or a throughput guarantee. The deterministic
 pending-task reduction is separate evidence. See the raw comparison JSON; repeat
 representative workloads before making a release-readiness claim.
 
+## Isolated real-image and H2 comparison
+
+A one-time isolated Linux staging run on 2026-10-07 used the running image clone
+`sha256:b031128b79ce56a7a7ea59498d1894ae5a28b0309952bd917ee7c3f9936d3729`
+and reviewed candidate source `0f152220a5c73b938312f43e464291fd1dfb9511`, image ID
+`sha256:e0508fd21796cac8b1b9d34d750dd9ec1fdd1f126d19d69460185a78d02e1258`.
+The candidate was exported from CI, not promoted to a release tag. It predates the
+bounded scheduler, so these measurements are not evidence of PR #104's memory savings.
+
+Both images started from the same offline synthetic H2 database and fixture: four
+libraries containing 104/27/1/0 games, 132 pinned variants, 264 grouped-base/optional-patch
+content rows, two discoverable versions per game, and 924 source files. External metadata
+IDs were empty; no external provider traffic or torrent plugin was available. This exercises
+actual H2 persistence and application scan endpoints, not a production library replica.
+
+| Image / full scan | Completion-poll wall time | Sampled JVM RSS bytes | Sampled heap bytes | Completed / failed libraries |
+| --- | ---: | ---: | ---: | --- |
+| Running-image clone / first | 7.944 s | 544,067,584 | 163,064,416 | 4 / 0 |
+| Candidate / first | 7.968 s | 557,756,416 | 163,836,688 | 4 / 0 |
+| Running-image clone / repeat | 3.273 s | 547,115,008 | 165,802,248 | 4 / 0 |
+| Candidate / repeat | 3.369 s | 562,941,952 | 168,390,120 | 4 / 0 |
+
+All source paths and SHA-256 hashes stayed unchanged. The clone produced two default
+variants per game after a full scan; the candidate retained exactly one pinned default.
+Exact grouped downloads returned the same selected files and hashes on both images.
+The candidate's repeated full-scan RSS was approximately 2.9% higher, not lower, and its
+wall time approximately 2.9% higher. One paired sequence is insufficient to establish a
+production regression threshold or guarantee. RSS/heap sampling can miss brief peaks;
+wall time includes completion polling and reading the final game list.
+
 ## Staging budget proposal
 
 For the next isolated staging comparison, start with heap `512m`, metaspace cap `256m`,
 and container limit `1536m`. This reserves 1024 MiB outside maximum heap for metaspace,
 thread stacks, direct buffers, code cache, libraries, and margin. The scale fixture observed
 approximately 449 MiB RSS; that observation does not size a full server. The proposed
-container limit has not yet been tested with the real application image or library.
+container limit was also tested with the real images and synthetic H2 workload above,
+using two CPUs, no published ports, and no external network. Both completed without an
+OOM or automatic restart, with sampled JVM RSS below 563 MB. This does not prove the
+budget is sufficient for production metadata, large images, downloads, or torrent traffic.
 Do not apply this proposal to production until those runs establish enough native-memory
 headroom, acceptable throughput, stable restarts, and no OOM/H2 closed-database errors.
 

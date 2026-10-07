@@ -90,6 +90,37 @@ containers were retained. This proves basic application proxy/authentication iso
 not authenticated grouped downloads, WebSockets, torrent-client traffic, live firewall
 rules, or production cutover readiness. Issue #29 remains open for those criteria.
 
+### Read-only inventory refresh and change boundary
+
+A later read-only inventory confirmed that the running application publishes all three
+ports as TCP on IPv4 and IPv6 wildcard addresses; no UDP host mapping was shown.
+The host INPUT policies were ACCEPT for both address families. That observation is
+not a complete firewall audit: Docker published traffic may traverse FORWARD,
+DOCKER and DOCKER-USER chains instead, and upstream router rules are still unknown.
+Do not infer Internet reachability, torrent usage, or a safe replacement binding from it.
+
+Before proposing a live change, record the existing proxy's Docker network and backend
+target without printing environment variables or secrets. Check the torrent plugin's
+enabled status and configured tracker URL through authenticated read-only application
+settings, then inventory active tracker/peer connections and the intended clients.
+Inspect IPv4 and IPv6 FORWARD/DOCKER-USER rules and any upstream forwarding separately.
+Preserve the existing production hostname; it is operator configuration, not an app default.
+
+The remaining operator choices are whether the direct UI port must remain reachable
+from an administration LAN, whether torrent tracker/peer access is actually required,
+and the allowed client networks for each. A Docker-network reverse proxy does not
+require a published backend UI port. Any proposed restriction needs the exact current
+configuration saved for rollback, explicit production-change approval, and validation
+of that existing proxy plus required synthetic torrent announce/peer/byte-transfer tests.
+No application source path should be changed for a network test.
+
+For the proxy's remaining functional evidence, initialize a real authenticated browser
+session and exercise its actual Vaadin push connection, including reconnect; a made-up
+WebSocket upgrade request does not prove the application protocol works. Use a small
+synthetic grouped download manifest through that same proxy and verify exact archive
+members and hashes both with and without the optional content. Never use a production
+game or a large real download as the fixture.
+
 ## Remaining user/environment choices
 
 Record the intended proxy hostname, where the proxy runs, and which network/interface it

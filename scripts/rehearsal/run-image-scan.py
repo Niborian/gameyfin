@@ -119,10 +119,10 @@ def main():
         telemetry = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
             urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
-        def ready():
+        def ready(path="/setup"):
             for _ in range(180):
                 try:
-                    page = opener.open(base + "/setup", timeout=5).read().decode()
+                    page = opener.open(base + path, timeout=5).read().decode()
                     found = re.search(r'<meta[^>]*name="_csrf"[^>]*content="([^"]+)"', page)
                     if found: return found.group(1)
                 except (OSError, ValueError): pass
@@ -148,7 +148,7 @@ def main():
             "--mount", f"type=bind,src={root / 'db'},dst=/db", args.image,
             "-R", args.runtime_uid + ":" + args.runtime_gid, "/db")
         docker("start", name)
-        csrf = ready()
+        csrf = ready("/login")
         page = opener.open(urllib.request.Request(base + "/login",
             urllib.parse.urlencode({"username": "fixture-admin", "password": password, "_csrf": csrf}).encode()), timeout=30).read().decode()
         csrf = re.search(r'<meta[^>]*name="_csrf"[^>]*content="([^"]+)"', page).group(1)
@@ -159,7 +159,7 @@ def main():
                 if active <= 0: raise RuntimeError("No active scan observed; interruption evidence invalid")
                 docker("kill", "--signal", "KILL", name)
                 docker("start", name)
-                csrf = ready()
+                csrf = ready("/login")
                 page = opener.open(urllib.request.Request(base + "/login",
                     urllib.parse.urlencode({"username": "fixture-admin", "password": password, "_csrf": csrf}).encode()), timeout=30).read().decode()
                 csrf = re.search(r'<meta[^>]*name="_csrf"[^>]*content="([^"]+)"', page).group(1)
@@ -287,6 +287,8 @@ def main():
         report["offlineMetadataMissErrorLineCount"] = sum(
             "No results found for originalIds: {}" in line and bool(re.search(r"\bERROR\b", line)) for line in log_lines)
         report["unexpectedErrorLogLineCount"] = report["errorLogLineCount"] - report["offlineMetadataMissErrorLineCount"]
+        report["loggedExceptionClasses"] = sorted(set(re.findall(
+            r"\b(?:[a-z][\w$]*\.)+[A-Z][\w$]*(?:Exception|Error)\b", "\n".join(log_lines))))[:30]
         report["closedDatabaseErrorLineCount"] = sum("database is already closed" in line.lower() or "database has been closed" in line.lower() for line in log_lines)
         if report["oomKilled"] or report["oomErrorLineCount"] or report["health"] != "UP":
             raise RuntimeError("Fixture unhealthy after scans")

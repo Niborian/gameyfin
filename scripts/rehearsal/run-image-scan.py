@@ -166,6 +166,7 @@ def main():
                 report["interruption"] = {"kind": "forced isolated process interruption", "observedActiveLibraries": active}
             completed, failed = metric("gameyfin_scans_completed_total"), metric("gameyfin_scans_failed_total")
             started, peak_heap, peak_rss = time.monotonic(), 0, 0
+            telemetry_timeouts, longest_telemetry_gap = 0, 0
             processes = docker("top", name, "-eo", "pid,args").splitlines()[1:]
             java_pids = [int(line.split(None, 1)[0]) for line in processes
                 if len(line.split(None, 1)) == 2 and "java" in line.split(None, 1)[1].split()[0]]
@@ -173,12 +174,23 @@ def main():
             pid = java_pids[0]
             request("/connect/LibraryEndpoint/triggerScan", {"scanType": "FULL", "libraryIds": [27001,27002,27003,27004]})
             while time.monotonic() - started < 180:
-                sample = snapshot()
-                peak_heap = max(peak_heap, metric("jvm_memory_used_bytes", 'area="heap"', sample))
                 status = Path(f"/proc/{pid}/status").read_text()
                 resident = re.search(r"VmRSS:\s+(\d+)", status)
                 if not resident: raise RuntimeError("RSS unavailable; do not fabricate peak evidence")
                 peak_rss = max(peak_rss, int(resident.group(1)) * 1024)
+                scrape_started = time.monotonic()
+                try:
+                    sample = snapshot()
+                except TimeoutError:
+                    # A busy fresh/recovering JVM can exceed a scrape timeout.
+                    # Keep the gap visible, never invent heap samples, and bound
+                    # retries by both a count and the unchanged phase deadline.
+                    telemetry_timeouts += 1
+                    longest_telemetry_gap = max(longest_telemetry_gap, time.monotonic() - scrape_started)
+                    if telemetry_timeouts > 2: raise
+                    continue
+                longest_telemetry_gap = max(longest_telemetry_gap, time.monotonic() - scrape_started)
+                peak_heap = max(peak_heap, metric("jvm_memory_used_bytes", 'area="heap"', sample))
                 done = metric("gameyfin_scans_completed_total", text=sample) - completed
                 errors = metric("gameyfin_scans_failed_total", text=sample) - failed
                 if done + errors >= 4: break
@@ -207,6 +219,8 @@ def main():
             report["scanResults"].append({"phase": phase, "seconds": time.monotonic()-started,
                 "completedLibraries": done, "failedLibraries": errors, "sampledPeakHeapBytes": peak_heap,
                 "sampledPeakJvmRssBytes": peak_rss,
+                "telemetryTimeouts": telemetry_timeouts,
+                "longestTelemetryScrapeSeconds": longest_telemetry_gap,
                 "defaultVariants": default_count})
         providers = json.loads(request("/connect/DownloadProviderEndpoint/getProviders", {}))
         if len(providers) != 1: raise RuntimeError("Expected only explicitly supplied direct provider")

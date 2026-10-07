@@ -226,6 +226,22 @@ class GameVariantServiceTest {
         assertTrue(game.variants.single { it.name == "Normal" && it.version == "1.1" }.isLatestForVariant)
     }
 
+    @Test
+    fun `latest Normal default includes a manually attached version outside discovery`() {
+        val (service, repository, filesystem, library, game, gamePath) = variantTestContext()
+        val attached = GameVariant(game = game, name = "Normal", version = "2.0",
+            path = "/fixture/torrents/newer.zip", scanManaged = false)
+        game.variants.add(attached)
+        every { repository.save(game) } returns game
+        every { filesystem.calculateFileSize(any()) } returns 0L
+
+        repeat(2) { service.syncVariants(game, discoveredVariants(gamePath), library) }
+
+        assertTrue(game.variants.single { it.isDefault } === attached)
+        assertTrue(game.variants.single { it.name == "Normal" && it.isLatestForVariant } === attached)
+        assertFalse(game.variants.single { it.name == "Normal" && it.version == "1.1" }.isLatestForVariant)
+    }
+
     private fun discoveredVariants(gamePath: Path): DiscoveredGameVariants = DiscoveredGameVariants(
         gamePath,
         listOf("1.0", "1.1").map { version ->

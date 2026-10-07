@@ -1,7 +1,7 @@
 """Linux authorized staging hook; stdin context and child-only credential environment.
 
 Context: backend/network (owned synthetic runner names), provider, fixtureManifest
-path from seed-scan-fixture.py, and immutable cached proxyImage. Creates only one
+object from seed-scan-fixture.py, and immutable cached proxyImage. Creates only one
 uniquely named proxy, no production mounts or published backend ports. Never pulls.
 """
 import json

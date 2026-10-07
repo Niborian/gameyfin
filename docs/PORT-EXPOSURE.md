@@ -137,6 +137,19 @@ Run `python scripts/test-proxy-download-smoke.py` for daemon-free validator test
 Passing these tests validates the harness, not a live proxy download; actual fixture
 execution and browser WebSocket evidence remain separate acceptance requirements.
 
+`scripts/proxy-fixture-hook.py` integrates that smoke check into the isolated actual-image
+scan runner while its synthetic application and account are alive. It reads a JSON
+context on stdin containing the generated fixture manifest object, backend container
+name, internal network name, direct provider key, and immutable cached nginx image ID.
+The names must match the runner's generated synthetic-resource format. It creates one
+uniquely named proxy with a dynamically assigned IPv4-loopback port and a 128 MiB limit,
+never pulls an image, and mounts only its generated nginx configuration. Credentials
+are inherited by the smoke subprocess through its environment, never the stdin manifest.
+It returns sanitized acceptance JSON only and verifies removal of its exact proxy in
+`finally`; the outer runner retains ownership of application, network, and fixture cleanup.
+The original nginx configuration and both Python scripts must preserve repository-relative
+layout when transferred to staging. Hook availability alone is not runtime evidence.
+
 ## Remaining user/environment choices
 
 Record the intended proxy hostname, where the proxy runs, and which network/interface it

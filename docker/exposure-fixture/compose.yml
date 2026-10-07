@@ -1,0 +1,29 @@
+name: gameyfin-exposure-fixture
+services:
+  gameyfin:
+    image: ${GAMEYFIN_STAGING_IMAGE:?Set a reviewed candidate image or digest}
+    environment:
+      APP_KEY: ${GAMEYFIN_STAGING_APP_KEY:?Generate a separate staging application key}
+      APP_URL: http://localhost:39080
+    volumes:
+      - fixture-db:/opt/gameyfin/db
+      - fixture-data:/opt/gameyfin/data
+      - fixture-plugins:/opt/gameyfin/plugindata
+      - fixture-logs:/opt/gameyfin/logs
+    # No host ports or production/library mounts. The proxy uses the Docker network.
+    networks: [fixture]
+  proxy:
+    image: nginx:1.28-alpine
+    ports:
+      - "127.0.0.1:39080:8080"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks: [fixture]
+    depends_on: [gameyfin]
+networks:
+  fixture: {}
+volumes:
+  fixture-db: {}
+  fixture-data: {}
+  fixture-plugins: {}
+  fixture-logs: {}

@@ -50,7 +50,14 @@ class Fixture(BaseHTTPRequestHandler):
             body = '<caps><server title="Lawful synthetic fixture"/><limits max="100" default="100"/><searching><search available="yes" supportedParams="q"/><tv-search available="no"/><movie-search available="no"/></searching><categories><category id="1000" name="Console"/><category id="4000" name="PC"/></categories></caps>'
         else:
             # Invented identity: no tracker, seed, depot, public indexer or payload exists.
-            body = '<rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed"><channel><title>Fixture</title><item><title>Lawful synthetic fixture</title><guid>magnet:?xt=urn:btih:' + 'a' * 40 + '</guid><link>magnet:?xt=urn:btih:' + 'a' * 40 + '</link><pubDate>Wed, 07 Oct 2026 12:00:00 GMT</pubDate><category>4000</category><size>1</size><torznab:attr name="category" value="4000"/><torznab:attr name="seeders" value="0"/><torznab:attr name="magneturl" value="magnet:?xt=urn:btih:' + 'a' * 40 + '"/></item></channel></rss>'
+            magnet = "magnet:?xt=urn:btih:" + "a" * 40
+            body = ('<rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed"><channel><title>Fixture</title>'
+                    '<item><title>Lawful synthetic fixture</title><guid isPermaLink="false">' + magnet + '</guid><link>' + magnet + '</link>'
+                    '<enclosure url="' + magnet + '" length="1" type="application/x-bittorrent"/>'
+                    '<pubDate>Wed, 07 Oct 2026 12:00:00 GMT</pubDate><category>4000</category>'
+                    '<torznab:attr name="category" value="4000"/><torznab:attr name="size" value="1"/>'
+                    '<torznab:attr name="seeders" value="0"/><torznab:attr name="infohash" value="' + 'a' * 40 + '"/>'
+                    '<torznab:attr name="magneturl" value="' + magnet + '"/></item></channel></rss>')
         data = body.encode()
         self.send_response(200); self.send_header("Content-Type", "application/rss+xml"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
     def log_message(self, *_):

@@ -25,7 +25,7 @@ def main():
             raise ValueError("Only disposable synthetic runner resources are accepted")
     if not re.fullmatch(r"sha256:[a-f0-9]{64}", context["proxyImage"]):
         raise ValueError("Require immutable cached proxy image ID")
-    manifest = json.loads(Path(context["fixtureManifest"]).read_text())
+    manifest = context["fixtureManifest"]
     if manifest.get("scope") != "synthetic offline fixture":
         raise ValueError("Require generated synthetic manifest")
     game = manifest["games"][0]
@@ -82,8 +82,9 @@ def main():
             if completed.returncode:
                 # Do not propagate tracebacks containing fixture IDs or response URLs.
                 raise RuntimeError("Synthetic authenticated proxy download acceptance failed")
-            print(completed.stdout, end="")
-            print(json.dumps({"proxyDownloadSmoke": "PASS", "caseCount": len(cases), "proxyImage": context["proxyImage"]}))
+            print(json.dumps({"proxyDownloadSmoke": "PASS", "caseCount": len(cases),
+                "exactMembersAndHashes": True, "authenticatedIdentity": True, "logoutAnonymous": True,
+                "proxyImage": context["proxyImage"]}))
         finally:
             subprocess.run(command + ["rm", "-f", name], capture_output=True)
             if docker("ps", "-a", "--filter", "name=^/" + name + "$", "--format", "{{.Names}}"):

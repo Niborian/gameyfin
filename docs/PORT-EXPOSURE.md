@@ -155,6 +155,38 @@ application, network, and fixture cleanup.
 The original nginx configuration and both Python scripts must preserve repository-relative
 layout when transferred to staging. Hook availability alone is not runtime evidence.
 
+### Candidate grouped-download proxy acceptance
+
+The integrated hook passed on the authorized staging server using the reviewed PR #111
+artifact at revision `36896a1d048e3c3a26cd599656eeb8d408768e0e`, image ID
+`sha256:483c612e5d6d975096a1fa480a479d856906934c605ab4edc8e5e30eaeba2f32`
+(image version 2.4.3). The cached nginx image was the same immutable ID listed above.
+All application data and source files were newly generated synthetic fixture data.
+The proxy remained unpublished on an inspected internal network; the test-process
+forwarder listened only on an ephemeral loopback port.
+
+Authenticated identity verification, two exact grouped ZIP selections, and post-logout
+anonymous login redirect all passed through nginx. The required-only selection contained
+exactly `Grouped base/base-a.bin` and `Grouped base/base-b.bin` (32,768 bytes total).
+Selecting the optional content added exactly `Optional patch.bin` (49,152 bytes total).
+Every archive member SHA256 matched the generated source manifest, with no extra members.
+The same candidate fixture completed cold, repeated, and interruption-recovery full
+scans before the proxy checks; all 924 synthetic source hashes remained unchanged and
+application health was UP afterward. This is synthetic candidate evidence, not a claim
+that the running production database or production workload has been tested.
+
+The first hook attempt encountered a staging transport limitation: Docker did not
+provide the requested published binding on an internal network. It failed closed;
+the bounded loopback forwarder resolved the test transport without adding an external
+network or weakening isolation. The final hook verified removal of its exact proxy,
+and the outer runner verified removal of its exact application container and internal
+network. An additional read-only inventory found no remaining proxy-smoke container.
+The forwarder listener and generated temporary configuration were closed/removed.
+
+This closes the candidate grouped-download proxy evidence gap only. Actual browser
+WebSocket/reconnect behavior, live exposure restrictions, required torrent-client
+traffic, and production acceptance remain unproven. Issue #29 must remain open.
+
 ## Remaining user/environment choices
 
 Record the intended proxy hostname, where the proxy runs, and which network/interface it

@@ -35,7 +35,7 @@ qbconfig.mkdir(parents=True)
 salt = secrets.token_bytes(16)
 encoded = base64.b64encode(salt).decode() + ":" + base64.b64encode(hashlib.pbkdf2_hmac("sha512", password.encode(), salt, 100000, 64)).decode()
 (qbconfig / "qBittorrent.conf").write_text(
-    '[Preferences]\nWebUI\\Username=fixture\nWebUI\\Password_PBKDF2="@ByteArray(' + encoded + ')"\n'
+    '[LegalNotice]\nAccepted=true\n[Preferences]\nWebUI\\Address=*\nConnection\\UPnP=false\nWebUI\\Username=fixture\nWebUI\\Password_PBKDF2="@ByteArray(' + encoded + ')"\n'
     'WebUI\\LocalHostAuth=true\nWebUI\\CSRFProtection=true\nWebUI\\HostHeaderValidation=false\n'
     'Connection\\PortRangeMin=39694\n[BitTorrent]\nSession\\DHTEnabled=false\nSession\\PeXEnabled=false\nSession\\LSDEnabled=false\n'
 )

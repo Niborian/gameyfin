@@ -25,7 +25,7 @@ No user-specific URL, port, path or secret is built in. Remote credentials requi
 
 ## Review and deliberate add
 
-The UI displays approved IDs separately from verified enabled approved IDs. Empty scope authorizes none. An administrator prepares a request for review and searches one active approved indexer. Only that indexer's results with one exact 40-hex v1 magnet hash become persisted candidates. Arbitrary download URLs, v2-only/base32 identities and alternate identity parameters are unsupported. Prowlarr grab is never called.
+The UI displays approved IDs separately from verified enabled approved IDs. Empty scope authorizes none. An administrator prepares a request for review and searches one active approved indexer. Only that indexer's results with one exact 40-hex v1 identity become persisted candidates. Prowlarr rewrites search magnet URLs into proxy URLs: the adapter never follows them, instead constructing a tracker-free magnet from the result's exact `infoHash`. Literal magnets are also accepted, but conflicting identity metadata is rejected. Arbitrary download URLs, invalid/v2-only/base32 identities and alternate literal identity parameters are unsupported. Prowlarr grab is never called. Tracker-required private content is not supported by this tracker-free acquisition boundary.
 
 Approval/selection queues a review record only. Add is a separate explicit action, requiring a selected approved candidate, queued request, current active approved indexer and required authorization reason. The UI requires an authorization attestation for add/resume; server endpoints independently require administrator authorization and approval/selection. No scheduler performs adds.
 

@@ -26,6 +26,7 @@ class AcquisitionProviderTest {
     private var savePath = "/fixture-acquisition"
     private var modernAcknowledgment = false
     private var loginCookie = true
+    private var searchResponse: String? = null
     private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
         createContext("/") { exchange ->
             val path = exchange.requestURI.path
@@ -42,7 +43,7 @@ class AcquisitionProviderTest {
                 "/api/v1/search" -> {
                     assertTrue(exchange.requestURI.rawQuery.contains("indexerIds=2"))
                     if (redirect) { status = 302; exchange.responseHeaders.add("Location", "/must-not-follow") }
-                    """[{"indexerId":2,"title":"Open source fixture","magnetUrl":"magnet:?xt=urn:btih:$hash"},{"indexerId":3,"title":"Unapproved","magnetUrl":"magnet:?xt=urn:btih:${"b".repeat(40)}"},{"indexerId":2,"title":"URL only","downloadUrl":"https://invalid.example/torrent"}]"""
+                    searchResponse ?: """[{"indexerId":2,"title":"Open source fixture","magnetUrl":"magnet:?xt=urn:btih:$hash"},{"indexerId":3,"title":"Unapproved","magnetUrl":"magnet:?xt=urn:btih:${"b".repeat(40)}"},{"indexerId":2,"title":"URL only","downloadUrl":"https://invalid.example/torrent"}]"""
                 }
                 "/api/v2/auth/login" -> {
                     assertEquals("http://127.0.0.1:${exchange.localAddress.port}", exchange.requestHeaders.getFirst("Referer"))
@@ -81,6 +82,12 @@ class AcquisitionProviderTest {
     }
     private val provider = AcquisitionProvider(settings, AcquisitionScopePolicy(config, settings), JsonMapper.builder().build())
     @AfterEach fun close() { server.stop(0) }
+
+    @Test fun `proxied Prowlarr results use exact identity metadata without fetching proxy or trackers`() {
+        searchResponse = """[{"indexerId":2,"title":"Fixture","magnetUrl":"https://invalid.example/proxy?apikey=never-follow","infoHash":"${hash.uppercase()}"},{"indexerId":3,"title":"Unapproved","infoHash":"$hash"},{"indexerId":2,"title":"URL only","magnetUrl":"https://invalid.example/proxy"},{"indexerId":2,"title":"Bad hash","infoHash":"invalid"},{"indexerId":2,"title":"Conflicting identity","magnetUrl":"magnet:?xt=urn:btih:${"b".repeat(40)}","infoHash":"$hash"}]"""
+        assertEquals(listOf(AuthorizedSearchResult("2", "Fixture", "magnet:?xt=urn:btih:$hash", hash)), provider.search("2", "fixture"))
+        assertEquals(listOf("/api/v1/indexer", "/api/v1/search"), requests.map { it.first })
+    }
 
     @Test fun `qB52 empty acknowledgments still require authenticated SID and exact owned stopped state`() {
         modernAcknowledgment = true; clientVersion = "v5.2.4"

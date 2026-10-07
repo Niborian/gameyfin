@@ -102,8 +102,16 @@ class AcquisitionProvider(
         require(nodes.isArray) { "Invalid search response" }
         return nodes.take(100).mapNotNull { node ->
             if (node.path("indexerId").asText() != indexerId) return@mapNotNull null
-            val magnet = node.path("magnetUrl").asText("")
-            val hash = runCatching { magnetHash(magnet) }.getOrNull() ?: return@mapNotNull null
+            val suppliedMagnet = node.path("magnetUrl").asText("")
+            val metadataHash = node.path("infoHash").asText("").lowercase()
+            if (metadataHash.isNotBlank() && !metadataHash.matches(Regex("[a-f0-9]{40}"))) return@mapNotNull null
+            // Prowlarr proxies MagnetUrl in its search response. Never fetch that URL:
+            // construct a tracker-free magnet from the exact v1 identity metadata.
+            val literalHash = if (suppliedMagnet.startsWith("magnet:"))
+                runCatching { magnetHash(suppliedMagnet) }.getOrNull() ?: return@mapNotNull null else null
+            if (literalHash != null && metadataHash.isNotBlank() && literalHash != metadataHash) return@mapNotNull null
+            val hash = literalHash ?: metadataHash.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val magnet = "magnet:?xt=urn:btih:$hash"
             val title = node.path("title").asText().take(512)
             if (title.isBlank()) return@mapNotNull null
             AuthorizedSearchResult(indexerId, title, magnet, hash)

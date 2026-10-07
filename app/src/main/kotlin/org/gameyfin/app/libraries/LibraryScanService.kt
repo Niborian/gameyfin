@@ -16,6 +16,7 @@ import org.gameyfin.app.libraries.entities.IgnoredPathSourceType
 import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.app.libraries.enums.ScanType
 import org.gameyfin.app.libraries.scan.LibraryGameProcessor
+import org.gameyfin.app.libraries.scan.invokeBounded
 import org.gameyfin.app.libraries.scan.MatchNewGamesResult
 import org.gameyfin.app.libraries.scan.UpdateExistingGamesResult
 import org.gameyfin.app.libraries.scan.UpdateLibraryResult
@@ -361,7 +362,7 @@ class LibraryScanService(
         val completed = AtomicInteger(0)
         val newUnmatchedPaths = ConcurrentHashMap.newKeySet<IgnoredPath>()
 
-        val tasks = gamePaths.map { path ->
+        val tasks = gamePaths.asSequence().map { path ->
             Callable<Game?> {
                 scanSemaphore.acquire()
                 try {
@@ -407,7 +408,7 @@ class LibraryScanService(
             }
         }
 
-        val persistedGames = executor.invokeAll(tasks).mapNotNull { it.get() }
+        val persistedGames = executor.invokeBounded(tasks, scanTaskWindow()).filterNotNull()
 
         return MatchNewGamesResult(
             unmatchedPaths = newUnmatchedPaths.toList(),
@@ -468,7 +469,7 @@ class LibraryScanService(
     ): UpdateExistingGamesResult {
         val completedUpdates = AtomicInteger(0)
 
-        val updateTasks = games.map { game ->
+        val updateTasks = games.asSequence().map { game ->
             Callable<Game?> {
                 scanSemaphore.acquire()
                 try {
@@ -487,7 +488,10 @@ class LibraryScanService(
             }
         }
 
-        val updatedGames = executor.invokeAll(updateTasks).mapNotNull { it.get() }
+        val updatedGames = executor.invokeBounded(updateTasks, scanTaskWindow()).filterNotNull()
         return UpdateExistingGamesResult(updatedGames = updatedGames)
     }
+
+    private fun scanTaskWindow(): Int =
+        configService.get(ConfigProperties.Libraries.Scan.MaxConcurrency)!!.coerceAtLeast(1)
 }

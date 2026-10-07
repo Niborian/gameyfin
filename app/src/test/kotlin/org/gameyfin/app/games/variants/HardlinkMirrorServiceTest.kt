@@ -1,11 +1,14 @@
 package org.gameyfin.app.games.variants
 
+
 import org.gameyfin.app.games.entities.VariantLinkStatus
 import org.gameyfin.app.libraries.entities.Library
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
+import java.nio.file.FileSystems
+import java.net.URI
 import java.nio.file.Path
 import kotlin.io.path.createDirectory
 import kotlin.io.path.readText
@@ -53,7 +56,7 @@ class HardlinkMirrorServiceTest {
     }
 
     @Test
-    fun `cross filesystem mirror fails without copying source`(@TempDir tempDir: Path) {
+    fun `cross filesystem mirror falls back to direct source without copying`(@TempDir tempDir: Path) {
         val otherStore = Path.of("/dev/shm")
         assumeTrue(Files.isDirectory(otherStore) && Files.isWritable(otherStore))
         assumeTrue(Files.getFileStore(otherStore) != Files.getFileStore(tempDir))
@@ -65,16 +68,46 @@ class HardlinkMirrorServiceTest {
             val service = HardlinkMirrorService(storageRoot.toString())
             val library = Library(id = 7L, name = "Library")
 
-            val exception = assertFailsWith<IllegalArgumentException> {
-                service.mirror(source, library, sourceRoot, "Normal-1.0")
-            }
+            val result = service.mirror(source, library, sourceRoot, "Normal-1.0")
 
-            assertTrue(exception.message!!.contains("same filesystem"))
+            assertEquals(source, result.path)
+            assertEquals(VariantLinkStatus.DIRECT, result.status)
+            assertTrue(result.fallbackReason!!.contains("same filesystem"))
             assertEquals("torrent data", source.readText())
             assertTrue(Files.notExists(storageRoot.resolve("library-hardlinks/library-7")))
         } finally {
             Files.deleteIfExists(sourceRoot.resolve("game.bin"))
             Files.deleteIfExists(sourceRoot)
+        }
+    }
+
+    @Test
+    fun `unavailable mirror storage retains original source without copying`(@TempDir tempDir: Path) {
+        val source = tempDir.resolve("source.bin").also { it.writeText("torrent payload") }
+        val storage = tempDir.resolve("storage").also { it.writeText("existing storage file") }
+        val service = HardlinkMirrorService(storage.toString())
+        val result = service.mirror(source, Library(id = 7L, name = "Library"), source, "Normal-1.0")
+        assertEquals(source, result.path)
+        assertEquals(VariantLinkStatus.DIRECT, result.status)
+        assertTrue(result.fallbackReason!!.contains("Hardlink unavailable"))
+        assertEquals("torrent payload", source.readText())
+        assertEquals("existing storage file", storage.readText())
+    }
+
+    @Test
+    fun `unsupported cross provider hardlinks use the direct source`(@TempDir tempDir: Path) {
+        val archive = tempDir.resolve("fixture.zip")
+        FileSystems.newFileSystem(URI.create("jar:${archive.toUri()}"), mapOf("create" to "true")).use { zip ->
+            val source = zip.getPath("/source.bin").also { it.writeText("separate filesystem payload") }
+            val storage = tempDir.resolve("storage").createDirectory()
+            val result = HardlinkMirrorService(storage.toString()).mirror(
+                source, Library(id = 7L, name = "Library"), source, "Normal-1.0"
+            )
+            assertEquals(source, result.path)
+            assertEquals(VariantLinkStatus.DIRECT, result.status)
+            assertTrue(result.fallbackReason!!.contains("same filesystem"))
+            assertEquals("separate filesystem payload", source.readText())
+            assertTrue(Files.notExists(storage.resolve("library-hardlinks/library-7")))
         }
     }
 }

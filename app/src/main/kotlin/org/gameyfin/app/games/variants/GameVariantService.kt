@@ -65,7 +65,7 @@ class GameVariantService(
             existing.isLatestForVariant = newestVersionByName[parsed.name] == parsed.version
             existing.isDefault = key == defaultKey
             existing.scanManaged = true
-            existing.linkStatus = if (variantLink.status == VariantLinkStatus.COPIED_FALLBACK || fallbackReasons.isNotEmpty()) {
+            existing.linkStatus = if (variantLink.status == VariantLinkStatus.COPIED_FALLBACK) {
                 VariantLinkStatus.COPIED_FALLBACK
             } else {
                 variantLink.status

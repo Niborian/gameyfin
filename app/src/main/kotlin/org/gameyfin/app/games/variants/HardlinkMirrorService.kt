@@ -38,22 +38,21 @@ class HardlinkMirrorService(
     fun mirror(source: Path, library: Library, gamePath: Path, targetName: String): LinkResult {
         val target = mirrorTarget(library, gamePath, targetName)
         require(source.exists()) { "Hardlink source path does not exist: $source" }
-        mirrorRoot.createDirectories()
-        require(Files.getFileStore(source) == Files.getFileStore(mirrorRoot)) {
-            "Hardlink mirror requires source and mirror storage on the same filesystem"
-        }
-        deleteTargetIfPresent(target)
-
         return try {
+            mirrorRoot.createDirectories()
+            require(Files.getFileStore(source) == Files.getFileStore(mirrorRoot)) {
+                "Hardlink mirror requires source and mirror storage on the same filesystem"
+            }
+            deleteTargetIfPresent(target)
             linkTree(source, target)
             LinkResult(target, VariantLinkStatus.HARDLINKED, null)
         } catch (e: Exception) {
             log.warn { "Hardlinking '$source' to '$target' failed: ${e.message}" }
-            deleteTargetIfPresent(target)
-            throw IllegalStateException(
-                "Hardlink mirror requires source and mirror storage on the same filesystem: ${e.message ?: e.javaClass.simpleName}",
-                e
-            )
+            runCatching { deleteTargetIfPresent(target) }
+                .onFailure { log.warn { "Could not clean incomplete mirror '$target': ${it.message}" } }
+            // Keep the library usable without copying or writing torrent-managed data.
+            LinkResult(source, VariantLinkStatus.DIRECT,
+                "Hardlink unavailable; using original source directly: ${e.message ?: e.javaClass.simpleName}")
         }
     }
 

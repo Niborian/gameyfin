@@ -1,0 +1,225 @@
+package org.gameyfin.app.requests
+
+import com.sun.net.httpserver.HttpServer
+import io.mockk.every
+import io.mockk.mockk
+import org.gameyfin.app.config.ConfigProperties
+import org.gameyfin.app.config.ConfigService
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Test
+import tools.jackson.databind.json.JsonMapper
+import java.net.InetSocketAddress
+import java.net.URLDecoder
+import kotlin.test.*
+
+class AcquisitionProviderTest {
+    private val hash = "a".repeat(40)
+    private val requests = mutableListOf<Pair<String, Map<String, String>>>()
+    private var added = false
+    private var wrongTags = false
+    private var redirect = false
+    private var categoryExists = true
+    private var state = "stoppedDL"
+    private var acknowledgeWithoutChangingState = false
+    private var oversized = false
+    private var clientVersion = "v5.0.0"
+    private var savePath = "/fixture-acquisition"
+    private var modernAcknowledgment = false
+    private var loginCookie = true
+    private var searchResponse: String? = null
+    private var addResponse: String? = null
+    private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+        createContext("/") { exchange ->
+            val path = exchange.requestURI.path
+            val fields = exchange.requestBody.readBytes().toString(Charsets.UTF_8).split('&').filter { it.contains('=') }
+                .associate { val parts = it.split('=', limit = 2); URLDecoder.decode(parts[0], Charsets.UTF_8) to URLDecoder.decode(parts[1], Charsets.UTF_8) }
+            requests.add(path to fields)
+            var status = 200
+            val body = when (path) {
+                "/api/v1/indexer" -> {
+                    assertEquals("synthetic-api-key", exchange.requestHeaders.getFirst("X-Api-Key"))
+                    assertNull(exchange.requestHeaders.getFirst("Cookie"))
+                    if (oversized) "x".repeat(1_048_577) else """[{"id":2,"enable":true},{"id":3,"enable":true},{"id":4,"enable":false}]"""
+                }
+                "/api/v1/search" -> {
+                    assertTrue(exchange.requestURI.rawQuery.contains("indexerIds=2"))
+                    if (redirect) { status = 302; exchange.responseHeaders.add("Location", "/must-not-follow") }
+                    searchResponse ?: """[{"indexerId":2,"title":"Open source fixture","magnetUrl":"magnet:?xt=urn:btih:$hash"},{"indexerId":3,"title":"Unapproved","magnetUrl":"magnet:?xt=urn:btih:${"b".repeat(40)}"},{"indexerId":2,"title":"URL only","downloadUrl":"https://invalid.example/torrent"}]"""
+                }
+                "/api/v2/auth/login" -> {
+                    assertEquals("http://127.0.0.1:${exchange.localAddress.port}", exchange.requestHeaders.getFirst("Referer"))
+                    assertEquals("synthetic-user", fields["username"])
+                    assertEquals("synthetic-password", fields["password"])
+                    assertNull(exchange.requestHeaders.getFirst("X-Api-Key"))
+                    if (loginCookie) exchange.responseHeaders.add("Set-Cookie", "${if (modernAcknowledgment) "QBT_SID_8080" else "SID"}=fixture-session; Path=/; HttpOnly")
+                    if (modernAcknowledgment) "" else "Ok."
+                }
+                "/api/v2/torrents/info" -> {
+                    assertTrue(exchange.requestHeaders.getFirst("Cookie").contains("${if (modernAcknowledgment) "QBT_SID_8080" else "SID"}=fixture-session"))
+                    if (!added) "[]" else """[{"hash":"$hash","category":"isolated-fixture","save_path":"$savePath","state":"$state","tags":"${if (wrongTags) "other" else "fixture-managed,fixture-managed-request-7,fixture-managed-candidate-11"}"}]"""
+                }
+                "/api/v2/app/version" -> clientVersion
+                "/api/v2/torrents/categories" -> if (categoryExists) """{"isolated-fixture":{"name":"isolated-fixture","savePath":"$savePath"}}""" else "{}"
+                "/api/v2/torrents/add" -> { assertEquals("true", fields["stopped"]); added = true; state = "stoppedDL"; addResponse ?: if (modernAcknowledgment) "" else "Ok." }
+                "/api/v2/torrents/stop" -> { if (!acknowledgeWithoutChangingState) state = "stoppedDL"; "" }
+                "/api/v2/torrents/start" -> { if (!acknowledgeWithoutChangingState) state = "downloading"; "" }
+                else -> { status = 500; "Unexpected endpoint" }
+            }
+            val bytes = body.toByteArray()
+            exchange.sendResponseHeaders(status, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+        start()
+    }
+    private val settings = AcquisitionProviderSettings().apply {
+        enabled = true; dedicatedClientAcknowledged = true
+        prowlarrUrl = "http://127.0.0.1:${server.address.port}"; qbittorrentUrl = prowlarrUrl
+        prowlarrApiKey = "synthetic-api-key"; qbittorrentUsername = "synthetic-user"; qbittorrentPassword = "synthetic-password"
+        category = "isolated-fixture"; managedTag = "fixture-managed"
+        savePath = "/fixture-acquisition"
+    }
+    private val config = mockk<ConfigService>().also {
+        every { it.get(ConfigProperties.Requests.Acquisition.ApprovedIndexerIds) } returns arrayOf("2", "4")
+    }
+    private val provider = AcquisitionProvider(settings, AcquisitionScopePolicy(config, settings), JsonMapper.builder().build())
+    @AfterEach fun close() { server.stop(0) }
+
+    @Test fun `qB52 structured add acknowledgment requires one exact identity and owned stopped state`() {
+        modernAcknowledgment = true; clientVersion = "v5.2.4"
+        addResponse = """{"success_count":1,"failure_count":0,"pending_count":0,"added_torrent_ids":["$hash"]}"""
+        provider.add(provider.search("2", "fixture").single(), 7, 11)
+        assertTrue(requests.any { it.first.endsWith("/start") })
+    }
+
+    @Test fun `structured add with wrong identity never starts even if owned torrent exists`() {
+        addResponse = """{"success_count":1,"failure_count":0,"pending_count":0,"added_torrent_ids":["${"b".repeat(40)}"]}"""
+        assertFailsWith<IllegalStateException> { provider.add(provider.search("2", "fixture").single(), 7, 11) }
+        assertFalse(requests.any { it.first.endsWith("/start") })
+    }
+
+    @Test fun `proxied Prowlarr results use exact identity metadata without fetching proxy or trackers`() {
+        searchResponse = """[{"indexerId":2,"title":"Fixture","magnetUrl":"https://invalid.example/proxy?apikey=never-follow","infoHash":"${hash.uppercase()}"},{"indexerId":3,"title":"Unapproved","infoHash":"$hash"},{"indexerId":2,"title":"URL only","magnetUrl":"https://invalid.example/proxy"},{"indexerId":2,"title":"Bad hash","infoHash":"invalid"},{"indexerId":2,"title":"Conflicting identity","magnetUrl":"magnet:?xt=urn:btih:${"b".repeat(40)}","infoHash":"$hash"}]"""
+        assertEquals(listOf(AuthorizedSearchResult("2", "Fixture", "magnet:?xt=urn:btih:$hash", hash)), provider.search("2", "fixture"))
+        assertEquals(listOf("/api/v1/indexer", "/api/v1/search"), requests.map { it.first })
+    }
+
+    @Test fun `qB52 empty acknowledgments still require authenticated SID and exact owned stopped state`() {
+        modernAcknowledgment = true; clientVersion = "v5.2.4"
+        val result = provider.search("2", "fixture").single()
+        provider.add(result, 7, 11)
+        assertTrue(requests.any { it.first.endsWith("/start") })
+    }
+
+    @Test fun `empty login without SID never permits add`() {
+        modernAcknowledgment = true; loginCookie = false; clientVersion = "v5.2.4"
+        val result = provider.search("2", "fixture").single()
+        assertFailsWith<AcquisitionPreflightRefusal> { provider.add(result, 7, 11) }
+        assertFalse(requests.any { it.first.endsWith("/add") || it.first.endsWith("/start") })
+    }
+
+    @Test fun `modern empty add acknowledgment cannot start a mistagged torrent`() {
+        modernAcknowledgment = true; wrongTags = true; clientVersion = "v5.2.4"
+        val result = provider.search("2", "fixture").single()
+        assertFailsWith<IllegalArgumentException> { provider.add(result, 7, 11) }
+        assertEquals("stoppedDL", state)
+        assertFalse(requests.any { it.first.endsWith("/start") })
+    }
+
+    @Test fun `search scopes active approved indexers and ignores arbitrary URL or unexpected indexer results`() {
+        assertEquals(listOf("2"), provider.activeIndexers())
+        assertEquals(listOf(hash), provider.search("2", "fixture").map { it.hash })
+        assertFailsWith<IllegalArgumentException> { provider.search("3", "fixture") }
+        assertFailsWith<IllegalArgumentException> { provider.search("4", "fixture") }
+        assertFalse(requests.any { it.first.contains("grab") })
+    }
+
+    @Test fun `approved add uses dedicated scope then stop and retry only exact persisted hash without deletion`() {
+        val result = provider.search("2", "fixture").single()
+        provider.add(result, 7, 11)
+        val fields = requests.single { it.first.endsWith("/add") }.second
+        assertEquals("isolated-fixture", fields["category"])
+        assertEquals("true", fields["stopped"])
+        assertEquals("/fixture-acquisition", fields["savepath"])
+        assertEquals("false", fields["useDownloadPath"])
+        assertEquals("fixture-managed,fixture-managed-request-7,fixture-managed-candidate-11", fields["tags"])
+        provider.stop(hash, 7, 11)
+        provider.start(hash, 7, 11)
+        assertEquals(hash, requests.single { it.first.endsWith("/stop") }.second["hashes"])
+        assertFalse(requests.any { it.first.contains("delete") || it.second.values.contains("all") })
+        // Cookie from qB must not leak to Prowlarr even when origin is shared in this fixture.
+        provider.activeIndexers()
+    }
+
+    @Test fun `missing category refuses add and mis-tagged stopped acknowledgment never starts`() {
+        val result = provider.search("2", "fixture").single()
+        categoryExists = false
+        assertFailsWith<IllegalStateException> { provider.add(result, 7, 11) }
+        assertFalse(requests.any { it.first.endsWith("/add") })
+        categoryExists = true; wrongTags = true
+        assertFailsWith<IllegalArgumentException> { provider.add(result, 7, 11) }
+        assertEquals("stoppedDL", state)
+        assertFalse(requests.any { it.first.endsWith("/start") })
+    }
+
+    @Test fun `HTTP acknowledgment alone never confirms stop or resume state`() {
+        added = true; state = "downloading"; acknowledgeWithoutChangingState = true
+        assertFailsWith<IllegalStateException> { provider.stop(hash, 7, 11) }
+        state = "stoppedDL"
+        assertFailsWith<IllegalStateException> { provider.start(hash, 7, 11) }
+    }
+
+    @Test fun `oversized bodies and unsupported client semantics fail before mutations`() {
+        oversized = true
+        assertFails { provider.activeIndexers() }
+        oversized = false
+        val result = provider.search("2", "fixture").single()
+        clientVersion = "v4.6.7"
+        assertFailsWith<IllegalStateException> { provider.add(result, 7, 11) }
+        assertFalse(requests.any { it.first.endsWith("/add") || it.first.endsWith("/start") })
+    }
+
+    @Test fun `dedicated category and reported torrent path must match explicit acquisition root`() {
+        val result = provider.search("2", "fixture").single()
+        savePath = "/other-fixture"
+        assertFailsWith<AcquisitionPreflightRefusal> { provider.add(result, 7, 11) }
+        assertFalse(requests.any { it.first.endsWith("/add") })
+        added = true
+        assertFailsWith<IllegalArgumentException> { provider.start(hash, 7, 11) }
+        assertFalse(requests.any { it.first.endsWith("/start") })
+        for (invalid in listOf("", "/", "relative", "/fixture/../other", "C:\\")) {
+            settings.savePath = invalid
+            assertFailsWith<IllegalArgumentException> { provider.activeIndexers() }
+        }
+        assertEquals("C:/isolated-fixture", settings.normalizedSavePath("C:\\isolated-fixture\\"))
+    }
+
+    @Test fun `existing torrent is never adopted and missing scope refuses stop`() {
+        val result = provider.search("2", "fixture").single()
+        added = true
+        assertFailsWith<IllegalStateException> { provider.add(result, 7, 11) }
+        wrongTags = true
+        assertFailsWith<IllegalArgumentException> { provider.stop(hash, 7, 11) }
+        assertFalse(requests.any { it.first.endsWith("/add") || it.first.endsWith("/stop") })
+    }
+
+    @Test fun `disabled or unacknowledged clients cause no HTTP and redirects are not followed`() {
+        settings.enabled = false
+        assertFailsWith<IllegalStateException> { provider.activeIndexers() }
+        assertTrue(requests.isEmpty())
+        settings.enabled = true; settings.dedicatedClientAcknowledged = false
+        assertFailsWith<IllegalStateException> { provider.activeIndexers() }
+        assertTrue(requests.isEmpty())
+        settings.dedicatedClientAcknowledged = true; redirect = true
+        assertFailsWith<IllegalStateException> { provider.search("2", "fixture") }
+        assertFalse(requests.any { it.first == "/must-not-follow" })
+    }
+
+    @Test fun `credentials require safe explicitly configured origins and exact magnet identity`() {
+        settings.prowlarrUrl = "http://remote.invalid"
+        assertFailsWith<IllegalArgumentException> { provider.activeIndexers() }
+        assertTrue(requests.isEmpty())
+        assertFailsWith<IllegalArgumentException> { AcquisitionProvider.magnetHash("https://invalid.example") }
+        assertFailsWith<IllegalArgumentException> { AcquisitionProvider.magnetHash("magnet:?xt=urn:btih:$hash&xt=urn:btih:$hash") }
+        assertEquals(hash, AcquisitionProvider.magnetHash("magnet:?xt=urn:btih:${hash.uppercase()}"))
+    }
+}

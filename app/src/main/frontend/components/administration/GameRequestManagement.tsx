@@ -27,6 +27,9 @@ function GameRequestManagementLayout({getConfig, formik}: any) {
                     <Button onPress={() => navigate("/requests")}>
                         Manage game requests
                     </Button>
+                    <Section title="Authorized acquisition scope"/>
+                    <p className="text-default-500 text-sm mb-3">External acquisition is unavailable. These approved IDs are reserved for a reviewed provider integration; no indexers are active.</p>
+                    <ConfigFormField configElement={getConfig("requests.acquisition.approved-indexer-ids")}/>
                 </div>
             </div>
         </div>
@@ -35,6 +38,9 @@ function GameRequestManagementLayout({getConfig, formik}: any) {
 
 const validationSchema = Yup.object({
     requests: Yup.object({
+        acquisition: Yup.object({
+            "approved-indexer-ids": Yup.array().of(Yup.string().matches(/^[1-9][0-9]*$/, "Use a positive Prowlarr indexer ID").required()).required(),
+        }).required(),
         games: Yup.object({
             enabled: Yup.boolean().required("Required"),
             "allow-guests-to-request-games": Yup.boolean().required("Required"),

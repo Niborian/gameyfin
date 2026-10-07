@@ -39,7 +39,8 @@ class GameRequestService(
     private val userService: UserService,
     private val gameRequestRepository: GameRequestRepository,
     private val gameRepository: GameRepository,
-    private val statusChangeRepository: GameRequestStatusChangeRepository
+    private val statusChangeRepository: GameRequestStatusChangeRepository,
+    private val acquisitionTransfers: AcquisitionTransferRepository? = null,
 ) {
 
     companion object {
@@ -169,7 +170,13 @@ class GameRequestService(
         gameRequestRepository.delete(gameRequest)
     }
 
+    @Transactional
     fun changeRequestStatus(id: Long, status: GameRequestStatus, reason: String? = null) {
+        require(acquisitionTransfers?.existsByCandidateGameRequestIdAndStateNot(id, "REVIEW") != true) {
+            "Provider-backed requests retain their audit state; use the owned transfer stop/retry/reconcile actions"
+        }
+        require(status != GameRequestStatus.QUEUED) { "Queue requests through approved candidate selection" }
+        require(status != GameRequestStatus.DOWNLOADING) { "No acquisition provider is enabled" }
         val gameRequest = gameRequestRepository.findById(id)
             .orElseThrow { NoSuchElementException("No game request found with id $id") }
 
@@ -190,6 +197,32 @@ class GameRequestService(
                 reason = reason?.trim()?.ifBlank { null }
             )
         )
+    }
+
+    /** Cancels only the review record; no provider or torrent-client action is performed. */
+    @Transactional
+    fun cancelRequest(id: Long, reason: String) {
+        require(acquisitionTransfers?.existsByCandidateGameRequestIdAndStateNot(id, "REVIEW") != true) {
+            "Use the provider-backed stop/reconcile workflow; review-record cancellation cannot stop a torrent"
+        }
+        require(reason.isNotBlank() && reason.length <= 4096) { "A cancellation reason of at most 4096 characters is required" }
+        val request = gameRequestRepository.findById(id).orElseThrow { NoSuchElementException("No game request found with id $id") }
+        require(request.status !in setOf(GameRequestStatus.FULFILLED, GameRequestStatus.DOWNLOADING, GameRequestStatus.CANCELLED)) {
+            "This request cannot be cancelled as a review record"
+        }
+        changeRequestStatus(id, GameRequestStatus.CANCELLED, reason)
+    }
+
+    /** A retry returns to review, requiring deliberate candidate selection again. */
+    @Transactional
+    fun retryRequest(id: Long, reason: String) {
+        require(acquisitionTransfers?.existsByCandidateGameRequestIdAndStateNot(id, "REVIEW") != true) {
+            "Use the provider-backed retry/reconcile workflow for a persisted torrent"
+        }
+        require(reason.isNotBlank() && reason.length <= 4096) { "A retry reason of at most 4096 characters is required" }
+        val request = gameRequestRepository.findById(id).orElseThrow { NoSuchElementException("No game request found with id $id") }
+        require(request.status in setOf(GameRequestStatus.FAILED, GameRequestStatus.CANCELLED)) { "Only failed or cancelled requests can be retried" }
+        changeRequestStatus(id, GameRequestStatus.AWAITING_APPROVAL, reason)
     }
 
     @Transactional

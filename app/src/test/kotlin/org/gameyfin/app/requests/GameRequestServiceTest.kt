@@ -567,8 +567,6 @@ class GameRequestServiceTest {
             GameRequestStatus.SEARCHING,
             GameRequestStatus.CANDIDATES_FOUND,
             GameRequestStatus.AWAITING_APPROVAL,
-            GameRequestStatus.QUEUED,
-            GameRequestStatus.DOWNLOADING,
             GameRequestStatus.IMPORTED_FOR_REVIEW,
             GameRequestStatus.FAILED,
             GameRequestStatus.CANCELLED,
@@ -587,6 +585,38 @@ class GameRequestServiceTest {
         }
 
         verify(exactly = statuses.size) { gameRequestRepository.save(any()) }
+    }
+
+    @Test
+    fun `manual status changes cannot bypass approval or simulate provider activity`() {
+        listOf(GameRequestStatus.QUEUED, GameRequestStatus.DOWNLOADING).forEach { status ->
+            assertThrows(IllegalArgumentException::class.java) { gameRequestService.changeRequestStatus(1L, status) }
+        }
+        verify(exactly = 0) { gameRequestRepository.save(any()) }
+    }
+
+    @Test
+    fun `retry returns a failed request to approval review and records the reason`() {
+        val request = createTestGameRequest(1L, "Game").apply { status = GameRequestStatus.FAILED }
+        val change = slot<GameRequestStatusChange>()
+        every { gameRequestRepository.findById(1L) } returns Optional.of(request)
+        every { gameRequestRepository.save(any()) } answers { firstArg() }
+        every { statusChangeRepository.save(capture(change)) } answers { firstArg() }
+
+        gameRequestService.retryRequest(1L, "retry after review")
+
+        assertEquals(GameRequestStatus.AWAITING_APPROVAL, request.status)
+        assertEquals(GameRequestStatus.FAILED, change.captured.previousStatus)
+        assertEquals("retry after review", change.captured.reason)
+    }
+
+    @Test
+    fun `cancel refuses active provider work and preserves status`() {
+        val request = createTestGameRequest(1L, "Game").apply { status = GameRequestStatus.DOWNLOADING }
+        every { gameRequestRepository.findById(1L) } returns Optional.of(request)
+        assertThrows(IllegalArgumentException::class.java) { gameRequestService.cancelRequest(1L, "stop") }
+        assertEquals(GameRequestStatus.DOWNLOADING, request.status)
+        verify(exactly = 0) { gameRequestRepository.save(any()) }
     }
 
     @Test

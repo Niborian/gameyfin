@@ -47,6 +47,12 @@ class GameRequestEndpoint(
     }
 
     @RolesAllowed(Role.Names.ADMIN)
+    fun cancel(gameRequestId: Long, reason: String) = gameRequestService.cancelRequest(gameRequestId, reason)
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun retry(gameRequestId: Long, reason: String) = gameRequestService.retryRequest(gameRequestId, reason)
+
+    @RolesAllowed(Role.Names.ADMIN)
     fun getStatusChanges(gameRequestId: Long): List<GameRequestStatusChangeDto> {
         return gameRequestService.getStatusChanges(gameRequestId)
     }

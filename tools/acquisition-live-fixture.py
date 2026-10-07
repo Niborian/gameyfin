@@ -4,6 +4,7 @@ import hashlib
 import http.cookiejar
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import select
@@ -151,6 +152,7 @@ try:
     cookies = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookies))
     origin = "http://127.0.0.1:39695"
+    qb_failure = None
     for _ in range(60):
         try:
             form = urllib.parse.urlencode({"username": "fixture", "password": password}).encode()
@@ -158,9 +160,16 @@ try:
             with opener.open(req, timeout=10) as response:
                 if response.read().decode().strip() != "Ok.": raise RuntimeError("Fixture authentication refused")
             break
-        except Exception:
+        except Exception as failure:
+            qb_failure = str(failure)
             time.sleep(2)
     else:
+        print("qB fixture authentication/readiness failure:", qb_failure)
+        inspection = json.loads(docker("inspect", containers[0]))[0]
+        print("Own qB state:", inspection["State"]["Status"])
+        diagnostic = docker("logs", "--tail", "60", containers[0]).replace(key, "[masked]").replace(password, "[masked]")
+        diagnostic = re.sub(r"(?im)^.*password.*$", "[password-bearing fixture log line masked]", diagnostic)
+        print(diagnostic)
         raise RuntimeError("qBittorrent did not become ready")
     form = urllib.parse.urlencode({"category": "fixture-acquisition", "savePath": "/downloads/fixture-acquisition"}).encode()
     opener.open(urllib.request.Request(origin + "/api/v2/torrents/createCategory", data=form, headers={"Referer": origin}), timeout=10).close()

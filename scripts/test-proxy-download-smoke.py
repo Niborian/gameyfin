@@ -3,6 +3,7 @@ import importlib.util
 import io
 from pathlib import Path
 import unittest
+from unittest.mock import patch, MagicMock
 import zipfile
 
 spec = importlib.util.spec_from_file_location("smoke", Path(__file__).with_name("proxy-download-smoke.py"))
@@ -11,6 +12,27 @@ spec.loader.exec_module(smoke)
 
 
 class SmokeTests(unittest.TestCase):
+    def test_missing_csrf_rejected(self):
+        with self.assertRaises(ValueError):
+            smoke.csrf_token('<html>no token</html>')
+
+    def test_failed_logout_rejected(self):
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.status = 200
+        response.headers = {}
+        opener = MagicMock()
+        opener.open.return_value = response
+        with patch.object(smoke.urllib.request, 'build_opener', return_value=opener):
+            with self.assertRaises(ValueError):
+                smoke.verify_logged_out(None, 'http://localhost:39080', smoke.http.cookiejar.CookieJar())
+
+    def test_logout_login_redirect_accepted(self):
+        opener = MagicMock()
+        opener.open.side_effect = smoke.urllib.error.HTTPError('http://localhost:39080/', 302, '', {'Location': '/login'}, None)
+        with patch.object(smoke.urllib.request, 'build_opener', return_value=opener):
+            smoke.verify_logged_out(None, 'http://localhost:39080', smoke.http.cookiejar.CookieJar())
+
     def archive(self, members):
         output = io.BytesIO()
         with zipfile.ZipFile(output, "w") as archive:

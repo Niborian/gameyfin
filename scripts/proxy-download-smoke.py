@@ -12,6 +12,7 @@ import json
 import os
 import re
 import urllib.parse
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -54,6 +55,30 @@ def local_path(path):
     return path
 
 
+def csrf_token(html):
+    token = re.search(r'<meta name="_csrf" content="([^"]+)"', html)
+    if not token:
+        raise ValueError("Staging page CSRF token absent")
+    return token.group(1)
+
+
+def verify_logged_out(client, base, jar):
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args):
+            return None
+    anonymous = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPCookieProcessor(jar))
+    try:
+        with anonymous.open(base + "/", timeout=30) as response:
+            status = response.status
+            location = response.headers.get("Location", "")
+    except urllib.error.HTTPError as response:
+        status = response.code
+        location = response.headers.get("Location", "")
+    target = urllib.parse.urljoin(base + "/", location)
+    if status != 302 or urllib.parse.urlsplit(target)[:2] != urllib.parse.urlsplit(base)[:2] or urllib.parse.urlsplit(target).path != "/login":
+        raise ValueError("Logout did not restore anonymous login redirect")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", required=True)
@@ -93,23 +118,22 @@ def main():
             return bounded_read(response)
 
     html = request("/login").decode()
-    csrf = re.search(r'<meta name="_csrf" content="([^"]+)"', html)
-    if not csrf:
-        raise ValueError("Staging login CSRF token absent")
-    login = urllib.parse.urlencode({"username": username, "password": password, "_csrf": csrf.group(1)}).encode()
+    csrf = csrf_token(html)
+    login = urllib.parse.urlencode({"username": username, "password": password, "_csrf": csrf}).encode()
     request("/login", login)
     # Confirm the authenticated identity, not merely a successful login-page response.
     html = request("/").decode()
-    csrf = re.search(r'<meta name="_csrf" content="([^"]+)"', html)
+    csrf = csrf_token(html)
     identity = urllib.request.Request(base + "/connect/UserEndpoint/getUserInfo", data=b"{}",
-        headers={"Content-Type": "application/json", "X-CSRF-TOKEN": csrf.group(1) if csrf else ""})
+        headers={"Content-Type": "application/json", "X-CSRF-TOKEN": csrf})
     with client.open(identity, timeout=30) as response:
         if json.loads(bounded_read(response))["username"] != username:
             raise ValueError("Staging authenticated identity differs")
     for index, case in enumerate(cases, 1):
         verify_archive(request(case["path"]), case["members"])
         print(f"PASS: synthetic grouped download case {index}, exact members and SHA256")
-    request("/logout", urllib.parse.urlencode({"_csrf": csrf.group(1)}).encode())
+    request("/logout", urllib.parse.urlencode({"_csrf": csrf}).encode())
+    verify_logged_out(client, base, jar)
     print("PASS: staging-only authentication and logout; credentials not persisted")
 
 

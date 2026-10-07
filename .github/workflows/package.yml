@@ -263,12 +263,14 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build image without publishing
+        id: staging-image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile.ubuntu
           platforms: linux/amd64
           push: false
+          outputs: type=docker,dest=/tmp/gameyfin-staging-image.tar
           tags: ${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.head.sha }}
           labels: |
             org.opencontainers.image.source=https://github.com/Niborian/gameyfin
@@ -278,3 +280,24 @@ jobs:
             org.opencontainers.image.vendor=Niborian
             org.opencontainers.image.authors=Niborian
           cache-from: type=gha,scope=gameyfin-amd64
+
+      - name: Record staging image archive integrity
+        env:
+          REVIEWED_HEAD: ${{ github.event.pull_request.head.sha }}
+          BUILT_IMAGE_ID: ${{ steps.staging-image.outputs.imageid }}
+        run: |
+          cd /tmp
+          sha256sum gameyfin-staging-image.tar > gameyfin-staging-image.sha256
+          printf 'source_head=%s\nimage_id=%s\n' "$REVIEWED_HEAD" "$BUILT_IMAGE_ID" > gameyfin-staging-image.txt
+
+      - name: Retain isolated staging image without publishing a tag
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-image-${{ github.event.pull_request.head.sha }}
+          path: |
+            /tmp/gameyfin-staging-image.tar
+            /tmp/gameyfin-staging-image.sha256
+            /tmp/gameyfin-staging-image.txt
+          retention-days: 3
+          compression-level: 0
+          if-no-files-found: error

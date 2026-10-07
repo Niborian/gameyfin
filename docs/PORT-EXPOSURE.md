@@ -57,6 +57,39 @@ authentication-entry-point, and dynamic-public-access tests passed under JDK 25.
 These test administrator/CSRF behavior and application login decisions, not a running
 proxy or torrent client. No production bind/firewall change is included in that evidence.
 
+### Authorized disposable-server rehearsal on 2026-10-07
+
+The nginx configuration was exercised on the authorized server in two separate,
+synthetic-only Compose projects. No production volume, library, plugin configuration,
+credential, or torrent path was mounted. Each backend was limited to one CPU and
+1536 MiB, with a separate generated AES application key and staging-only administrator.
+The nginx image was the server's cached image
+`sha256:7bc5ba2f958a043e123135f456af857350673b64eaddcf811698239f3a53d6e6`
+(reported nginx 1.31.4), not a claim that the example's pinned 1.28 image was tested.
+
+| Rehearsal | Application image | Isolated project / proxy bind |
+| --- | --- | --- |
+| Fresh baseline 2.4.0 | `sha256:b031128b79ce56a7a7ea59498d1894ae5a28b0309952bd917ee7c3f9936d3729` | `gameyfin-exposure29-20261007`, `127.0.0.1:39081` |
+| Reviewed PR #111 artifact, image label 2.4.3, revision `0f152220a5c73b938312f43e464291fd1dfb9511` | `sha256:e0508fd21796cac8b1b9d34d750dd9ec1fdd1f126d19d69460185a78d02e1258` | `gameyfin-exposure29-candidate-20261007`, `127.0.0.1:39082` |
+
+Both fresh instances completed setup through the proxy with separately generated
+credentials held only in the test process. Administrator form login, session-authenticated
+`UserEndpoint/getUserInfo`, authenticated root browse, and logout passed. After setup,
+anonymous `/login` returned 200, anonymous `/` returned 302, and `/actuator/health`
+returned 404 through nginx. Docker inspection showed `{}` backend port bindings and
+only the four project-owned named volumes. The candidate proxy published only
+`127.0.0.1:39082`; the host listener inspection agreed.
+
+The rehearsal initially generated an incorrectly encoded application key; the isolated
+baseline rejected it safely at startup. Recreating only that disposable backend with a
+base64-encoded 32-byte key resolved it before setup. No live key or configuration changed.
+
+The two exposure projects, their eight synthetic named volumes and two networks were
+removed after testing. The shared candidate image and unrelated staging/production
+containers were retained. This proves basic application proxy/authentication isolation,
+not authenticated grouped downloads, WebSockets, torrent-client traffic, live firewall
+rules, or production cutover readiness. Issue #29 remains open for those criteria.
+
 ## Remaining user/environment choices
 
 Record the intended proxy hostname, where the proxy runs, and which network/interface it

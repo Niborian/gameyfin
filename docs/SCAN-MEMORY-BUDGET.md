@@ -146,6 +146,15 @@ close #27.
 
 ## Reusable actual-image runner and PR gate
 
+The runner samples only the required scan/heap meters once per sample, rather than
+scraping every unrelated binder repeatedly. Each request remains bounded to ten
+seconds. A phase may retry at most two timed-out scrapes within its unchanged
+180-second completion deadline; timeout counts and longest scrape duration are
+recorded, and no heap value is fabricated for a gap. RSS is sampled independently
+before each scrape. Reported memory maxima are sampled observations, not continuous
+peak guarantees. A telemetry gap is not proof of responsive production monitoring:
+the real-library resource and monitoring acceptance remains outstanding.
+
 `scripts/rehearsal/run-image-scan.py` now creates an isolated synthetic H2 application,
 imports the validated seed while stopped, runs cold/repeated full scans, and optionally
 interrupts only its own container after observing an active scan. It restarts the same

@@ -1,0 +1,27 @@
+{
+  "fixtureGames": 5000,
+  "variants": 10000,
+  "contents": 30000,
+  "concurrency": 4,
+  "maxHeapBytes": 536870912,
+  "sourceIntegrity": "paths and SHA-256",
+  "javaVersion": "25.0.4.1",
+  "os": "Windows",
+  "baseline": {
+    "scannerCommit": "5ae6c1b",
+    "sampledPeakHeapBytes": 148979512,
+    "processLifetimePeakRssBytes": 481157120,
+    "durationSeconds": 5.3570463,
+    "gamesPerSecond": 933.3501560365456,
+    "recoveryFailures": 0
+  },
+  "bounded": {
+    "scannerCommit": "07226a3",
+    "sampledPeakHeapBytes": 149698136,
+    "processLifetimePeakRssBytes": 477073408,
+    "durationSeconds": 5.4131656,
+    "gamesPerSecond": 923.6739404388442,
+    "recoveryFailures": 0
+  },
+  "interpretation": "Single-run observations are similar; do not establish a meaningful total heap/RSS improvement or a representative throughput guarantee. Providers and persistence are mocked. Pending task count is separately bounded deterministically."
+}

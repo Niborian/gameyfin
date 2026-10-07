@@ -307,3 +307,40 @@ jobs:
           retention-days: 3
           compression-level: 0
           if-no-files-found: error
+
+      - name: Verify pinned official plugin source and load only this PR image
+        env:
+          BUILT_IMAGE_ID: ${{ steps.staging-image.outputs.imageid }}
+        run: |
+          # Official upstream commit 005a1611ce4495e9080e143ec4bc2f1f0b91e633.
+          # These exact source trees were verified against gameyfin/gameyfin.
+          test "$(git rev-parse HEAD:plugins/steam)" = 52104d217dcfa24fb6bfd54ee7f6aed6c239b557
+          test "$(git rev-parse HEAD:plugins/directdownload)" = 5ac40f7f9b23c7cc67f6b7dee61a211dd395041a
+          cd /tmp
+          sha256sum -c gameyfin-staging-image.sha256
+          docker load --input gameyfin-staging-image.tar
+          docker image inspect "$BUILT_IMAGE_ID" >/dev/null
+
+      - name: Exercise actual image H2 scans, recovery and exact selections
+        env:
+          REVIEWED_HEAD: ${{ github.event.pull_request.head.sha }}
+          BUILT_IMAGE_ID: ${{ steps.staging-image.outputs.imageid }}
+        run: |
+          mapfile -t h2_jars < <(docker run --pull never --rm --network none --entrypoint find "$BUILT_IMAGE_ID" /opt/gameyfin/lib -maxdepth 1 -name 'h2-*.jar')
+          test "${#h2_jars[@]}" -eq 1
+          sha256sum plugins/steam/build/libs/steam-1.2.0.jar plugins/directdownload/build/libs/directdownload-1.0.2.jar
+          python3 -B scripts/rehearsal/run-image-scan.py \
+            --image "$BUILT_IMAGE_ID" --source-revision "$REVIEWED_HEAD" \
+            --h2-jar "${h2_jars[0]}" \
+            --metadata-plugin plugins/steam/build/libs/steam-1.2.0.jar \
+            --direct-plugin plugins/directdownload/build/libs/directdownload-1.0.2.jar \
+            --output app/build/reports/actual-image-scan.json --interrupt-scan
+
+      - name: Retain actual-image synthetic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: actual-image-scan-${{ github.event.pull_request.head.sha }}
+          path: app/build/reports/actual-image-scan.json
+          retention-days: 7
+          if-no-files-found: warn

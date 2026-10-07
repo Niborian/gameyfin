@@ -1,0 +1,34 @@
+{
+  "scope": "Synthetic actual-image H2 fixture, independently initialized schemas, not production acceptance",
+  "date": "2026-10-07",
+  "fixture": {"libraries": [104, 27, 1, 0], "games": 132, "pinnedVariantsBeforeScan": 132, "contentsBeforeScan": 264, "sourceFiles": 924},
+  "constraints": {"heap": "512m", "metaspace": "256m", "containerMemory": "1536m", "cpus": 2, "externalNetwork": false, "publishedBackendPorts": false},
+  "baseline": {
+    "image": "sha256:b031128b79ce56a7a7ea59498d1894ae5a28b0309952bd917ee7c3f9936d3729",
+    "sourceRevision": "baseline-unknown", "imageVersionLabel": "26.04", "runningUiVersion": "2.4.0",
+    "cold": {"seconds": 8.911123123994912, "heapBytes": 159375400, "rssBytes": 540971008, "defaults": 264},
+    "repeat": {"seconds": 3.7439481950059417, "heapBytes": 164129088, "rssBytes": 547610624, "defaults": 264},
+    "recovery": {"seconds": 8.866619127002195, "heapBytes": 151716272, "rssBytes": 537178112, "defaults": 264},
+    "activeLibrariesBeforeForcedInterruption": 1, "health": "UP", "oomKilled": false, "automaticRestarts": 0
+  },
+  "candidate": {
+    "image": "sha256:483c612e5d6d975096a1fa480a479d856906934c605ab4edc8e5e30eaeba2f32",
+    "sourceRevision": "36896a1d048e3c3a26cd599656eeb8d408768e0e", "imageVersionLabel": "2.4.3",
+    "archiveSha256": "03e7d4f1ab2a219308db15ff34c9347137feea17723b9336893bbdf8be6d0a7c",
+    "cold": {"seconds": 8.777142774000822, "heapBytes": 161432664, "rssBytes": 540594176, "defaults": 132},
+    "repeat": {"seconds": 3.5364306810006383, "heapBytes": 150261608, "rssBytes": 546844672, "defaults": 132},
+    "recovery": {"seconds": 8.843381993996445, "heapBytes": 160888000, "rssBytes": 547774464, "defaults": 132},
+    "activeLibrariesBeforeForcedInterruption": 3, "health": "UP", "oomKilled": false, "automaticRestarts": 0,
+    "proxy": {"selectedCases": 2, "exactMemberHashes": true, "authenticatedIdentity": true, "logoutAnonymous": true}
+  },
+  "bothImages": {
+    "completedLibrariesPerScan": 4, "failedLibrariesPerScan": 0, "sourceHashesUnchanged": true,
+    "requiredEstimateBytes": 32768, "requiredAndOptionalEstimateBytes": 49152,
+    "archiveMemberHashes": {
+      "Grouped base/base-a.bin": "30b3667046db2bd6c33073dd2f41c13dc4b0bf6b58cfe3b7b0fcf86e16bfafcc",
+      "Grouped base/base-b.bin": "c962282dfdb62b6194d7dd06e5ee6444cd6057e20c1a787b6f387e0176be31f8",
+      "Optional patch.bin": "f3474641ef861940870b6e09dbaa69faac10e2f0e7d0b8cddde3cc97dbdbf24f"
+    }
+  },
+  "limits": ["Single paired sequence cannot prove production resource regression bounds", "No controlled production scan or interrupted-production-record verification", "No production backup or image cutover", "Container OOM state is not a complete application error-log audit"]
+}

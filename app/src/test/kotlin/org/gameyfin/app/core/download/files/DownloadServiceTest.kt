@@ -18,6 +18,10 @@ import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.pluginapi.download.Download
 import org.gameyfin.pluginapi.download.FileDownload
 import org.gameyfin.pluginapi.download.DownloadProvider
+import org.gameyfin.pluginapi.download.DownloadSelection
+import org.gameyfin.pluginapi.download.DownloadSelectionContent
+import org.gameyfin.pluginapi.download.SelectionAwareDownloadProvider
+import org.gameyfin.pluginapi.download.LinkDownload
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -38,6 +42,91 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class DownloadServiceTest {
+
+    class SelectionProvider(var action: (DownloadSelection) -> Download) : SelectionAwareDownloadProvider {
+        override fun download(path: java.nio.file.Path): Download = error("Selection must not use legacy path dispatch")
+        override fun download(selection: DownloadSelection): Download = action(selection)
+    }
+
+    @Test
+    fun `selection aware provider receives required grouped paths and only checked optional content`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+        val base = game.variants.single().contents.first()
+        val secondBase = tempDir.resolve("base-b.bin").createFile()
+        secondBase.writeText("second required part")
+        base.paths.addAll(listOf(tempDir.resolve("base.bin").toString(), secondBase.toString()))
+        var received: DownloadSelection? = null
+        val provider = SelectionProvider { received = it; FileDownload(ByteArrayInputStream(byteArrayOf(1)), "torrent", 1) }
+        every { pluginManager.getExtensions(DownloadProvider::class.java) } returns listOf(provider)
+        val download = service.getDownload(game, provider.javaClass.name, 10L, listOf(22L)) as FileDownload
+        assertEquals("torrent", download.fileExtension)
+        assertEquals(listOf("Base game", "Soundtrack"), received!!.contents.map { it.name })
+        assertEquals(listOf(tempDir.resolve("base.bin").toRealPath(), secondBase.toRealPath()), received!!.contents.first().paths)
+        assertTrue(received!!.contents.flatMap { it.paths }.none { it == tempDir.resolve("dlc.bin").toRealPath() })
+        assertThrows(IllegalArgumentException::class.java) { pathLeases.whenUnused(tempDir) {} }
+        download.data.close()
+        assertDoesNotThrow { pathLeases.whenUnused(tempDir) {} }
+        assertEquals("12345", java.nio.file.Files.readString(tempDir.resolve("base.bin")))
+    }
+
+    @Test
+    fun `selection aware provider honors explicit empty selection and required content`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+        val provider = SelectionProvider { selection ->
+            assertEquals(listOf("Base game"), selection.contents.map { it.name })
+            LinkDownload("https://example.invalid/fixture")
+        }
+        every { pluginManager.getExtensions(DownloadProvider::class.java) } returns listOf(provider)
+        service.getDownload(game, provider.javaClass.name, 10L, emptyList())
+        assertDoesNotThrow { pathLeases.whenUnused(tempDir) {} }
+    }
+
+    @Test
+    fun `selection aware failure releases all selected source leases`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+        val provider = SelectionProvider { throw IOException("synthetic provider failure") }
+        every { pluginManager.getExtensions(DownloadProvider::class.java) } returns listOf(provider)
+        assertThrows(IOException::class.java) { service.getDownload(game, provider.javaClass.name, 10L, null) }
+        assertDoesNotThrow { pathLeases.whenUnused(tempDir) {} }
+    }
+
+    @Test
+    fun `invalid selection is rejected before selection aware provider invocation`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+        var calls = 0
+        val provider = SelectionProvider { calls++; LinkDownload("https://example.invalid/fixture") }
+        every { pluginManager.getExtensions(DownloadProvider::class.java) } returns listOf(provider)
+        assertThrows(IllegalArgumentException::class.java) { service.getDownload(game, provider.javaClass.name, 10L, listOf(999L)) }
+        game.variants.single().retirementState = org.gameyfin.app.games.entities.VariantRetirementState.ARCHIVED
+        assertThrows(IllegalStateException::class.java) { service.getDownload(game, provider.javaClass.name, 10L, null) }
+        assertEquals(0, calls)
+    }
+
+    @Test
+    fun `outside content path is rejected before selection aware dispatch`(@TempDir tempDir: java.nio.file.Path, @TempDir outside: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+        val escaped = outside.resolve("outside.bin").createFile()
+        escaped.writeText("untouched")
+        game.variants.single().contents.first().path = escaped.toString()
+        var calls = 0
+        val provider = SelectionProvider { calls++; LinkDownload("https://example.invalid/fixture") }
+        every { pluginManager.getExtensions(DownloadProvider::class.java) } returns listOf(provider)
+        assertThrows(IllegalArgumentException::class.java) { service.getDownload(game, provider.javaClass.name, 10L, emptyList()) }
+        assertEquals(0, calls)
+        assertEquals("untouched", java.nio.file.Files.readString(escaped))
+    }
+
+    @Test
+    fun `selection descriptors defensively copy nested caller lists`(@TempDir tempDir: java.nio.file.Path) {
+        val paths = mutableListOf(tempDir)
+        val content = DownloadSelectionContent("fixture", paths)
+        val contents = mutableListOf(content)
+        val selection = DownloadSelection(contents)
+        paths.clear(); contents.clear()
+        assertEquals(listOf(tempDir), selection.contents.single().paths)
+        assertThrows(UnsupportedOperationException::class.java) { (selection.contents as MutableList).clear() }
+        assertThrows(UnsupportedOperationException::class.java) { (content.paths as MutableList).clear() }
+    }
 
     private lateinit var pluginManager: GameyfinPluginManager
     private lateinit var configService: ConfigService

@@ -29,6 +29,7 @@ class VariantScanIntegrityFixtureTest {
         val config = mockk<ConfigService>()
         every { config.get(ConfigProperties.Libraries.Scan.GameFileExtensions) } returns arrayOf("rar", "zip")
         every { config.get(ConfigProperties.Libraries.Scan.ScanEmptyDirectories) } returns false
+        every { config.get(ConfigProperties.Libraries.Scan.MaxConcurrency) } returns 4
         val filesystem = FilesystemService(config)
         val repository = mockk<GameRepository>()
         val libraryRepository = mockk<LibraryRepository>()

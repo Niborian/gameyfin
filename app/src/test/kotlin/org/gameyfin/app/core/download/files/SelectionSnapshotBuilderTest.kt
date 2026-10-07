@@ -60,9 +60,9 @@ class SelectionSnapshotBuilderTest {
             DownloadSelection(listOf(
                 DownloadSelectionContent("Base", listOf(source.parent)),
                 DownloadSelectionContent("Soundtrack", listOf(optional)))))
-        assertEquals(setOf("Base/nested/data.bin", "Soundtrack"), snapshot.hashes.keys)
+        assertEquals(setOf("Base/nested/data.bin", "Soundtrack.bin"), snapshot.hashes.keys)
         assertEquals("base", Files.readString(snapshot.directory.resolve("Base/nested/data.bin")))
-        assertEquals("soundtrack", Files.readString(snapshot.directory.resolve("Soundtrack")))
+        assertEquals("soundtrack", Files.readString(snapshot.directory.resolve("Soundtrack.bin")))
         assertEquals("base", Files.readString(member))
         assertEquals("excluded", Files.readString(excluded))
         assertThrows(UnsupportedOperationException::class.java) { (snapshot.hashes as MutableMap)["extra"] = "invalid" }

@@ -75,7 +75,11 @@ class SelectionSnapshotBuilder(private val cacheRoot: Path, private val maxBytes
                         }
                     } else {
                         require(attrs.isRegularFile && attrs.fileKey() != null) { "Snapshot entries must have regular file identities" }
-                        val relative = if (canonical == path) prefix else prefix.resolve(canonical.relativize(path))
+                        val relative = if (canonical == path) {
+                            val extension = name.toString().substringAfterLast('.', "")
+                            if (content.paths.size == 1 && extension.isNotBlank() && !prefix.toString().endsWith(".$extension"))
+                                Path.of("$prefix.$extension") else prefix
+                        } else prefix.resolve(canonical.relativize(path))
                         require(plan.putIfAbsent(relative, path) == null) { "Selected snapshot names collide" }
                         sourceIdentities[path] = attrs.fileKey()
                     }

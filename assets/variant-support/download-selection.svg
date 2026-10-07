@@ -1,47 +1,5 @@
-<svg width="960" height="420" viewBox="0 0 960 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
-  <title id="title">Selectable download content</title>
-  <desc id="desc">A generic download panel with a version selector, required base content, optional DLC, and optional patches.</desc>
-  <rect width="960" height="420" rx="28" fill="#101116"/>
-  <rect x="54" y="46" width="852" height="328" rx="24" fill="#1F2028"/>
-  <text x="88" y="92" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Download only what you choose</text>
-  <text x="88" y="124" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">Required base content is always included; optional content changes the estimated source size.</text>
-
-  <rect x="88" y="158" width="312" height="54" rx="14" fill="#2A2B34"/>
-  <text x="110" y="181" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13">Version</text>
-  <text x="110" y="201" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">Normal 1.3 (latest)</text>
-  <text x="428" y="181" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13">Selected source size</text>
-  <text x="428" y="202" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">40.4 GiB · base + 2 optional items</text>
-
-  <rect x="88" y="240" width="250" height="86" rx="16" fill="#2A2B34"/>
-  <text x="112" y="270" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Base game</text>
-  <circle cx="118" cy="300" r="9" fill="#6F45BD"/>
-  <path d="M114 300L117 303L123 296" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="138" y="296" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14">Required archive group</text>
-  <text x="138" y="315" fill="#8E91A3" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="12">7 files · always included</text>
-
-  <rect x="366" y="240" width="220" height="86" rx="16" fill="#2A2B34"/>
-  <text x="390" y="270" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">DLC</text>
-  <circle cx="396" cy="296" r="9" fill="#6F45BD"/>
-  <path d="M392 296L395 299L401 292" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="416" y="302" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14">Selected pack</text>
-  <circle cx="396" cy="320" r="8" stroke="#777A88" stroke-width="2"/>
-  <text x="416" y="325" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13">Unselected add-on</text>
-
-  <rect x="614" y="240" width="204" height="86" rx="16" fill="#2A2B34"/>
-  <text x="638" y="270" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Patch / server</text>
-  <circle cx="644" cy="296" r="9" fill="#6F45BD"/>
-  <path d="M640 296L643 299L649 292" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="664" y="302" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14">Shared patch</text>
-  <circle cx="644" cy="320" r="8" stroke="#777A88" stroke-width="2"/>
-  <text x="664" y="325" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13">Server files</text>
-
-  <rect x="712" y="152" width="122" height="34" rx="17" fill="#6F45BD"/>
-  <text x="735" y="174" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="700">Download zip</text>
-
-  <rect x="88" y="344" width="222" height="24" rx="12" fill="#262833"/>
-  <text x="104" y="361" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13">required items are locked</text>
-  <rect x="324" y="344" width="236" height="24" rx="12" fill="#262833"/>
-  <text x="340" y="361" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13">optional items change size</text>
-  <rect x="574" y="344" width="244" height="24" rx="12" fill="#262833"/>
-  <text x="590" y="361" fill="#B9BBC8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13">only selected paths are streamed</text>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="480" viewBox="0 0 960 480" role="img" aria-labelledby="title desc">
+<title id="title">Exact download selection</title><desc id="desc">Concept diagram: choose a version, include its required grouped base and checked optional patch, exclude unchecked DLC. The output contains only selected paths. Example sizes are illustrative, not measured archive sizes.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8" fill="none" stroke="#a9b1c6" stroke-width="1.4"/></marker></defs>
+<rect width="960" height="480" rx="24" fill="#10131c"/>
+<g font-family="Segoe UI, Arial, sans-serif"><text x="36" y="46" fill="#b69cff" font-size="12" font-weight="700">EXACT DOWNLOAD SELECTION</text><text x="36" y="82" fill="#ffffff" font-size="30" font-weight="700">Your choice defines the output.</text><rect x="36" y="124" width="888" height="54" rx="14" fill="#1d2435" stroke="#36425a"/><text x="58" y="158" fill="#b69cff" font-size="13" font-weight="700">1  CHOOSE A VERSION</text><text x="294" y="158" fill="#ffffff" font-size="20" font-weight="700">Version 1.3</text><text x="626" y="158" fill="#bac3d9" font-size="13" font-weight="400">Concept illustration · not a screenshot</text><rect x="36" y="208" width="540" height="156" rx="14" fill="#1d2435" stroke="#36425a"/><text x="58" y="241" fill="#b69cff" font-size="13" font-weight="700">2  SELECT CONTENT</text><text x="58" y="276" fill="#ffffff" font-size="19" font-weight="700">✓  Base game · 7 grouped parts</text><text x="420" y="276" fill="#80dfbd" font-size="14" font-weight="400">Required</text><text x="58" y="309" fill="#ffffff" font-size="19" font-weight="400">✓  Patch</text><text x="420" y="309" fill="#80dfbd" font-size="14" font-weight="400">Selected</text><text x="58" y="342" fill="#bac3d9" font-size="19" font-weight="400">—  DLC</text><text x="420" y="342" fill="#bac3d9" font-size="14" font-weight="400">Not selected</text><path d="M576 286H618" stroke="#a9b1c6" stroke-width="2" fill="none" marker-end="url(#arrow)"/><rect x="632" y="208" width="292" height="156" rx="14" fill="#16332f" stroke="#4da890"/><text x="654" y="243" fill="#80dfbd" font-size="13" font-weight="700">3  DOWNLOAD</text><text x="654" y="279" fill="#ffffff" font-size="23" font-weight="700">Base + patch only</text><text x="654" y="312" fill="#bac3d9" font-size="16" font-weight="400">Unchecked DLC stays out</text><text x="654" y="343" fill="#80dfbd" font-size="14" font-weight="400">Only chosen source paths</text><rect x="36" y="396" width="888" height="52" rx="14" fill="#1d2435" stroke="#36425a"/><text x="58" y="428" fill="#b69cff" font-size="12" font-weight="700">SOURCE SIZE ≠ ARCHIVE SIZE</text><text x="343" y="428" fill="#ffffff" font-size="16" font-weight="400">Selection changes the estimate; sources stay unchanged.</text></g></svg>

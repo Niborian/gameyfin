@@ -1,153 +1,121 @@
-<div align="center">
-    <a href="https://gameyfin.org">
-        <img src="assets/v2/Banner.svg" width="auto" alt="Gameyfin Logo">
-    </a>
+<p align="center">
+  <img src="assets/v2/Banner.svg" width="720" alt="Gameyfin">
+</p>
 
-</div>
-<div align="center">
-    <h2>Gameyfin</h2>
-    <h4>Manage your video games.</h4>
-    <p>simple / fast / <a href="https://gameyfin.org/blog/2025/12/22/why-gameyfin-is-foss/">FOSS</a></p>
-</div>
+<h1 align="center">Gameyfin · Niborian fork</h1>
+<p align="center">One library. Multiple versions. Exactly the files you choose.</p>
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#getting-started">Setup</a> ·
+  <a href="#development-status">Status</a> ·
+  <a href="https://github.com/gameyfin/gameyfin">Upstream</a>
+</p>
 
-## Overview
+Gameyfin turns your game folders into a browsable library with metadata, artwork,
+and downloads. This fork extends it for versioned libraries, grouped content,
+and workflows that leave torrent-managed sources in place.
 
-Name and functionality inspired by [Jellyfin](https://jellyfin.org/).
+This is a **personal Niborian fork**, made primarily for my own game library and
+workflow. Gameyfin itself is the work of the [original project and its contributors](https://github.com/gameyfin/gameyfin).
+This fork is not intended to compete with, represent, or replace that project.
 
 > [!IMPORTANT]
-> **This is not an official Gameyfin image or upstream release.** It is an independent Niborian fork, is not endorsed by
-> the Gameyfin maintainers. You may deploy this fork as `ghcr.io/niborian/gameyfin`, but it is provided without any
-> guarantee that it works for your library or environment. If a fork image has a problem, please report it here, not to
-> the original Gameyfin maintainers. Filing an issue does not promise that it will be fixed; use of this fork is entirely
-> at your own risk. Reviewed fork images identify their revision in container metadata.
+> This is an **unofficial, experimental fork**, not an upstream release.
+> Report fork problems [here](https://github.com/Niborian/gameyfin/issues).
+> Validate it against your own library before upgrading; passing CI does not
+> guarantee production readiness. It is not endorsed by the original maintainers.
 
-This fork exists to prototype variant/version support, selectable extra content, grouped archive downloads,
-hardlink-friendly library handling, and metadata tools for keeping torrent-managed paths in place.
+## Features
 
-Gameyfin will turn your disorganized collection of video games into a beautiful, easy-to-navigate library that you can
-access from any device with a web browser.  
-It will automatically scan your game folders, download metadata and cover images, and present everything in a
-user-friendly interface.  
-Download your game files directly from the web UI, share your library with friends, and enjoy your games like never
-before.
-
-### Original Gameyfin documentation
-
-The original project's [documentation and screenshots](https://gameyfin.org/) and
-[GitHub repository](https://github.com/gameyfin/gameyfin) are the right starting point for understanding Gameyfin.
-Their installation guide targets the original image, however, and does not validate this fork's variants, paths, or
-release process.
-
-### Added by this fork
-
-This fork adds experimental support for libraries where one visible game entry can contain multiple versions and
-variants without moving the original source files.
-
-Highlights:
-
-* Version-aware variants, with the latest `Normal` version selected by default unless an admin pins another default.
-* User-selectable DLC, patches, mods, extras, and dedicated server content per download.
-* Shared optional content that can apply to multiple versions.
-* Grouped content paths so multipart archives can appear as one selectable download item.
-* Admin tools for attaching existing paths, grouping duplicates, and ignoring attached source paths so scans do not
-  recreate duplicate games.
-* Hardlink mirror storage mode for libraries that need managed access without breaking torrent paths.
-
-The images below summarize the added behavior.
-
-<p align="center">
-    <img src="assets/variant-support/variant-content-model.svg" width="820" alt="Diagram showing variants and shared optional content">
-</p>
-
-## Planned work
-
-The fork is organized around user outcomes, not undifferentiated feature work. Every pull request must close a
-milestone-backed issue, describe the visible behavior it adds, and pass the required quality checks.
-
-| Milestone | What it delivers |
+| Added by this fork | What it means |
 | --- | --- |
-| [Release foundation](https://github.com/Niborian/gameyfin/milestone/1) | One visible release version, a matching reviewed package tag, provenance, SBOM, and a repeatable release gate. |
-| [Variant library integrity](https://github.com/Niborian/gameyfin/milestone/2) | Rescans preserve variants, selected defaults, hardlinks, and original source paths. |
-| [Selectable downloads](https://github.com/Niborian/gameyfin/milestone/3) | Users receive exactly the version and optional content they choose, including grouped/shared archives. |
-| [Production operations](https://github.com/Niborian/gameyfin/milestone/4) | Recoverable H2 backups, memory-safe scans, health checks, and restricted access exposure. |
-| [Upstream compatibility](https://github.com/Niborian/gameyfin/milestone/5) | Future upstream changes are merged and tested without losing fork behavior. |
-| [Library intelligence and request automation](https://github.com/Niborian/gameyfin/milestone/6) | Explainable release grouping, lawful update discovery, and reviewed request automation. |
-
-See the [issue backlog](https://github.com/Niborian/gameyfin/issues) for concrete acceptance criteria.
-The [upstream synchronization procedure](docs/UPSTREAM-SYNC.md) defines how upstream changes are evaluated without
-silently losing the fork's variant, hardlink, source-path, or exact-download guarantees.
-
-### Non-negotiable library guarantees
-
-- Scanning, grouping, and retirement must not move, rename, delete, or rewrite torrent-managed source files.
-- Low-confidence release matches remain in an administrator review queue; a suggestion never silently replaces a
-  selected version.
-- Older versions are superseded and archived before any cleanup. Only application-managed mirrors or caches may be
-  pruned after an explicit review and grace period.
-- Download automation is limited to administrator-approved, authorized sources. It does not bypass store licensing,
-  DRM, or access controls.
-- The current fork has no external acquisition-provider integration. See the
-  [authorized acquisition boundary](docs/AUTHORIZED-ACQUISITION.md) before proposing any Prowlarr or qBittorrent work.
-
-### Version and image identity
-
-`build.gradle.kts` is the canonical release version. The build synchronizes it into the frontend, where it is displayed
-in the Gameyfin footer. A reviewed candidate publishes the same version as an
-immutable package tag, for example `ghcr.io/niborian/gameyfin:2.4.3`, without
-moving `latest`. The workflow does not create SHA-named tags.
-
-Pull requests run tests and build an unpublished image. A merge to `main` does not publish a package version; a
-manual candidate run publishes only the matching semantic version tag. After
-[cutover validation](https://github.com/Niborian/gameyfin/issues/61), a separate
-manual promotion moves `latest` to that exact reviewed digest without a rebuild.
-Deploy by digest for repeatability; the fork commit remains in OCI revision
-metadata and GitHub build provenance. A semantic tag cannot be moved to a
-different revision, and `latest` stays unchanged when a candidate fails review.
-
-Official plugins bundled by this fork are signed with a Niborian-owned key. Its private key and password are held only
-as GitHub Actions secrets and are never included in the repository or container image.
+| Versions and variants | Keep multiple releases under one game and pin a default. |
+| Selectable content | Choose DLC, patches, mods, extras, and server files alongside the base game. |
+| Grouped and shared paths | Treat multipart content as one selection; share optional content across versions. |
+| Library curation | Attach existing paths, review classification, and ignore duplicate-producing paths. |
+| Source-safe storage | Use managed hardlink mirrors without relocating original torrent paths. |
+| Reviewed automation | Review Steam update signals and authorized acquisition requests before acting. |
 
 <p align="center">
-    <img src="assets/variant-support/download-selection.svg" width="820" alt="Diagram showing selectable download content">
+  <img src="assets/variant-support/download-selection.svg" width="820" alt="Version and optional-content download selection">
 </p>
 
-## Original Gameyfin capabilities
+<details>
+<summary>Explore the variant and shared-content model</summary>
 
-The following baseline capabilities come from [original Gameyfin](https://github.com/gameyfin/gameyfin), not from this
-fork's variant work:
+<p align="center">
+  <img src="assets/variant-support/variant-content-model.svg" width="820" alt="Variants and shared optional content">
+</p>
 
-✨ Automatically scans and indexes your game libraries  
-⬇️ Access your library via your web browser & download games directly from there  
-👥 Share your library with friends & family  
-⚛️ LAN-friendly (everything is cached locally - except for videos)  
-🐋 Runs in a container or any system with a JVM  
-🌈 Themes (including colorblind support)  
-🔌 Easily expandable with plugins  
-🔒 Integrates into your SSO solution via OAuth2 / OpenID Connect  
-🆓 **100% open source and free to use without any paywall.**
+</details>
 
-### Contribute to Gameyfin
+The foundation comes from [original Gameyfin](https://gameyfin.org/): library
+indexing, metadata and artwork, browser downloads, themes, plugins, and optional
+OIDC/OAuth2 sign-in. This fork builds on that work, rather than replacing its authors.
 
-This is a personal Niborian fork, maintained primarily for its own game library and workflow. It is not intended to
-compete with, represent, or replace the original Gameyfin project.
+## Getting started
 
-The original Gameyfin maintainers are welcome to adopt any useful changes from this repository under its AGPL-3.0
-license. If a contributor wants their change considered for upstream Gameyfin, they should coordinate with the original
-maintainers first. Keep pull requests here focused, linked to a milestone-backed issue, and respectful of the upstream
-project.
+1. Read the [upstream documentation](https://gameyfin.org/) for general setup.
+2. Adapt the fork's [Compose example](docker/docker-compose.example.yml) and
+   [network exposure guide](docs/PORT-EXPOSURE.md) to your own paths, secrets, and proxy.
+3. Validate a reviewed image against an isolated fixture or copy. See
+   [staging validation](docs/STAGING-IMAGE-EVIDENCE.md); never mount writable production torrent sources.
+4. Rehearse [backup and restore](docs/backup-restore-rehearsal.md), retain a rollback
+   image, and review [cutover evidence](docs/CUTOVER-EVIDENCE.md) before switching.
 
-### Technical Details
+Fork images use `ghcr.io/niborian/gameyfin`. Prefer a reviewed immutable digest for
+repeatability. A newer version or `latest` alone is not proof of readiness.
 
-Gameyfin v2 is written in Kotlin and uses the following libraries/frameworks:
+### Deliberate releases
 
-* Spring Boot 3 for the backend
-* Vaadin Hilla & React for the frontend
-* PF4J for the plugin system
-* H2 database for persistence
+[build.gradle.kts](build.gradle.kts) defines the version synchronized with the UI.
+PRs test and build without publishing a release. Candidate publication and
+promotion are separate manual operations; ordinary merges **do not move `latest`**.
+Promotion uses the reviewed existing digest, not a rebuild.
 
-### Acknowledgements
+Check the [release workflow](.github/workflows/package.yml), image revision,
+UI version, provenance, SBOM, and tag/digest identity before deployment.
 
-[![YourKit Logo](https://www.yourkit.com/images/yklogo.png)](https://www.yourkit.com/)  
-Gameyfin is supported by [YourKit](https://www.yourkit.com/), the makers
-of [YourKit Java Profiler](https://yourkit.com/java/profiler/), a powerful tool for profiling Java and Kotlin
-applications.
+## Library safety
+
+- Scans, grouping, and retirement must not move, rename, delete, or rewrite torrent-managed sources.
+- Classification and update suggestions are review evidence, not authority to replace or download content.
+- Retirement archives versions first. Only eligible managed mirrors or caches may be cleaned up after review.
+- Acquisition is disabled by default and requires deliberate approval, authorized content,
+  approved indexers, and a dedicated isolated client. qBittorrent tags/categories are not credential permissions.
+
+Read [retirement safeguards](docs/variant-retirement.md) and
+[acquisition boundaries](docs/AUTHORIZED-ACQUISITION-PROVIDER.md).
+
+## Development status
+
+Implemented behavior and passing tests are not the same as production acceptance.
+Follow the [issues](https://github.com/Niborian/gameyfin/issues) for remaining criteria.
+
+| Workstream | Details |
+| --- | --- |
+| Release identity | [Release foundation](https://github.com/Niborian/gameyfin/milestone/1) |
+| Rescan and variant integrity | [Library integrity](https://github.com/Niborian/gameyfin/milestone/2) |
+| Exact versions and optional content | [Selectable downloads](https://github.com/Niborian/gameyfin/milestone/3) |
+| Memory, recovery, backups and exposure | [Production operations](https://github.com/Niborian/gameyfin/milestone/4) · [Scan measurements](docs/SCAN-MEMORY.md) |
+| Keeping up with upstream | [Compatibility](https://github.com/Niborian/gameyfin/milestone/5) · [Sync guide](docs/UPSTREAM-SYNC.md) |
+| Classification and approved requests | [Library intelligence](https://github.com/Niborian/gameyfin/milestone/6) |
+
+**In development:** optional qBittorrent-backed torrent distribution for exact
+library selections ([#112](https://github.com/Niborian/gameyfin/issues/112)), separate
+from acquisition. The original plugin remains available until replacement parity
+is proven. No production replacement is implied.
+
+## Contributing and credits
+
+Keep PRs focused, linked to milestone-backed issues, and supported by tests or
+acceptance evidence. Preserve source paths and distinguish fixture results from
+production claims. Useful changes are available upstream under [AGPL-3.0](LICENSE.md);
+coordinate upstream contributions with its maintainers. The original maintainers
+are welcome to adopt useful changes from this fork under the same license.
+
+Built with Kotlin, Spring Boot, Vaadin Hilla/React, PF4J, and H2. Inspired by
+[Jellyfin](https://jellyfin.org/).
+
+Thanks to the [Gameyfin contributors](https://github.com/gameyfin/gameyfin) and
+[YourKit](https://www.yourkit.com/), whose Java profiler supports the upstream project.

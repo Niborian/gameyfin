@@ -159,7 +159,7 @@ try:
             req = urllib.request.Request(origin + "/api/v2/auth/login", data=form, headers={"Referer": origin})
             with opener.open(req, timeout=10) as response:
                 if response.read().decode().strip() not in ("", "Ok."): raise RuntimeError("Fixture authentication refused")
-            if not any(cookie.name == "SID" for cookie in cookies):
+            if not any((cookie.name == "SID" or re.fullmatch(r"QBT_SID_[1-9][0-9]{0,4}", cookie.name)) and cookie.value for cookie in cookies):
                 raise RuntimeError("Fixture authentication SID absent")
             break
         except Exception as failure:

@@ -49,11 +49,11 @@ class AcquisitionProviderTest {
                     assertEquals("synthetic-user", fields["username"])
                     assertEquals("synthetic-password", fields["password"])
                     assertNull(exchange.requestHeaders.getFirst("X-Api-Key"))
-                    if (loginCookie) exchange.responseHeaders.add("Set-Cookie", "SID=fixture-session; Path=/; HttpOnly")
+                    if (loginCookie) exchange.responseHeaders.add("Set-Cookie", "${if (modernAcknowledgment) "QBT_SID_8080" else "SID"}=fixture-session; Path=/; HttpOnly")
                     if (modernAcknowledgment) "" else "Ok."
                 }
                 "/api/v2/torrents/info" -> {
-                    assertTrue(exchange.requestHeaders.getFirst("Cookie").contains("SID=fixture-session"))
+                    assertTrue(exchange.requestHeaders.getFirst("Cookie").contains("${if (modernAcknowledgment) "QBT_SID_8080" else "SID"}=fixture-session"))
                     if (!added) "[]" else """[{"hash":"$hash","category":"isolated-fixture","save_path":"$savePath","state":"$state","tags":"${if (wrongTags) "other" else "fixture-managed,fixture-managed-request-7,fixture-managed-candidate-11"}"}]"""
                 }
                 "/api/v2/app/version" -> clientVersion

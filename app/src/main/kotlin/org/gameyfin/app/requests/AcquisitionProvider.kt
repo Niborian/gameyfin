@@ -182,7 +182,9 @@ class AcquisitionProvider(
         settings.requireEnabled()
         val response = post("/api/v2/auth/login", mapOf("username" to settings.qbittorrentUsername, "password" to settings.qbittorrentPassword))
         check(response.trim() in setOf("", "Ok.")) { "Torrent client authentication failed" }
-        check(cookies.cookieStore.cookies.any { it.name == "SID" && it.value.isNotBlank() }) { "Torrent client authentication cookie missing" }
+        check(cookies.cookieStore.cookies.any {
+            (it.name == "SID" || it.name.matches(Regex("QBT_SID_[1-9][0-9]{0,4}"))) && it.value.isNotBlank()
+        }) { "Torrent client authentication cookie missing" }
         check(get(settings.qbittorrentUrl, "/api/v2/app/version").trim().matches(Regex("v?5\\.[0-9]+.*"))) { "Only reviewed qBittorrent 5.x stopped/start/stop semantics are supported" }
     }
 

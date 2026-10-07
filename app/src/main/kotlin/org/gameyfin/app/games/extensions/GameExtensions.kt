@@ -79,7 +79,8 @@ fun Game.toUserDto(): GameUserDto {
         perspectives = this.perspectives,
         images = this.images.map { it.toDto() },
         videoUrls = this.videoUrls.map { it.toString() },
-        variants = this.variants.map { it.toDto(includeAdminFields = false) },
+        variants = this.variants.filter { it.retirementState == VariantRetirementState.ACTIVE }
+            .map { it.toDto(includeAdminFields = false) },
         metadata = this.metadata.toUserDto()
     )
 }

@@ -65,6 +65,20 @@ class GameExtensionsTest {
     }
 
     @Test
+    fun `archived variants are hidden from users and remain available for administrator reversal`() {
+        game = createTestGame()
+        val archived = GameVariant(id = 99L, game = game, path = "/mirror/old",
+            retirementState = org.gameyfin.app.games.entities.VariantRetirementState.ARCHIVED)
+        game.variants.add(archived)
+
+        assertTrue(game.toUserDto().variants.none { it.id == 99L })
+        assertTrue(game.toAdminDto().variants.any { it.id == 99L })
+
+        archived.retirementState = org.gameyfin.app.games.entities.VariantRetirementState.ACTIVE
+        assertTrue(game.toUserDto().variants.any { it.id == 99L })
+    }
+
+    @Test
     fun `toDtos should return list of GameAdminDto when user is admin`() {
         every { isCurrentUserAdmin() } returns true
         val games = listOf(createTestGame(), createTestGame(id = 2L))

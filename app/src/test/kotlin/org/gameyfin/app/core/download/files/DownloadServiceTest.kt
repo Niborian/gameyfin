@@ -60,6 +60,31 @@ class DownloadServiceTest {
     }
 
     @Test
+    fun `archived variant rejects explicit download and size requests until restored`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+        val variant = game.variants.first { it.id == 10L }
+        variant.retirementState = org.gameyfin.app.games.entities.VariantRetirementState.ARCHIVED
+        assertThrows(IllegalStateException::class.java) { service.estimateDownloadSize(game, 10L, null) }
+        assertThrows(IllegalStateException::class.java) { service.getDownload(game, TestProvider::class.java.name, 10L, null) }
+        assertEquals("12345", java.nio.file.Files.readString(tempDir.resolve("base.bin")))
+
+        variant.retirementState = org.gameyfin.app.games.entities.VariantRetirementState.ACTIVE
+        assertEquals(9L, service.estimateDownloadSize(game, 10L, null))
+    }
+
+    @Test
+    fun `default download skips archived variants and explicit archived ids fail`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+        val archived = GameVariant(id = 11L, game = game, path = tempDir.resolve("old.bin").toString(),
+            defaultLocked = true, retirementState = org.gameyfin.app.games.entities.VariantRetirementState.ARCHIVED)
+        game.variants.add(0, archived)
+
+        assertEquals(9L, service.estimateDownloadSize(game, null, null))
+        assertThrows(IllegalArgumentException::class.java) { service.estimateDownloadSize(game, 11L, null) }
+        assertThrows(IllegalArgumentException::class.java) { service.getDownload(game, TestProvider::class.java.name, 11L, null) }
+    }
+
+    @Test
     fun `getProviders should return list of download provider DTOs`() {
         val provider1 = createMockProvider("Provider1")
         val provider2 = createMockProvider("Provider2")

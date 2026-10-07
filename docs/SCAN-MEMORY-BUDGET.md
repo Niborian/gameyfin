@@ -41,6 +41,16 @@ lifetime, including fixture setup and mocking/instrumentation overhead. Wall tim
 completion polling and a 50-millisecond scan-guard settling interval. Reports retain raw
 bytes and seconds so rounding does not replace the evidence.
 
+The same final SHA-256 fixture was also run against baseline `5ae6c1b` and the bounded
+scan scheduler from PR #104 (`07226a3`). Baseline peak sampled heap/RSS were
+148,979,512 / 481,157,120 bytes with 5.357 seconds wall time. Bounded scheduler values
+were 149,698,136 / 477,073,408 bytes with 5.413 seconds wall time. That is similar
+overall resource use and runtime for this mocked workload: RSS was 0.85% lower,
+sampled heap 0.48% higher, and wall time 1.05% higher. A single pair cannot establish
+a meaningful heap/RSS improvement or a throughput guarantee. The deterministic
+pending-task reduction is separate evidence. See the raw comparison JSON; repeat
+representative workloads before making a release-readiness claim.
+
 ## Staging budget proposal
 
 For the next isolated staging comparison, start with heap `512m`, metaspace cap `256m`,

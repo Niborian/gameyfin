@@ -101,6 +101,16 @@ results in a separate evidence record; synthetic figures cannot complete those c
 
 ## Repeatable actual-image H2 fixture contract
 
+`scripts/rehearsal/seed-scan-fixture.py` generates these deterministic source files,
+offline SQL and a SHA-256/download-selection manifest into a new output directory.
+Its container fixture root is configurable; it does not open a database or start an
+image. CI retains the SQL/manifest as synthetic inputs, not execution evidence.
+Import `seed.sql` with the selected image's compatible H2 JAR only after its fresh
+schema has migrated and the fixture application has stopped. Keep the original
+database pristine for separate baseline/candidate restores. Source generation has
+been locally exercised, but actual SQL import/image scan must pass before treating
+the reusable runner as validated; the earlier one-time fixture remains separate.
+
 The next CI comparison must consume immutable baseline/candidate image references and
 their source revisions as inputs, rather than a mutable tag or any server-specific path.
 Run only on an isolated GitHub-hosted runner or explicitly authorized disposable staging

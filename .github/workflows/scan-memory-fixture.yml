@@ -26,6 +26,8 @@ jobs:
           distribution: temurin
           java-version: "25"
       - uses: gradle/actions/setup-gradle@v5
+      - name: Generate isolated actual-image scan inputs
+        run: python3 scripts/rehearsal/seed-scan-fixture.py --output app/build/reports/image-scan-fixture --container-fixture-root /fixture
       - name: Measure fixture recovery with explicit heap
         run: ./gradlew :app:test --tests org.gameyfin.app.libraries.ScanMemoryBenchmarkTest -PscanBenchmark=true -PscanBenchmarkHeap=512m -PscanBenchmarkGames=1000 -x :app:vaadinBuildFrontend --no-daemon --console=plain
       - uses: actions/upload-artifact@v7
@@ -34,4 +36,6 @@ jobs:
           name: synthetic-scan-memory-evidence
           path: |
             app/build/reports/scan-memory-benchmark.json
+            app/build/reports/image-scan-fixture/manifest.json
+            app/build/reports/image-scan-fixture/seed.sql
             app/build/test-results/test/TEST-org.gameyfin.app.libraries.ScanMemoryBenchmarkTest.xml

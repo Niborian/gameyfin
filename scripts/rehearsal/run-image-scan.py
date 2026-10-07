@@ -64,7 +64,9 @@ def main():
     def snapshot():
         # Ask Actuator only for the meters needed by this workload. Scraping all
         # binders also invokes unrelated datasource/filesystem gauges under load.
-        names = "jvm_memory_used_bytes,gameyfin_scans_active,gameyfin_scans_completed_total,gameyfin_scans_failed_total"
+        names = ("jvm_memory_used_bytes,gameyfin_scans_active,"
+            "gameyfin_scans_completed,gameyfin_scans_completed_total,"
+            "gameyfin_scans_failed,gameyfin_scans_failed_total")
         with telemetry.open(metrics + "?" + urllib.parse.urlencode({"includedNames": names}), timeout=10) as response:
             return response.read(2 * 1024 * 1024).decode()
     def metric(name, selector=None, text=None):

@@ -81,10 +81,10 @@ def forward_loopback(port, address, target_port):
 def docker(*args):
     return subprocess.run(["docker", *args], check=True, capture_output=True, text=True).stdout.strip()
 
-def request(url, body=None, headers=None, opener=None):
+def request(url, body=None, headers=None, opener=None, timeout=10):
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(url, data=data, headers=headers or {})
-    with (opener or urllib.request.build_opener()).open(req, timeout=10) as response:
+    with (opener or urllib.request.build_opener()).open(req, timeout=timeout) as response:
         result = response.read().decode()
         return json.loads(result) if result and result[0] in "[{" else result
 
@@ -124,7 +124,9 @@ try:
         diagnostic = docker("logs", "--tail", "80", containers[1])
         print(diagnostic.replace(key, "[masked]").replace(password, "[masked]"))
         raise RuntimeError("Prowlarr did not become ready")
-    schemas = request("http://127.0.0.1:39696/api/v1/indexer/schema", headers=api_headers)
+    # First schema load may wait for the vendor definition-update attempt to
+    # fail on the deliberately no-egress network. Bound setup, not app calls.
+    schemas = request("http://127.0.0.1:39696/api/v1/indexer/schema", headers=api_headers, timeout=90)
     indexer = next(x for x in schemas if x["implementation"] == "Torznab")
     indexer.update(name="Lawful synthetic fixture", enable=True, priority=25)
     for field in indexer["fields"]:

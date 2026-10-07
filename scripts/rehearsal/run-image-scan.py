@@ -61,8 +61,11 @@ def main():
         value = opener.open(urllib.request.Request(base + path,
             json.dumps(body).encode() if body is not None else None, headers), timeout=30).read()
         return value
-    def metric(name, selector=None):
-        text = urllib.request.urlopen(metrics, timeout=10).read().decode()
+    def snapshot():
+        with telemetry.open(metrics, timeout=10) as response:
+            return response.read(2 * 1024 * 1024).decode()
+    def metric(name, selector=None, text=None):
+        if text is None: text = snapshot()
         return sum(float(line.rsplit(" ", 1)[1]) for line in text.splitlines()
             if (line.startswith(name + "{") or line.startswith(name + " "))
             and (selector is None or selector in line))
@@ -105,7 +108,10 @@ def main():
             "--env-file", str(env), *mounts, args.image)
         ip = json.loads(docker("inspect", name))[0]["NetworkSettings"]["Networks"][network]["IPAddress"]
         base, metrics = f"http://{ip}:8080", f"http://{ip}:8081/actuator/prometheus"
-        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        # All targets are exact disposable internal IPs, never ambient HTTP proxies.
+        telemetry = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
+            urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
         def ready():
             for _ in range(180):
                 try:
@@ -160,14 +166,16 @@ def main():
             pid = java_pids[0]
             request("/connect/LibraryEndpoint/triggerScan", {"scanType": "FULL", "libraryIds": [27001,27002,27003,27004]})
             while time.monotonic() - started < 180:
-                peak_heap = max(peak_heap, metric("jvm_memory_used_bytes", 'area="heap"'))
+                sample = snapshot()
+                peak_heap = max(peak_heap, metric("jvm_memory_used_bytes", 'area="heap"', sample))
                 status = Path(f"/proc/{pid}/status").read_text()
                 resident = re.search(r"VmRSS:\s+(\d+)", status)
                 if not resident: raise RuntimeError("RSS unavailable; do not fabricate peak evidence")
                 peak_rss = max(peak_rss, int(resident.group(1)) * 1024)
-                done, errors = metric("gameyfin_scans_completed_total") - completed, metric("gameyfin_scans_failed_total") - failed
+                done = metric("gameyfin_scans_completed_total", text=sample) - completed
+                errors = metric("gameyfin_scans_failed_total", text=sample) - failed
                 if done + errors >= 4: break
-                time.sleep(0.1)
+                time.sleep(0.5)
             else: raise RuntimeError("Scan timed out")
             if errors: raise RuntimeError("Unexpected scan failure")
             games = json.loads(request("/connect/GameEndpoint/getAll", {}))
@@ -249,7 +257,7 @@ def main():
         final_state = json.loads(docker("inspect", name))[0]
         report["restartCount"] = final_state["RestartCount"]
         report["oomKilled"] = final_state["State"]["OOMKilled"]
-        report["health"] = json.loads(urllib.request.urlopen(metrics.replace("prometheus", "health"), timeout=10).read())["status"]
+        report["health"] = json.loads(telemetry.open(metrics.replace("prometheus", "health"), timeout=10).read())["status"]
         application_log = subprocess.run([*docker_command, "logs", name], text=True, capture_output=True, check=True)
         log_lines = (application_log.stdout + application_log.stderr).splitlines()
         report["errorLogLineCount"] = sum(bool(re.search(r"\bERROR\b", line)) for line in log_lines)
@@ -259,6 +267,26 @@ def main():
         report["remainingGaps"] = ["production acceptance"] + ([] if args.interrupt_scan else ["failure/recovery"])
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, indent=2) + "\n")
+    except Exception as error:
+        # Preserve bounded diagnostics before exact cleanup, without log bodies,
+        # runtime environment, passwords, tokens or command-line arguments.
+        report["failureType"] = type(error).__name__
+        state = subprocess.run([*docker_command, "inspect", name], capture_output=True, text=True, timeout=15)
+        if state.returncode == 0:
+            inspected = json.loads(state.stdout)[0]
+            report["failureContainerState"] = {key: inspected["State"].get(key)
+                for key in ("Status", "Running", "OOMKilled", "ExitCode")}
+            logs = subprocess.run([*docker_command, "logs", "--tail", "200", name], capture_output=True, text=True, timeout=15)
+            lines = (logs.stdout + logs.stderr).splitlines()
+            report["failureLogCounts"] = {kind: sum(kind in line for line in lines)
+                for kind in ("ERROR", "OutOfMemoryError", "SQLException", "HikariPool", "TimeoutException")}
+            threads = subprocess.run([*docker_command, "exec", name, "sh", "-c",
+                "jcmd $(pgrep -o java) Thread.print"], capture_output=True, text=True, timeout=15)
+            report["failureThreadFrames"] = [line.strip() for line in threads.stdout.splitlines()
+                if re.match(r"\s+(?:java.lang.Thread.State:|at (?:org.gameyfin\.|org.h2\.|com.zaxxer.hikari\.|io.micrometer\.))", line)][:250]
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(report, indent=2) + "\n")
+        raise
     finally:
         subprocess.run([*docker_command, "rm", "-f", name], capture_output=True)
         subprocess.run([*docker_command, "network", "rm", network], capture_output=True)

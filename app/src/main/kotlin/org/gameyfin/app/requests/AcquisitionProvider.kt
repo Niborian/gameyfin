@@ -187,10 +187,12 @@ class AcquisitionProvider(
     private fun get(origin: String, path: String, prowlarr: Boolean = false): String {
         val builder = HttpRequest.newBuilder(URI(origin.trimEnd('/') + path)).timeout(Duration.ofSeconds(15)).GET()
         if (prowlarr) builder.header("X-Api-Key", settings.prowlarrApiKey)
+        else builder.header("Referer", settings.qbittorrentUrl.trimEnd('/'))
         return send(builder.build(), prowlarr)
     }
 
     private fun post(path: String, fields: Map<String, String>): String = send(HttpRequest.newBuilder(URI(settings.qbittorrentUrl.trimEnd('/') + path))
+        .header("Referer", settings.qbittorrentUrl.trimEnd('/'))
         .timeout(Duration.ofSeconds(15)).header("Content-Type", "application/x-www-form-urlencoded")
         .POST(HttpRequest.BodyPublishers.ofString(fields.entries.joinToString("&") { "${encode(it.key)}=${encode(it.value)}" })).build())
 

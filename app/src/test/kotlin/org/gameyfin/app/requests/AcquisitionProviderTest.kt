@@ -43,6 +43,7 @@ class AcquisitionProviderTest {
                     """[{"indexerId":2,"title":"Open source fixture","magnetUrl":"magnet:?xt=urn:btih:$hash"},{"indexerId":3,"title":"Unapproved","magnetUrl":"magnet:?xt=urn:btih:${"b".repeat(40)}"},{"indexerId":2,"title":"URL only","downloadUrl":"https://invalid.example/torrent"}]"""
                 }
                 "/api/v2/auth/login" -> {
+                    assertEquals("http://127.0.0.1:${exchange.localAddress.port}", exchange.requestHeaders.getFirst("Referer"))
                     assertEquals("synthetic-user", fields["username"])
                     assertEquals("synthetic-password", fields["password"])
                     assertNull(exchange.requestHeaders.getFirst("X-Api-Key"))

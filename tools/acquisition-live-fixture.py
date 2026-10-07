@@ -82,13 +82,20 @@ try:
             raise RuntimeError("Unexpected created container identity")
         containers.append(container_id)
     api_headers = {"X-Api-Key": key, "Content-Type": "application/json"}
+    readiness_failure = None
     for _ in range(90):
         try:
             request("http://127.0.0.1:39696/api/v1/system/status", headers=api_headers)
             break
-        except Exception:
+        except Exception as failure:
+            readiness_failure = str(failure)
             time.sleep(2)
     else:
+        print("Prowlarr readiness failure: " + str(readiness_failure).replace(key, "[masked]").replace(password, "[masked]"))
+        inspection = json.loads(docker("inspect", containers[1]))[0]
+        print("Own Prowlarr state/port bindings:", inspection["State"]["Status"], inspection["NetworkSettings"]["Ports"])
+        diagnostic = docker("logs", "--tail", "80", containers[1])
+        print(diagnostic.replace(key, "[masked]").replace(password, "[masked]"))
         raise RuntimeError("Prowlarr did not become ready")
     schemas = request("http://127.0.0.1:39696/api/v1/indexer/schema", headers=api_headers)
     indexer = next(x for x in schemas if x["implementation"] == "Torznab")

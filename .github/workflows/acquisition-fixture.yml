@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: acquisition-fixture-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   isolated-pair:
     runs-on: ubuntu-24.04

@@ -6,7 +6,10 @@ import json
 import os
 from pathlib import Path
 import secrets
+import select
 import shutil
+import socket
+import socketserver
 import subprocess
 import tempfile
 import threading
@@ -55,7 +58,25 @@ class Fixture(BaseHTTPRequestHandler):
 server = ThreadingHTTPServer(("0.0.0.0", 39697), Fixture)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 containers = []
+forwarders = []
 network_created = False
+
+def forward_loopback(port, address, target_port):
+    class Relay(socketserver.BaseRequestHandler):
+        def handle(self):
+            with socket.create_connection((address, target_port), timeout=10) as target:
+                self.request.settimeout(30); target.settimeout(30)
+                while True:
+                    readable, _, _ = select.select([self.request, target], [], [], 30)
+                    if not readable: return
+                    for source in readable:
+                        data = source.recv(65536)
+                        if not data: return
+                        (target if source is self.request else self.request).sendall(data)
+    relay = socketserver.ThreadingTCPServer(("127.0.0.1", port), Relay)
+    relay.daemon_threads = True
+    threading.Thread(target=relay.serve_forever, daemon=True).start()
+    forwarders.append(relay)
 
 def docker(*args):
     return subprocess.run(["docker", *args], check=True, capture_output=True, text=True).stdout.strip()
@@ -73,7 +94,7 @@ try:
     gateway = json.loads(docker("network", "inspect", prefix))[0]["IPAM"]["Config"][0]["Gateway"]
     for role, image, port, target, config in (("qb", QB, "39695:8080", "/downloads", root / "qb"), ("prowlarr", PROWLARR, "39696:9696", None, prowlarr)):
         name = prefix + "-" + role
-        args = ["run", "-d", "--name", name, "--network", prefix, "--add-host", "host.docker.internal:" + gateway, "--memory", "512m", "--cpus", "1", "-p", "127.0.0.1:" + port, "-e", "PUID=" + str(os.getuid()), "-e", "PGID=" + str(os.getgid()), "-v", str(config) + ":/config"]
+        args = ["run", "-d", "--name", name, "--network", prefix, "--add-host", "host.docker.internal:" + gateway, "--memory", "512m", "--cpus", "1", "-e", "PUID=" + str(os.getuid()), "-e", "PGID=" + str(os.getgid()), "-v", str(config) + ":/config"]
         if target:
             downloads = root / "downloads"; downloads.mkdir()
             args += ["-v", str(downloads) + ":" + target]
@@ -81,6 +102,12 @@ try:
         if not container_id or any(c not in "0123456789abcdef" for c in container_id):
             raise RuntimeError("Unexpected created container identity")
         containers.append(container_id)
+        inspection = json.loads(docker("inspect", container_id))[0]
+        address = inspection["NetworkSettings"]["Networks"][prefix]["IPAddress"]
+        local_port, container_port = map(int, port.split(":"))
+        # Internal networks intentionally have no published ports. The runner can
+        # reach its own bridge; only exact fixture targets get a loopback relay.
+        forward_loopback(local_port, address, container_port)
     api_headers = {"X-Api-Key": key, "Content-Type": "application/json"}
     readiness_failure = None
     for _ in range(90):
@@ -144,6 +171,8 @@ try:
         raise RuntimeError("Synthetic magnet unexpectedly created payload files")
     print("Real isolated qB5/Prowlarr scoped search/add/stop/resume/restart passed; no public provider or payload")
 finally:
+    for relay in forwarders:
+        relay.shutdown(); relay.server_close()
     cleanup_failures = []
     for container_id in containers:
         removed = subprocess.run(["docker", "rm", "-f", container_id], check=False, capture_output=True)

@@ -23,19 +23,16 @@ class GameVariantService(
         val desiredKeys = discovery.variants.map { VariantKey(it.name, it.version) }.toSet()
         game.variants.removeIf { it.scanManaged && VariantKey(it.name, it.version) !in desiredKeys }
 
-        val newestVersionByName = discovery.variants
-            .groupBy { it.name }
-            .mapValues { (_, variants) -> VariantVersionComparator.newest(variants.map { it.version }) }
-
-        val defaultKey = game.variants
-            .firstOrNull { it.defaultLocked && VariantKey(it.name, it.version) in desiredKeys }
-            ?.let { VariantKey(it.name, it.version) }
-            ?: selectDefaultVariant(discovery.variants)
+        val pinnedDefault = game.variants.firstOrNull { it.defaultLocked }
 
         discovery.variants.forEach { parsed ->
             val key = VariantKey(parsed.name, parsed.version)
-            val unmanagedVariantForPath = game.variants.firstOrNull { !it.scanManaged && it.path == parsed.path.toString() }
-            if (unmanagedVariantForPath != null) return@forEach
+            // An administrator-owned variant may have attached content outside the
+            // discovery root. A matching scanner key must not replace that content.
+            val unmanagedVariant = game.variants.firstOrNull {
+                !it.scanManaged && (it.path == parsed.path.toString() || VariantKey(it.name, it.version) == key)
+            }
+            if (unmanagedVariant != null) return@forEach
 
             val existing = game.variants.firstOrNull { VariantKey(it.name, it.version) == key }
                 ?: GameVariant(game = game, path = parsed.path.toString()).also { game.variants.add(it) }
@@ -58,10 +55,8 @@ class GameVariantService(
             }
             existing.launchArgs = parsed.launchArgs
             existing.patchInfo = parsed.patchInfo
-            existing.isLatestForVariant = newestVersionByName[parsed.name] == parsed.version
-            existing.isDefault = key == defaultKey
             existing.scanManaged = true
-            existing.linkStatus = if (variantLink.status == VariantLinkStatus.COPIED_FALLBACK || fallbackReasons.isNotEmpty()) {
+            existing.linkStatus = if (variantLink.status == VariantLinkStatus.COPIED_FALLBACK) {
                 VariantLinkStatus.COPIED_FALLBACK
             } else {
                 variantLink.status
@@ -70,6 +65,17 @@ class GameVariantService(
 
             syncContents(existing, parsed.contents, contentLinkResults)
         }
+
+        // Include attached versions outside discovery when deriving latest/default state.
+        game.variants.groupBy { it.name }.values.forEach { variants ->
+            val latest = VariantVersionComparator.newest(variants.map { it.version })
+            variants.forEach { it.isLatestForVariant = it.version == latest }
+        }
+        val normalVariants = game.variants.filter { it.name.equals("Normal", ignoreCase = true) }
+        val selectedDefault = pinnedDefault ?: normalVariants.ifEmpty { game.variants }.maxWithOrNull { first, second ->
+            VariantVersionComparator.compare(first.version, second.version)
+        }
+        game.variants.forEach { it.isDefault = it === selectedDefault }
 
         return gameRepository.save(game)
     }
@@ -111,15 +117,6 @@ class GameVariantService(
             LibraryStorageMode.DIRECT -> HardlinkMirrorService.LinkResult(source, VariantLinkStatus.DIRECT, null)
             LibraryStorageMode.HARDLINK_MIRROR -> hardlinkMirrorService.mirror(source, library, gamePath, targetName)
         }
-    }
-
-    private fun selectDefaultVariant(variants: List<ParsedVariantMetadata>): VariantKey? {
-        val normalVariants = variants.filter { it.name.equals("Normal", ignoreCase = true) }
-        val candidates = normalVariants.ifEmpty { variants }
-        val selected = candidates.maxWithOrNull { first, second ->
-            VariantVersionComparator.compare(first.version, second.version)
-        }
-        return selected?.let { VariantKey(it.name, it.version) }
     }
 
     private data class VariantKey(val name: String, val version: String)

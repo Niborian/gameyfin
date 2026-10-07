@@ -406,9 +406,11 @@ export default function GameView() {
                                 {selectedVariant.tags.map((tag) =>
                                     <Chip key={tag} size="sm" variant="flat">{tag}</Chip>
                                 )}
-                                {isAdmin(auth) && selectedVariant.linkStatus === VariantLinkStatus.COPIED_FALLBACK &&
+                                {isAdmin(auth) && (selectedVariant.linkFallbackReason || selectedVariant.linkStatus === VariantLinkStatus.COPIED_FALLBACK) &&
                                     <Tooltip content={selectedVariant.linkFallbackReason ?? "Hardlink failed; copied instead"}>
-                                        <Chip size="sm" color="warning" variant="flat">copied fallback</Chip>
+                                        <Chip size="sm" color="warning" variant="flat">
+                                            {selectedVariant.linkStatus === VariantLinkStatus.COPIED_FALLBACK ? "copied fallback" : "hardlink unavailable"}
+                                        </Chip>
                                     </Tooltip>
                                 }
                             </div>

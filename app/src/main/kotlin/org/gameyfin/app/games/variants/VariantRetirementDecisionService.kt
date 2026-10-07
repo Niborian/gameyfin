@@ -4,7 +4,6 @@ import org.gameyfin.app.core.security.getCurrentAuth
 import org.gameyfin.app.games.dto.SetVariantRetirementStateRequestDto
 import org.gameyfin.app.games.dto.VariantRetirementDecisionDto
 import org.gameyfin.app.games.entities.GameVariant
-import org.gameyfin.app.games.entities.VariantLinkStatus
 import org.gameyfin.app.games.entities.VariantRetirementDecision
 import org.gameyfin.app.games.entities.VariantRetirementState
 import org.gameyfin.app.games.extensions.toDto
@@ -13,7 +12,6 @@ import org.gameyfin.app.games.repositories.VariantRetirementDecisionRepository
 import org.springframework.data.repository.findByIdOrNull
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
-import java.nio.file.Path
 
 /**
  * Records application metadata only. This service deliberately contains no filesystem or torrent-client operation.
@@ -21,8 +19,7 @@ import java.nio.file.Path
 @Service
 class VariantRetirementDecisionService(
     private val gameRepository: GameRepository,
-    private val decisionRepository: VariantRetirementDecisionRepository,
-    private val hardlinkMirrorService: HardlinkMirrorService
+    private val decisionRepository: VariantRetirementDecisionRepository
 ) {
     @Transactional
     fun setState(gameId: Long, variantId: Long, request: SetVariantRetirementStateRequestDto): VariantRetirementDecisionDto {
@@ -63,12 +60,8 @@ class VariantRetirementDecisionService(
         require(variant.retirementState != VariantRetirementState.ARCHIVED) { "Variant is already archived" }
         require(!variant.isDefault && !variant.defaultLocked) { "Selected or pinned default variants cannot be archived" }
         require(!variant.isLatestForVariant) { "Latest variants cannot be archived" }
-        require(variant.linkStatus == VariantLinkStatus.HARDLINKED) { "Only hardlink-managed mirrors can be archived" }
-        require(hardlinkMirrorService.isManagedMirrorPath(Path.of(variant.path))) {
-            "Variant path is not inside the application-managed mirror root"
-        }
-        require(variant.contents.none { it.required || it.defaultSelected }) {
-            "Variants with selected or required content cannot be archived"
-        }
+        // Required/default-selected content describes this variant's download bundle, not a
+        // filesystem dependency. Hiding metadata preserves all content and its hardlinks.
+        // Direct sources may be hidden too; eligibility for deletion is a separate decision.
     }
 }

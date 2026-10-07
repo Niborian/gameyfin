@@ -24,7 +24,33 @@ import java.time.Instant
 class VariantRetirementPreviewServiceTest {
     private val gameRepository = mockk<GameRepository>()
     private val decisionRepository = mockk<VariantRetirementDecisionRepository>()
-    private val service = VariantRetirementPreviewService(gameRepository, decisionRepository)
+    private val policyRepository = mockk<org.gameyfin.app.libraries.LibraryRetentionPolicyRepository>() {
+        every { findByLibraryId(any()) } returns null
+    }
+    private val service = VariantRetirementPreviewService(gameRepository, decisionRepository, policyRepository)
+
+    @Test
+    fun `policy ranks numeric versions per variant name and retains pinned versions`() {
+        val library = Library(id = 1L, name = "Games")
+        val game = Game(id = 1L, library = library, metadata = GameMetadata(path = "/source"))
+        game.variants.addAll(listOf(
+            variant(game, 10L, "1.9", "/source/1.9", VariantLinkStatus.DIRECT),
+            variant(game, 11L, "1.10", "/source/1.10", VariantLinkStatus.DIRECT),
+            variant(game, 12L, "1.0", "/source/1.0", VariantLinkStatus.DIRECT).also { it.defaultLocked = true },
+            variant(game, 13L, "1.0", "/source/vr/1.0", VariantLinkStatus.DIRECT).also { it.name = "VR" }
+        ))
+        every { gameRepository.findByIdOrNull(1L) } returns game
+        every { decisionRepository.findAllByVariantIdOrderByDecidedAtAsc(any()) } returns emptyList()
+        every { policyRepository.findByLibraryId(1L) } returns org.gameyfin.app.libraries.entities.LibraryRetentionPolicy(
+            library = library, mode = org.gameyfin.app.libraries.entities.LibraryRetentionPolicyMode.KEEP_LATEST_N,
+            keepLatestCount = 1, updatedBy = "admin")
+
+        val previews = service.preview(1L).associateBy { it.variantId }
+        assertEquals(false, previews.getValue(10L).retainedByPolicy)
+        assertTrue(previews.getValue(11L).retainedByPolicy)
+        assertTrue(previews.getValue(12L).retainedByPolicy)
+        assertTrue(previews.getValue(13L).retainedByPolicy)
+    }
 
     @Test
     fun `preview retains direct sources and marks only superseded hardlink mirrors for review`() {

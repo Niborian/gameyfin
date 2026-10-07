@@ -26,5 +26,7 @@ data class VariantRetirementPreviewDto(
     val latestDecisionAt: Instant?,
     val latestDecisionState: VariantRetirementState?,
     val disposition: VariantRetirementDisposition,
-    val reason: String
+    val reason: String,
+    val retainedByPolicy: Boolean = true,
+    val policyReason: String = "Keep all versions"
 )

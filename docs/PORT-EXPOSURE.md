@@ -6,7 +6,7 @@ behavior have been verified. No TrueNAS configuration was changed by this work.
 ## Read-only inventory on 2026-10-07
 
 The live host listens on IPv4 wildcard and IPv6 wildcard for all three ports below.
-An unauthenticated request to `http://10.0.0.200:31005/` returned HTTP 302 with its
+An unauthenticated request to the observed direct HTTP endpoint returned HTTP 302 with its
 login location on the same direct address. This confirms application login, not a
 network restriction or an Authelia check. The observation does not establish public
 Internet reachability or router/firewall state.
@@ -34,6 +34,10 @@ disconnect that proxy. Port 8081 remains unpublished for internal health/metrics
 volumes, no library mounts, no backend host ports, and one loopback-only proxy port.
 Set `GAMEYFIN_STAGING_IMAGE` to a reviewed candidate digest and generate a separate
 `GAMEYFIN_STAGING_APP_KEY`. Start it with `docker compose -f docker/exposure-fixture/compose.yml up -d`.
+The loopback proxy port is configurable with `GAMEYFIN_STAGING_PORT` (default 39080).
+`GAMEYFIN_STAGING_BASE_URL` optionally overrides the application URL for the test proxy.
+Neither value changes production settings. Run this fixture only on an authorized
+staging server or in CI; local Docker is not required for development checks.
 Complete initial setup with a staging-only administrator and keep anonymous access disabled.
 Run `./scripts/verify-exposure-fixture.ps1` after setup. Its checks verify the proxy login
 page, anonymous root redirect, management denial, and backend port bindings. Use

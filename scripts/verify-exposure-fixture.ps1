@@ -6,7 +6,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Unable to render staging Compose configuration
 $taskConfig = ($taskConfigText -join "`n") | ConvertFrom-Json
 if ($taskConfig.services.gameyfin.ports) { throw 'Gameyfin backend must not publish host ports' }
 $taskPublished = @($taskConfig.services.proxy.ports)
-if ($taskPublished.Count -ne 1 -or $taskPublished[0].host_ip -ne '127.0.0.1' -or $taskPublished[0].published -ne '39080') {
+if ($taskPublished.Count -ne 1 -or $taskPublished[0].host_ip -ne '127.0.0.1' -or
+    [int]$taskPublished[0].published -lt 1 -or [int]$taskPublished[0].published -gt 65535) {
     throw 'Proxy must publish only the intended loopback fixture port'
 }
 if ($taskConfig.services.gameyfin.volumes | Where-Object { $_.type -ne 'volume' }) {
@@ -18,7 +19,10 @@ if ($LASTEXITCODE -ne 0 -or -not $taskBackend) { throw 'Start the isolated fixtu
 $taskBindings = & docker inspect --format '{{json .HostConfig.PortBindings}}' $taskBackend
 if ($LASTEXITCODE -ne 0 -or ($taskBindings -ne 'null' -and $taskBindings -ne '{}')) { throw 'Unexpected backend host port binding' }
 function Get-FixtureStatus([string]$Path) {
-    $taskStatus = & curl.exe --silent --show-error --max-time 15 --output NUL --write-out '%{http_code}' "http://127.0.0.1:39080$Path"
+    $taskCurl = (Get-Command curl -CommandType Application -ErrorAction Stop).Source
+    $taskNull = if ($IsWindows) { 'NUL' } else { '/dev/null' }
+    $taskPort = [int]$taskPublished[0].published
+    $taskStatus = & $taskCurl --silent --show-error --max-time 15 --output $taskNull --write-out '%{http_code}' "http://127.0.0.1:$taskPort$Path"
     if ($LASTEXITCODE -ne 0) { throw "Fixture request failed: $Path" }
     return $taskStatus
 }

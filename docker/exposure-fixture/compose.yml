@@ -4,7 +4,7 @@ services:
     image: ${GAMEYFIN_STAGING_IMAGE:?Set a reviewed candidate image or digest}
     environment:
       APP_KEY: ${GAMEYFIN_STAGING_APP_KEY:?Generate a separate staging application key}
-      APP_URL: http://localhost:39080
+      APP_URL: ${GAMEYFIN_STAGING_BASE_URL:-http://localhost:${GAMEYFIN_STAGING_PORT:-39080}}
     volumes:
       - fixture-db:/opt/gameyfin/db
       - fixture-data:/opt/gameyfin/data
@@ -15,7 +15,7 @@ services:
   proxy:
     image: nginx:1.28-alpine
     ports:
-      - "127.0.0.1:39080:8080"
+      - "127.0.0.1:${GAMEYFIN_STAGING_PORT:-39080}:8080"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks: [fixture]

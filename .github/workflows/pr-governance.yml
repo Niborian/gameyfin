@@ -18,9 +18,10 @@ jobs:
         with:
           script: |
             const body = context.payload.pull_request.body || "";
-            const reference = body.match(/(?:close[sd]?|fixe[sd]?|resolve[sd]?)\s+#(\d+)/i);
+            // Partial implementation PRs must retain the parent acceptance issue.
+            const reference = body.match(/(?:close[sd]?|fixe[sd]?|resolve[sd]?|refs)\s+#(\d+)/i);
             if (!reference) {
-              core.setFailed("Add 'Closes #<issue>' to the PR description.");
+              core.setFailed("Add 'Closes #<issue>' or 'Refs #<issue>' to the PR description.");
               return;
             }
 

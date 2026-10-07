@@ -143,3 +143,66 @@ fixture remains valuable but mocks persistence; it is not this actual-image work
 Passing this contract would establish reproducible synthetic image behavior, not the
 controlled real-library evidence or interrupted-production-record checks needed to
 close #27.
+
+## Reusable actual-image runner and PR gate
+
+`scripts/rehearsal/run-image-scan.py` now creates an isolated synthetic H2 application,
+imports the validated seed while stopped, runs cold/repeated full scans, and optionally
+interrupts only its own container after observing an active scan. It restarts the same
+image and verifies all 132 game records, exact selected archive entries/bytes/estimates,
+unchanged source hashes, heap/RSS samples and health. A reviewed candidate must retain
+exactly one default per game; the baseline's unknown source provenance is recorded
+explicitly, not replaced by a fictitious revision. No production database is an input.
+
+The runner accepts image identity, source revision, matching in-image H2 JAR and plugin
+paths. No images are pulled or published. Runtime user/group and privileged Docker
+prefix are configurable. An optional reviewed external probe receives only synthetic
+fixture context on stdin and temporary account credentials through its child environment.
+Containers/networks are uniquely named and removal is verified; private synthetic leaves
+are printed for bounded inspected cleanup. Never use broad Docker pruning.
+
+The PR image workflow now runs this candidate-only gate after loading its own checked
+archive. Its two plugin JARs are built from exact source trees matching official upstream
+commit `005a1611ce4495e9080e143ec4bc2f1f0b91e633`:
+Steam `52104d217dcfa24fb6bfd54ee7f6aed6c239b557` and direct download
+`5ac40f7f9b23c7cc67f6b7dee61a211dd395041a`. Plugin artifact SHA-256 values are recorded
+per run. Normal administrator plugin enablement is used; signature verification is not
+disabled. CI uses no production plugin files, credentials or private baseline image.
+The new CI gate still needs a passing exact-head run before it is considered validated.
+
+A server-only paired run on 2026-10-07 exercised the reviewed candidate source
+`36896a1d048e3c3a26cd599656eeb8d408768e0e`, image
+`sha256:483c612e5d6d975096a1fa480a479d856906934c605ab4edc8e5e30eaeba2f32`.
+The CI archive SHA-256 was
+`03e7d4f1ab2a219308db15ff34c9347137feea17723b9336893bbdf8be6d0a7c`.
+The baseline retained its already recorded local image ID and unknown source revision;
+its image label is `26.04`, despite the running UI reporting `2.4.0`.
+Both used the same generated fixture and constraints, but independently initialized
+schemas, not a copied production database or a production upgrade rehearsal.
+
+| Image / phase | Wall seconds | Sampled heap bytes | Sampled JVM RSS bytes | Default variants |
+| --- | ---: | ---: | ---: | ---: |
+| Baseline / cold | 8.911 | 159,375,400 | 540,971,008 | 264 |
+| Candidate / cold | 8.777 | 161,432,664 | 540,594,176 | 132 |
+| Baseline / repeat | 3.744 | 164,129,088 | 547,610,624 | 264 |
+| Candidate / repeat | 3.536 | 150,261,608 | 546,844,672 | 132 |
+| Baseline / forced-interruption recovery | 8.867 | 151,716,272 | 537,178,112 | 264 |
+| Candidate / forced-interruption recovery | 8.843 | 160,888,000 | 547,774,464 | 132 |
+
+Every full scan completed four libraries with zero failed-library increments. The
+interruption test observed one active library in the baseline and three in the candidate
+before killing only the disposable process. Both recovered to 132 games, health `UP`,
+no recorded container OOM kill and no automatic restart. Both exact grouped downloads
+contained `Grouped base/base-a.bin` and `Grouped base/base-b.bin`; selecting the optional
+patch added only `Optional patch.bin`. Estimates were 32,768 and 49,152 bytes and member
+SHA-256 hashes matched the source manifest on both images. An earlier optional-selection
+failure was a harness naming mistake (`patch.bin` versus the content-derived archive
+name), not an application defect. All 924 source path/hash pairs remained unchanged.
+The candidate additionally passed the shared isolated proxy's two selected downloads,
+authenticated identity and logout-to-anonymous checks under issue #29.
+
+This one paired run shows comparable resource use, not a proven total memory saving or
+production regression guarantee. The meaningful verified improvement is retaining one
+pinned default per game instead of two. The bounded outstanding-task proof remains
+separate. These synthetic results cannot close the real-library and interrupted-production
+record criteria under #19/#27 or replace the consistent production backup under #26.

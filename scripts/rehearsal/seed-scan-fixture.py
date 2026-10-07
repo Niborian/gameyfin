@@ -54,7 +54,10 @@ def generate(output: Path, container_root: str):
             games.append({"gameId": game_id, "variantId": variant_id, "requiredContentId": base_id,
                           "optionalContentId": base_id + 1, "path": path,
                           "requiredMembers": [f"{relative}/base-a.bin", f"{relative}/base-b.bin"],
-                          "optionalMembers": [f"{relative}/patch.bin"]})
+                          "optionalMembers": [f"{relative}/patch.bin"],
+                          "requiredArchiveMembers": {"Grouped base/base-a.bin": f"{relative}/base-a.bin",
+                              "Grouped base/base-b.bin": f"{relative}/base-b.bin"},
+                          "optionalArchiveMembers": {"Optional patch.bin": f"{relative}/patch.bin"}})
     for file in sorted(sources.rglob("*")):
         if file.is_file():
             manifest[file.relative_to(sources).as_posix()] = hashlib.sha256(file.read_bytes()).hexdigest()

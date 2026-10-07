@@ -8,6 +8,7 @@ on:
       - app/src/main/kotlin/org/gameyfin/app/core/filesystem/**
       - app/src/test/kotlin/org/gameyfin/app/libraries/ScanMemoryBenchmarkTest.kt
       - app/build.gradle.kts
+      - scripts/rehearsal/**
       - .github/workflows/scan-memory-fixture.yml
   workflow_dispatch:
 

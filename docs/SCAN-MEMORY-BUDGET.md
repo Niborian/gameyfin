@@ -98,3 +98,34 @@ Capture the candidate digest and full JVM arguments, sample both heap and contai
 record duration/throughput and scan errors, rehearse backup/restore under #26, and rerun
 the previously interrupted scan with explicit affected-record counts. Keep real-library
 results in a separate evidence record; synthetic figures cannot complete those criteria.
+
+## Repeatable actual-image H2 fixture contract
+
+The next CI comparison must consume immutable baseline/candidate image references and
+their source revisions as inputs, rather than a mutable tag or any server-specific path.
+Run only on an isolated GitHub-hosted runner or explicitly authorized disposable staging
+host. Do not mount production databases, libraries, plugins or torrent paths. Give each
+run unique resource names, fresh private application keys and credentials, no published
+ports, bounded CPUs/memory and no external network; remove only its recorded resources.
+
+Use the same synthetic 104/27/1/0 library distribution for both images, pinned defaults,
+two discoverable versions, grouped required base files and an unchecked optional patch.
+Capture a pristine stopped-service H2/data snapshot after fixture initialization, then
+restore that snapshot separately for each run with verified runtime ownership. Do not
+reuse an already scanned database or seed while an application owns the database.
+
+Record cold and repeated full scans, peak sampled heap and process/container RSS,
+completion duration, throughput, failed/completed library counts, restarts and health.
+Assert exactly one pinned default per game, selected archive entries and SHA-256 bytes,
+and unchanged source path/hash inventories. Test scan failure and recovery only through
+a fixture-specific controlled fault (for example inaccessible synthetic scan input),
+restore the input, rerun and compare all affected records; never corrupt or manipulate
+a live H2 database to manufacture failure. A fixture that does not observe the intended
+failure must fail its assertion, not label a successful scan as recovery.
+
+Upload sanitized metrics, assertions, source revisions and image identities. Keep keys,
+cookies, database rows and application-data backups private. The current opt-in JVM
+fixture remains valuable but mocks persistence; it is not this actual-image workflow.
+Passing this contract would establish reproducible synthetic image behavior, not the
+controlled real-library evidence or interrupted-production-record checks needed to
+close #27.

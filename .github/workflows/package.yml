@@ -60,6 +60,12 @@ jobs:
       - name: Run automated tests
         run: ./gradlew :app:test --no-daemon --console=plain
 
+      - name: Verify bounded synthetic proxy smoke validators
+        run: |
+          python3 -B scripts/test-proxy-download-smoke.py
+          python3 -B scripts/test-proxy-fixture-hook.py
+          pwsh -NoProfile -File scripts/test-exposure-fixture-bindings.ps1
+
       - name: Require Linux hardlink and variant scan fixture evidence
         run: |
           python3 - <<'PY'

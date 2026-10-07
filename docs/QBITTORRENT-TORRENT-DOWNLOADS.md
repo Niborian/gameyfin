@@ -62,16 +62,17 @@ tests. It is not the qBittorrent implementation or proof of feature parity; #112
 Only after parity is evidenced should a separate reviewed cutover consider disabling or
 removing the original plugin. This work does not authorize that cutover or promote `latest`.
 
-## Snapshot and actual creator foundation
+## Actual creator validation foundation
 
-`SelectionSnapshotBuilder` is deliberately not wired to a production provider. A caller
-must supply a private, application-owned cache, byte/entry/time budgets, and its own
-capacity reservation and retention lifecycle. Each operation makes new copies, traverses
-source directories through no-follow directory descriptors, verifies source file identities
-and copied SHA-256 bytes, and atomically publishes only the new owned leaf. Platforms
-without `SecureDirectoryStream` fail closed. Filesystem snapshots are not assumed immutable
-against an administrator: the future dedicated qB client must receive this cache read-only,
-and Gameyfin must retain ownership until all owned seeds are stopped and reconciled.
+Safe production snapshot acquisition remains unsolved. The proposed copy builder was
+removed after review: descriptor-anchored traversal and repeated hashes did not establish
+the identity of an opened file across a stat/open substitution race, and path-based cache
+writes did not enforce stable exclusive ownership. No source-copy safety guarantee is
+provided by this foundation. Synthetic fixture copies below are newly created test inputs,
+not proof of safe acquisition from concurrently mutable library files. A future solution
+must enforce opened-file identity and cache ownership, including deterministic mid-copy
+failure cleanup; size preflight is advisory and cooperative timeout checks do not impose
+a hard bound on blocked filesystem I/O. No rushed native implementation is implied.
 
 Run `python3 tools/qbittorrent-creator-fixture.py --staging-ack` only on a disposable CI
 runner or an explicitly authorized staging host with the pinned image already loaded.
@@ -97,9 +98,9 @@ rejected the incomplete metadata. The fixture retains that negative case; a futu
 must reject such a selection rather than silently deliver an incomplete torrent. Supporting
 all hidden-file selections requires separate verified resolution before claiming parity.
 
-The dedicated CI workflow requires every snapshot test to execute on Linux with no skips
-and repeats the real pinned creator rehearsal. Windows tests intentionally skip descriptor
-copy cases, so a local Windows pass alone is not acceptance. Still missing for #112: provider
+The dedicated CI workflow exercises the bounded parser and repeats the real pinned creator
+rehearsal. It does not test production snapshot acquisition. Still missing for #112: safe
+snapshot acquisition, provider
 configuration and wiring, persisted idempotent seeding ownership, second-client transfer,
 restart/recovery, tracker admission/revocation, resource/retention evidence, and reviewed
 opt-in cutover. The original plugin and existing download routes remain unchanged.

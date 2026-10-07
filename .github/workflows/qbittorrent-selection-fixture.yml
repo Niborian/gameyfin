@@ -1,8 +1,8 @@
-name: Isolated qB exact-selection foundation
+name: Isolated qB creator validation foundation
 on:
   pull_request:
     branches: [main]
-    paths: ['app/src/**/SelectionSnapshotBuilder*', 'tools/qbittorrent-creator-fixture.py', 'tools/test_qbittorrent_creator_fixture.py', '.github/workflows/qbittorrent-selection-fixture.yml']
+    paths: ['tools/qbittorrent-creator-fixture.py', 'tools/test_qbittorrent_creator_fixture.py', '.github/workflows/qbittorrent-selection-fixture.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -15,30 +15,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '25'
-      - uses: gradle/actions/setup-gradle@v5
-      - name: Execute Linux descriptor-anchored snapshot tests
-        run: |
-          chmod +x gradlew
-          ./gradlew :app:test --tests org.gameyfin.app.core.download.files.SelectionSnapshotBuilderTest -x :app:vaadinBuildFrontend --no-daemon
-          python3 - <<'PY'
-          import xml.etree.ElementTree as ET
-          root = ET.parse('app/build/test-results/test/TEST-org.gameyfin.app.core.download.files.SelectionSnapshotBuilderTest.xml').getroot()
-          assert int(root.attrib['tests']) >= 5
-          assert all(int(root.attrib.get(key, '0')) == 0 for key in ('failures', 'errors', 'skipped'))
-          PY
       - name: Validate bounded metadata parser negative cases
         run: python3 -m unittest discover -s tools -p test_qbittorrent_creator_fixture.py
       - name: Load reviewed immutable synthetic creator image
         run: docker pull ghcr.io/hotio/qbittorrent@sha256:91d59985ed65fe3504b405b51e6d586524c2189a6cffd56324101b70fe094bde
       - name: Verify exact metadata without adding or seeding torrents
         run: python3 tools/qbittorrent-creator-fixture.py --staging-ack
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: qb-selection-snapshot-test-results
-          path: app/build/test-results/test/TEST-*SelectionSnapshotBuilderTest.xml
-          retention-days: 7

@@ -15,6 +15,10 @@ Gameyfin turns your game folders into a browsable library with metadata, artwork
 and downloads. This fork extends it for versioned libraries, grouped content,
 and workflows that leave torrent-managed sources in place.
 
+This is a **personal Niborian fork**, made primarily for my own game library and
+workflow. Gameyfin itself is the work of the [original project and its contributors](https://github.com/gameyfin/gameyfin).
+This fork is not intended to compete with, represent, or replace that project.
+
 > [!IMPORTANT]
 > This is an **unofficial, experimental fork**, not an upstream release.
 > Report fork problems [here](https://github.com/Niborian/gameyfin/issues).
@@ -106,8 +110,9 @@ is proven. No production replacement is implied.
 
 Keep PRs focused, linked to milestone-backed issues, and supported by tests or
 acceptance evidence. Preserve source paths and distinguish fixture results from
-production claims. Useful changes are available upstream under [AGPL-3.0](LICENSE);
-coordinate upstream contributions with its maintainers.
+production claims. Useful changes are available upstream under [AGPL-3.0](LICENSE.md);
+coordinate upstream contributions with its maintainers. The original maintainers
+are welcome to adopt useful changes from this fork under the same license.
 
 Built with Kotlin, Spring Boot, Vaadin Hilla/React, PF4J, and H2. Inspired by
 [Jellyfin](https://jellyfin.org/).

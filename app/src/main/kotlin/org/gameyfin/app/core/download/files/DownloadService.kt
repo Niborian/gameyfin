@@ -18,6 +18,9 @@ import org.gameyfin.app.games.entities.effectivePaths
 import org.gameyfin.pluginapi.download.Download
 import org.gameyfin.pluginapi.download.FileDownload
 import org.gameyfin.pluginapi.download.DownloadProvider
+import org.gameyfin.pluginapi.download.DownloadSelection
+import org.gameyfin.pluginapi.download.DownloadSelectionContent
+import org.gameyfin.pluginapi.download.SelectionAwareDownloadProvider
 import org.springframework.stereotype.Service
 import java.io.IOException
 import java.io.InputStream
@@ -87,6 +90,28 @@ class DownloadService(
     fun getDownload(game: Game, provider: String, variantId: Long?, contentIds: List<Long>?): Download {
         val variant = selectVariant(game, variantId)
         val selectedContents = selectContents(variant, contentIds)
+
+        val selectedProvider = downloadPlugins.firstOrNull { it.javaClass.name == provider }
+        if (selectedProvider is SelectionAwareDownloadProvider) {
+            val contentRoot = requireNotNull(Path.of(variant.path).toRealPath().parent) { "Variant has no content root" }
+            val selection = DownloadSelection(selectedContents.map { content ->
+                DownloadSelectionContent(content.name, content.effectivePaths().map {
+                    Path.of(it).toRealPath().also { resolved ->
+                        require(resolved.startsWith(contentRoot)) { "Selected path is outside variant content root" }
+                    }
+                })
+            })
+            // Retain both catalog aliases and canonical paths against retirement races.
+            val sourcePaths = selectedContents.flatMap { it.effectivePaths() }.map { Path.of(it) }
+            val lease = downloadPathLeases.acquire(sourcePaths + selection.contents.flatMap { it.paths })
+            try {
+                val download = selectedProvider.download(selection)
+                return if (download is FileDownload) FileDownload(
+                    data = downloadPathLeases.guard(download.data, lease),
+                    fileExtension = download.fileExtension, size = download.size
+                ) else { lease.close(); download }
+            } catch (error: Exception) { lease.close(); throw error }
+        }
 
         if (selectedContents.size == 1 &&
             selectedContents.single().effectivePaths().size == 1 &&

@@ -62,13 +62,18 @@ def main():
             json.dumps(body).encode() if body is not None else None, headers), timeout=30).read()
         return value
     def snapshot():
-        with telemetry.open(metrics, timeout=10) as response:
+        # Ask Actuator only for the meters needed by this workload. Scraping all
+        # binders also invokes unrelated datasource/filesystem gauges under load.
+        names = "jvm_memory_used_bytes,gameyfin_scans_active,gameyfin_scans_completed_total,gameyfin_scans_failed_total"
+        with telemetry.open(metrics + "?" + urllib.parse.urlencode({"includedNames": names}), timeout=10) as response:
             return response.read(2 * 1024 * 1024).decode()
     def metric(name, selector=None, text=None):
         if text is None: text = snapshot()
-        return sum(float(line.rsplit(" ", 1)[1]) for line in text.splitlines()
+        values = [float(line.rsplit(" ", 1)[1]) for line in text.splitlines()
             if (line.startswith(name + "{") or line.startswith(name + " "))
-            and (selector is None or selector in line))
+            and (selector is None or selector in line)]
+        if not values: raise RuntimeError("Required synthetic telemetry meter absent: " + name)
+        return sum(values)
     report = {"scope": "synthetic actual-image scan; not production acceptance",
         "image": args.image, "sourceRevision": args.source_revision,
         "sourceProvenanceKnown": args.source_revision != "baseline-unknown",
@@ -280,6 +285,9 @@ def main():
             lines = (logs.stdout + logs.stderr).splitlines()
             report["failureLogCounts"] = {kind: sum(kind in line for line in lines)
                 for kind in ("ERROR", "OutOfMemoryError", "SQLException", "HikariPool", "TimeoutException")}
+            report["offlineMetadataMissLogCount"] = sum("No results found for originalIds: {}" in line for line in lines)
+            report["failureExceptionClasses"] = sorted(set(re.findall(
+                r"\b(?:[a-z][\w$]*\.)+[A-Z][\w$]*(?:Exception|Error)\b", "\n".join(lines))))[:30]
             # The production-shaped image contains a JRE, not jcmd. Tini forwards
             # SIGQUIT to this fixture JVM, which emits its diagnostic thread dump.
             subprocess.run([*docker_command, "kill", "--signal", "QUIT", name],

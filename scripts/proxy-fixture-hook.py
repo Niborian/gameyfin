@@ -37,6 +37,7 @@ def require_internal(network):
 def forwarder(ip):
     class Relay(socketserver.BaseRequestHandler):
         def handle(self):
+            self.request.settimeout(10)
             with socket.create_connection((ip, 8080), timeout=10) as upstream:
                 pair = (self.request, upstream)
                 deadline = time.monotonic() + 180

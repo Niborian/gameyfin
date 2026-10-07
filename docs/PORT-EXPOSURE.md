@@ -141,12 +141,17 @@ execution and browser WebSocket evidence remain separate acceptance requirements
 scan runner while its synthetic application and account are alive. It reads a JSON
 context on stdin containing the generated fixture manifest object, backend container
 name, internal network name, direct provider key, and immutable cached nginx image ID.
-The names must match the runner's generated synthetic-resource format. It creates one
-uniquely named proxy with a dynamically assigned IPv4-loopback port and a 128 MiB limit,
+The names must match the runner's generated synthetic-resource format, and Docker
+inspection must confirm the actual network is internal. It creates one uniquely named
+unpublished proxy with a 128 MiB limit. A bounded test-process TCP forwarder listens
+only on a dynamically assigned IPv4-loopback port and connects only to that newly
+created proxy's inspected internal IP. This avoids assuming Docker will honor published
+ports on an internal network without weakening network isolation. The hook
 never pulls an image, and mounts only its generated nginx configuration. Credentials
 are inherited by the smoke subprocess through its environment, never the stdin manifest.
 It returns sanitized acceptance JSON only and verifies removal of its exact proxy in
-`finally`; the outer runner retains ownership of application, network, and fixture cleanup.
+`finally`, after closing its loopback forwarder; the outer runner retains ownership of
+application, network, and fixture cleanup.
 The original nginx configuration and both Python scripts must preserve repository-relative
 layout when transferred to staging. Hook availability alone is not runtime evidence.
 

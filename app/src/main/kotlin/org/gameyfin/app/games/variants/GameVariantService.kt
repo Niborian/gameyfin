@@ -27,15 +27,19 @@ class GameVariantService(
             .groupBy { it.name }
             .mapValues { (_, variants) -> VariantVersionComparator.newest(variants.map { it.version }) }
 
-        val defaultKey = game.variants
-            .firstOrNull { it.defaultLocked && VariantKey(it.name, it.version) in desiredKeys }
+        val pinnedDefault = game.variants.firstOrNull { it.defaultLocked }
+        val defaultKey = pinnedDefault
             ?.let { VariantKey(it.name, it.version) }
             ?: selectDefaultVariant(discovery.variants)
 
         discovery.variants.forEach { parsed ->
             val key = VariantKey(parsed.name, parsed.version)
-            val unmanagedVariantForPath = game.variants.firstOrNull { !it.scanManaged && it.path == parsed.path.toString() }
-            if (unmanagedVariantForPath != null) return@forEach
+            // An administrator-owned variant may have attached content outside the
+            // discovery root. A matching scanner key must not replace that content.
+            val unmanagedVariant = game.variants.firstOrNull {
+                !it.scanManaged && (it.path == parsed.path.toString() || VariantKey(it.name, it.version) == key)
+            }
+            if (unmanagedVariant != null) return@forEach
 
             val existing = game.variants.firstOrNull { VariantKey(it.name, it.version) == key }
                 ?: GameVariant(game = game, path = parsed.path.toString()).also { game.variants.add(it) }
@@ -69,6 +73,12 @@ class GameVariantService(
             existing.linkFallbackReason = fallbackReasons.firstOrNull() ?: variantLink.fallbackReason
 
             syncContents(existing, parsed.contents, contentLinkResults)
+        }
+
+        // The pinned variant can be an attached source that discovery does not see.
+        // Keep exactly one default rather than also selecting a scanned version.
+        if (pinnedDefault != null) {
+            game.variants.forEach { it.isDefault = it === pinnedDefault }
         }
 
         return gameRepository.save(game)

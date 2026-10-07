@@ -11,6 +11,8 @@ import org.gameyfin.app.games.entities.VariantContentType
 import org.gameyfin.app.games.repositories.GameRepository
 import org.gameyfin.app.libraries.entities.Library
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -161,6 +163,67 @@ class GameVariantServiceTest {
         val gamePath = Path.of("/mnt/Games/Example Game")
         val game = Game(id = 1L, library = library, metadata = GameMetadata(path = gamePath.toString()))
         return VariantTestContext(service, repository, filesystemService, library, game, gamePath)
+    }
+
+    @Test
+    fun `rescan preserves attached content when discovered variant has the same key`(@TempDir fixture: Path) {
+        val (service, repository, filesystem, library, game, gamePath) = variantTestContext()
+        val source = Files.writeString(fixture.resolve("normal.zip"), "torrent managed normal version")
+        val dlc = Files.writeString(fixture.resolve("dlc.zip"), "shared DLC payload")
+        val patch = Files.writeString(fixture.resolve("patch.zip"), "optional patch payload")
+        val originalFiles = listOf(source, dlc, patch).associateWith {
+            Files.readString(it) to Files.getLastModifiedTime(it)
+        }
+        val attached = GameVariant(
+            game = game, name = "Normal", version = "1.0", path = source.toString(),
+            scanManaged = false, isDefault = true, defaultLocked = true
+        )
+        val content = VariantContent(
+            variant = attached, type = VariantContentType.DLC, name = "Shared DLC",
+            path = dlc.toString(), required = false, defaultSelected = false
+        )
+        attached.contents.add(content)
+        attached.contents.add(VariantContent(
+            variant = attached, type = VariantContentType.PATCH, name = "Patch",
+            path = patch.toString(), required = false, defaultSelected = false
+        ))
+        game.variants.add(attached)
+        every { repository.save(game) } returns game
+        every { filesystem.calculateFileSize(any()) } returns 0L
+
+        repeat(2) { service.syncVariants(game, discoveredVariantsWithContent(gamePath), library) }
+
+        assertEquals(3, game.variants.size)
+        assertTrue(game.variants.single { it.version == "1.0" } === attached)
+        assertEquals(source.toString(), attached.path)
+        assertFalse(attached.scanManaged)
+        assertTrue(attached.contents.single { it.type == VariantContentType.DLC } === content)
+        assertEquals(dlc.toString(), content.path)
+        assertEquals(patch.toString(), attached.contents.single { it.type == VariantContentType.PATCH }.path)
+        assertTrue(game.variants.single { it.isDefault } === attached)
+        originalFiles.forEach { (path, snapshot) ->
+            assertTrue(Files.exists(path))
+            assertEquals(snapshot.first, Files.readString(path))
+            assertEquals(snapshot.second, Files.getLastModifiedTime(path))
+        }
+    }
+
+    @Test
+    fun `rescan keeps an attached pinned default absent from discovery`() {
+        val (service, repository, filesystem, library, game, gamePath) = variantTestContext()
+        val attached = GameVariant(
+            game = game, name = "Normal", version = "0.9", path = "/fixture/torrents/older.zip",
+            scanManaged = false, isDefault = true, defaultLocked = true
+        )
+        game.variants.add(attached)
+        every { repository.save(game) } returns game
+        every { filesystem.calculateFileSize(any()) } returns 0L
+
+        repeat(2) { service.syncVariants(game, discoveredVariants(gamePath), library) }
+
+        assertEquals(4, game.variants.size)
+        assertTrue(game.variants.single { it.isDefault } === attached)
+        assertTrue(game.variants.single { it.name == "Normal" && it.version == "1.1" }.isLatestForVariant)
     }
 
     private fun discoveredVariants(gamePath: Path): DiscoveredGameVariants = DiscoveredGameVariants(

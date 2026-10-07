@@ -47,6 +47,7 @@ prowlarr.mkdir()
 class Fixture(BaseHTTPRequestHandler):
     def do_GET(self):
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        print("Synthetic Torznab request:", {name: query.get(name) for name in ("t", "q", "cat")}, flush=True)
         if query.get("t") == ["caps"]:
             body = '<caps><server title="Lawful synthetic fixture"/><limits max="100" default="100"/><searching><search available="yes" supportedParams="q"/><tv-search available="no"/><movie-search available="no"/></searching><categories><category id="1000" name="Console"/><category id="4000" name="PC"/></categories></caps>'
         else:
@@ -175,6 +176,16 @@ try:
         raise RuntimeError("qBittorrent did not become ready")
     form = urllib.parse.urlencode({"category": "fixture-acquisition", "savePath": "/downloads/fixture-acquisition"}).encode()
     opener.open(urllib.request.Request(origin + "/api/v2/torrents/createCategory", data=form, headers={"Referer": origin}), timeout=10).close()
+    raw = request("http://127.0.0.1:39696/api/v1/search?indexerIds=" + str(created["id"]) + "&query=fixture&type=search", headers=api_headers)
+    print("Raw real Prowlarr fixture result count:", len(raw), flush=True)
+    for item in raw:
+        print("Fixture result fields:", sorted(item), "indexerId:", item.get("indexerId"),
+              "magnet present:", bool(item.get("magnetUrl")), "magnet query field names:",
+              sorted(urllib.parse.parse_qs(urllib.parse.urlsplit(item.get("magnetUrl") or "").query)), flush=True)
+    if not raw:
+        diagnostic = docker("logs", "--tail", "80", containers[1]).replace(key, "[masked]").replace(password, "[masked]")
+        print(diagnostic, flush=True)
+        raise RuntimeError("Real approved fixture indexer produced no raw search results")
     env = dict(os.environ, GAMEYFIN_ACQUISITION_FIXTURE="true", FIXTURE_PROWLARR_KEY=key, FIXTURE_QB_PASSWORD=password, FIXTURE_INDEXER_ID=str(created["id"]))
     subprocess.run(["./gradlew", ":app:test", "--tests", "*AcquisitionLiveProviderTest", "--no-daemon", "--console=plain"], check=True, env=env)
     report = ET.parse("app/build/test-results/test/TEST-org.gameyfin.app.requests.AcquisitionLiveProviderTest.xml").getroot()

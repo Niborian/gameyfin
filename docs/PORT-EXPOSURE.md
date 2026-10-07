@@ -23,6 +23,34 @@ protocols cannot be assumed to pass through a browser authentication gateway. Ke
 their access decision separate from the UI login/SSO decision. Do not change source
 paths or torrent files to rehearse network exposure.
 
+## Separate qBittorrent acquisition from Gameyfin torrent serving
+
+The built-in **Torrent Download** plugin serves Gameyfin library content to clients.
+Its tracker/peer mappings above are not qBittorrent's Web UI, API, or peer listener.
+The approved acquisition workflow instead makes authenticated server-side API requests
+to an independently configured qBittorrent client. That does not require enabling the
+built-in serving plugin or opening Gameyfin tracker/peer host ports.
+
+| Component | Independent configurable policy |
+| --- | --- |
+| Gameyfin UI/API | Preserve the operator's existing proxy/authentication route; separately choose whether direct administrative LAN access remains available |
+| qBittorrent Web UI/API | Configure its approved origin and credentials independently; restrict access to intended administrators and automation callers using its own network/authentication controls |
+| qBittorrent peer listener | Keep its existing configured port and TCP/UDP/NAT policy separate; external peer access may be intentional and must not inherit a browser-authentication policy |
+| Gameyfin built-in tracker/peer listener | Publish only when that separate serving feature is intentionally enabled and its allowed client networks have been selected |
+
+Never assume qBittorrent uses Gameyfin's example ports. Do not alter qBittorrent containers,
+port mappings, tracker access, peer rules, VPN routing, source files, or seeding behavior
+as part of restricting Gameyfin's direct UI or unused built-in serving ports. Those are
+separate operator-owned settings. If acquisition automation is enabled, retain its
+approved request-review and dedicated-client isolation requirements; a category or tag
+alone is not a security boundary. See `AUTHORIZED-ACQUISITION.md` and issue #33's
+provider-integration acceptance criteria.
+
+Each service origin, direct UI bind/allow-list, and peer policy is operator configuration,
+not a private hostname or fixed port embedded in the application. Test any future
+qBittorrent policy change in its own isolated fixture and obtain separate approval
+before changing existing production mappings.
+
 The normal Compose example now binds app HTTP to IPv4 loopback. This suits a proxy on
 the same host or an SSH tunnel. A proxy on a separate host needs an explicitly chosen
 reachable interface and firewall allow-list; blindly changing the live bind could

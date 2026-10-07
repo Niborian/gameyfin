@@ -41,6 +41,8 @@ services:
       # Local reverse proxy or SSH tunnel only. For a proxy on another host,
       # explicitly choose its reachable interface and firewall allow-list.
       - "127.0.0.1:8080:8080"
-      # If you plan to use the included torrent plugin, uncomment the following lines:
+      # Gameyfin's own torrent-serving plugin only (not a qBittorrent API/client).
+      # Keep any separate qBittorrent UI/API and peer mappings independently configured.
+      # If you plan to use the included serving plugin, uncomment the following lines:
       # - "6969:6969"
       # - "6881:6881"

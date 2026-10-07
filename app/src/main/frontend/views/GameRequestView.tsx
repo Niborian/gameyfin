@@ -19,7 +19,7 @@ import RequestGameModal from "Frontend/components/general/modals/RequestGameModa
 import {ArrowUpIcon, CheckIcon, InfoIcon, PlusCircleIcon, TrashIcon, XIcon} from "@phosphor-icons/react";
 import React, {useEffect, useMemo, useState} from "react";
 import {useAuth} from "Frontend/util/auth";
-import {ConfigEndpoint, GameRequestEndpoint} from "Frontend/generated/endpoints";
+import {AcquisitionScopeEndpoint, ConfigEndpoint, GameRequestEndpoint} from "Frontend/generated/endpoints";
 import {gameRequestState} from "Frontend/state/GameRequestState";
 import {useSnapshot} from "valtio/react";
 import GameRequestDto from "Frontend/generated/org/gameyfin/app/requests/dto/GameRequestDto";
@@ -36,11 +36,16 @@ export default function GameRequestView() {
 
     const [areGameRequestsEnabled, setAreGameRequestsEnabled] = useState(false);
     const [areGuestsAllowedToRequestGames, setAreGuestsAllowedToRequestGames] = useState(false);
+    const [acquisitionScope, setAcquisitionScope] = useState<Awaited<ReturnType<typeof AcquisitionScopeEndpoint.summary>>>();
 
     useEffect(() => {
         ConfigEndpoint.areGameRequestsEnabled().then(setAreGameRequestsEnabled);
         ConfigEndpoint.areGuestsAllowedToRequestGames().then(setAreGuestsAllowedToRequestGames);
     }, []);
+
+    useEffect(() => {
+        if (isAdmin(auth)) AcquisitionScopeEndpoint.summary().then(setAcquisitionScope);
+    }, [auth.state.user]);
 
     const [searchTerm, setSearchTerm] = useState("");
     const [filters, setFilters] = useState<"all" | GameRequestStatus[]>([GameRequestStatus.PENDING, GameRequestStatus.APPROVED, GameRequestStatus.REJECTED]);
@@ -201,6 +206,12 @@ export default function GameRequestView() {
             </div>
         </div>
 
+
+        {isAdmin(auth) && acquisitionScope && <div className="mb-4 text-sm text-default-500">
+            <p>{acquisitionScope.reason}</p>
+            <p>Approved indexers: {acquisitionScope.approvedIndexerIds.join(", ") || "none"}. Active indexers: {acquisitionScope.activeIndexerIds.join(", ") || "none"}.</p>
+            <p>Dedicated category: {acquisitionScope.category}; ownership tag: {acquisitionScope.managedTag}.</p>
+        </div>}
 
         <div className="flex flex-row gap-2 justify-between mb-4">
             <Input

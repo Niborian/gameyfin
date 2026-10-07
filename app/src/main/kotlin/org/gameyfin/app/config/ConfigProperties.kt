@@ -146,6 +146,15 @@ sealed class ConfigProperties<T : Serializable>(
 
     /** Requests */
     sealed class Requests {
+        sealed class Acquisition {
+            data object ApprovedIndexerIds : ConfigProperties<Array<String>>(
+                Array<String>::class,
+                "requests.acquisition.approved-indexer-ids",
+                "Administrator-approved Prowlarr indexer IDs",
+                "Only these positive numeric IDs may be used by a future reviewed acquisition adapter. An empty list authorizes none. Saving this list does not enable a provider.",
+                emptyArray()
+            )
+        }
         sealed class Games {
             data object Enabled : ConfigProperties<Boolean>(
                 Boolean::class,

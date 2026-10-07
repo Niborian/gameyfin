@@ -31,3 +31,11 @@ The general status editor cannot queue a request or mark it downloading. Queuing
 Administrator cancellation records a required reason and retains the request history. It refuses an already fulfilled, cancelled, or downloading request: changing a record cannot prove that an external download stopped. Retrying a failed or cancelled request returns it to `AWAITING_APPROVAL`; it does not queue work. Both actions record the actor, previous/new status, time, and reason.
 
 Dedicated category/tags, administrator-approved indexers, restricted provider credentials, and provider-side cancellation/retry remain prerequisites before external acquisition can be enabled.
+
+## Scope policy and visibility
+
+Administrators may configure positive numeric Prowlarr indexer IDs in Game Requests settings. An empty list approves none; wildcards, zero, nonnumeric, and overflowing IDs fail closed. Requests display the configured approved set separately from the active set. The active set remains empty and the provider disabled because no acquisition adapter is installed.
+
+The reserved category is `gameyfin-acquisition`. A future adapter must apply `gameyfin-managed`, `gameyfin-request-<id>`, and `gameyfin-candidate-<id>` tags. The tested scope policy rejects an unapproved indexer or a torrent without the exact category and request/candidate tags. These checks are necessary, but labels alone are not sufficient authority to modify a torrent: a reviewed adapter must also verify the torrent hash against the persisted submission audit before any provider-side cancellation or retry.
+
+The policy stores no credentials and cannot contact a client. A future deployment must use secrets and a dedicated isolated client/credential boundary that cannot access unrelated torrents. This configuration does not demonstrate restricted credentials or provider-side behavior; sandbox integration evidence is still required before #33 can close.

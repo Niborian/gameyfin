@@ -26,8 +26,8 @@ def generate(output: Path, container_root: str):
         (sources / f"lib{library}").mkdir()
         statements.extend([
             f"INSERT INTO LIBRARY(ID,CREATED_AT,NAME,UPDATED_AT,STORAGE_MODE) VALUES({library_id},CURRENT_TIMESTAMP,'Synthetic library {library}',CURRENT_TIMESTAMP,'DIRECT');",
-            f"INSERT INTO DIRECTORY_MAPPING VALUES({library_id},'{library_path}','{library_path}');",
-            f"INSERT INTO LIBRARY_DIRECTORIES VALUES({library_id},{library_id});",
+            f"INSERT INTO DIRECTORY_MAPPING(ID,EXTERNAL_PATH,INTERNAL_PATH) VALUES({library_id},'{library_path}','{library_path}');",
+            f"INSERT INTO LIBRARY_DIRECTORIES(LIBRARY_ID,DIRECTORIES_ID) VALUES({library_id},{library_id});",
         ])
         for index in range(count):
             game_id = 30000 + library * 1000 + index
@@ -49,7 +49,7 @@ def generate(output: Path, container_root: str):
                 f"INSERT INTO GAME(ID,CREATED_AT,TITLE,UPDATED_AT,PATH,FILE_SIZE,LIBRARY_ID,DOWNLOAD_COUNT,MATCH_CONFIRMED) VALUES({game_id},CURRENT_TIMESTAMP,'Synthetic game {game_id}',CURRENT_TIMESTAMP,'{path}',49152,{library_id},0,TRUE);",
                 f"INSERT INTO GAME_VARIANT(ID,FILE_SIZE,IS_DEFAULT,IS_LATEST_FOR_VARIANT,NAME,PATH,VERSION,GAME_ID,SCAN_MANAGED,DEFAULT_LOCKED,LINK_STATUS) VALUES({variant_id},49152,TRUE,TRUE,'Normal','{path}/Normal 1.0','1.0',{game_id},FALSE,TRUE,'DIRECT');",
                 f"INSERT INTO VARIANT_CONTENT(ID,DEFAULT_SELECTED,FILE_SIZE,NAME,PATH,REQUIRED,TYPE,VARIANT_ID) VALUES({base_id},TRUE,32768,'Grouped base','{path}/base-a.bin',TRUE,'BASE',{variant_id}),({base_id+1},FALSE,16384,'Optional patch','{path}/patch.bin',FALSE,'PATCH',{variant_id});",
-                f"INSERT INTO VARIANT_CONTENT_PATHS VALUES({base_id},0,'{path}/base-a.bin'),({base_id},1,'{path}/base-b.bin'),({base_id+1},0,'{path}/patch.bin');",
+                f"INSERT INTO VARIANT_CONTENT_PATHS(VARIANT_CONTENT_ID,PATH_INDEX,PATH) VALUES({base_id},0,'{path}/base-a.bin'),({base_id},1,'{path}/base-b.bin'),({base_id+1},0,'{path}/patch.bin');",
             ])
             games.append({"gameId": game_id, "variantId": variant_id, "requiredContentId": base_id,
                           "optionalContentId": base_id + 1, "path": path,

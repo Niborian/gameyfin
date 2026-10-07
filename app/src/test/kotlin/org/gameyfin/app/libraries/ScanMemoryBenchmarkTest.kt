@@ -34,6 +34,35 @@ import java.util.concurrent.atomic.AtomicLong
 @EnabledIfSystemProperty(named = "gameyfin.scanBenchmark", matches = "true")
 class ScanMemoryBenchmarkTest {
     @Test
+    fun `reusable image fixture SQL imports into actual migrated H2 schema`(@TempDir root: Path) {
+        val output = root.resolve("generated")
+        val python = if (System.getProperty("os.name").startsWith("Windows")) "python" else "python3"
+        val script = Path.of("../scripts/rehearsal/seed-scan-fixture.py").toAbsolutePath().normalize()
+        val process = ProcessBuilder(python, script.toString(), "--output", output.toString(),
+            "--container-fixture-root", "/fixture").redirectErrorStream(true).start()
+        val messages = process.inputStream.bufferedReader().readText()
+        assertEquals(0, process.waitFor(), messages)
+        val url = "jdbc:h2:file:" + root.resolve("fixture-db").toString().replace('\\', '/')
+        org.flywaydb.core.Flyway.configure().dataSource(url, "fixture", "fixture-only")
+            .locations("classpath:db/migration").load().migrate()
+        java.sql.DriverManager.getConnection(url, "fixture", "fixture-only").use { connection ->
+            connection.createStatement().use { sql ->
+                Files.readString(output.resolve("seed.sql")).split(';').filter { it.isNotBlank() }
+                    .forEach { sql.execute(it) }
+                for ((table, expected) in mapOf("LIBRARY" to 4, "GAME" to 132,
+                    "GAME_VARIANT" to 132, "VARIANT_CONTENT" to 264)) {
+                    sql.executeQuery("SELECT COUNT(*) FROM $table").use { rows ->
+                        rows.next(); assertEquals(expected, rows.getInt(1), table)
+                    }
+                }
+            }
+        }
+        Files.walk(output.resolve("sources")).use { paths ->
+            assertEquals(924L, paths.filter { Files.isRegularFile(it) }.count())
+        }
+    }
+
+    @Test
     fun `measure synthetic full scan and recovery`(@TempDir fixture: Path) {
         val count = System.getProperty("gameyfin.scanBenchmark.games", "1000").toInt()
         require(count in 1..10000)

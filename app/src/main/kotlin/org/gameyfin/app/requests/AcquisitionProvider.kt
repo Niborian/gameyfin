@@ -181,14 +181,16 @@ class AcquisitionProvider(
 
     private fun confirmState(hash: String, requestId: Long, candidateId: Long, stopped: Boolean) {
         val expected = if (stopped) setOf("stoppedDL", "stoppedUP", "pausedDL", "pausedUP") else
-            setOf("downloading", "metaDL", "stalledDL", "queuedDL", "uploading", "stalledUP", "queuedUP", "forcedDL", "forcedUP", "checkingDL", "checkingUP", "allocating", "moving", "checkingResumeData")
-        repeat(3) { attempt ->
+            setOf("downloading", "metaDL", "forcedMetaDL", "stalledDL", "queuedDL", "uploading", "stalledUP", "queuedUP", "forcedDL", "forcedUP", "checkingDL", "checkingUP", "allocating", "moving", "checkingResumeData")
+        // qB5.2's default native status refresh is 1500ms. Allow a bounded
+        // refresh window, still well below the persisted 600s in-flight cutoff.
+        repeat(10) { attempt ->
             val owned = readTorrent(hash)
             if (owned != null) {
                 policy.requireOwnedTorrent(owned.category, owned.tags, requestId, candidateId)
                 if (owned.state in expected) return
             }
-            if (attempt < 2) Thread.sleep(250)
+            if (attempt < 9) Thread.sleep(250)
         }
         error("Owned torrent state was not confirmed; reconcile before retry")
     }
@@ -217,18 +219,20 @@ class AcquisitionProvider(
 
     private fun send(request: HttpRequest, prowlarr: Boolean = false): String {
         // Bound hostile responses without retaining provider bodies or credentials in error messages.
-        val response = (if (prowlarr) prowlarrHttp else qbHttp).send(request) { LimitedBodySubscriber() }
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
+        val response = (if (prowlarr) prowlarrHttp else qbHttp).send(request) { LimitedBodySubscriber(deadline) }
         check(response.statusCode() in 200..299) { "Acquisition provider request failed (${response.statusCode()})" }
         return response.body()
     }
 
     /** Explicit body deadline as well as the request/header deadline; hostile streams cannot stall forever. */
-    private class LimitedBodySubscriber : HttpResponse.BodySubscriber<String> {
+    private class LimitedBodySubscriber(deadline: Long) : HttpResponse.BodySubscriber<String> {
         private val result = CompletableFuture<String>()
         private val output = ByteArrayOutputStream()
         @Volatile private var subscription: Flow.Subscription? = null
         init {
-            result.orTimeout(15, TimeUnit.SECONDS).whenComplete { _, failure -> if (failure != null) subscription?.cancel() }
+            result.orTimeout((deadline - System.nanoTime()).coerceAtLeast(1), TimeUnit.NANOSECONDS)
+                .whenComplete { _, failure -> if (failure != null) subscription?.cancel() }
         }
         override fun getBody(): CompletionStage<String> = result
         override fun onSubscribe(subscription: Flow.Subscription) {

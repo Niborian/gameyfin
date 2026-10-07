@@ -32,7 +32,13 @@ class AcquisitionLiveProviderTest {
         val candidate = provider.search(indexer, "fixture").single()
         assertEquals("a".repeat(40), candidate.hash)
         assertNull(provider.lookup(candidate.hash))
-        provider.add(candidate, 7, 11)
+        try {
+            provider.add(candidate, 7, 11)
+        } catch (failure: Exception) {
+            // Synthetic fixture only: no operator identity, path or secret.
+            println("Synthetic owned state after add refusal: ${provider.lookup(candidate.hash)?.state}")
+            throw failure
+        }
         assertEquals("fixture-acquisition", provider.lookup(candidate.hash)?.category)
         settings.savePath = "/downloads/other-fixture"
         assertFailsWith<IllegalArgumentException> { provider.stop(candidate.hash, 7, 11) }

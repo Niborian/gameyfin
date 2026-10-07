@@ -23,3 +23,11 @@ Any future Prowlarr or qBittorrent integration must be implemented in a separate
 5. Fakes or a sandbox for integration tests; production providers need their own explicit opt-in.
 
 Until those controls are implemented and reviewed, Gameyfin must not initiate provider, torrent-client, filesystem, or cleanup actions.
+
+## Request cancellation and retry
+
+The general status editor cannot queue a request or mark it downloading. Queuing requires a recorded candidate, an administrator approval record, and explicit candidate selection. No provider is enabled by this change.
+
+Administrator cancellation records a required reason and retains the request history. It refuses an already fulfilled, cancelled, or downloading request: changing a record cannot prove that an external download stopped. Retrying a failed or cancelled request returns it to `AWAITING_APPROVAL`; it does not queue work. Both actions record the actor, previous/new status, time, and reason.
+
+Dedicated category/tags, administrator-approved indexers, restricted provider credentials, and provider-side cancellation/retry remain prerequisites before external acquisition can be enabled.

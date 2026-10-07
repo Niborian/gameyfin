@@ -222,8 +222,6 @@ export default function GameRequestView() {
                 <SelectItem key={GameRequestStatus.CANDIDATES_FOUND}>Candidates found</SelectItem>
                 <SelectItem key={GameRequestStatus.AWAITING_APPROVAL}>Awaiting approval</SelectItem>
                 <SelectItem key={GameRequestStatus.APPROVED}>Approved</SelectItem>
-                <SelectItem key={GameRequestStatus.QUEUED}>Queued</SelectItem>
-                <SelectItem key={GameRequestStatus.DOWNLOADING}>Downloading</SelectItem>
                 <SelectItem key={GameRequestStatus.IMPORTED_FOR_REVIEW}>Imported for review</SelectItem>
                 <SelectItem key={GameRequestStatus.FAILED}>Failed</SelectItem>
                 <SelectItem key={GameRequestStatus.CANCELLED}>Cancelled</SelectItem>

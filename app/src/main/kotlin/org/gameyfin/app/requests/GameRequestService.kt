@@ -169,7 +169,10 @@ class GameRequestService(
         gameRequestRepository.delete(gameRequest)
     }
 
+    @Transactional
     fun changeRequestStatus(id: Long, status: GameRequestStatus, reason: String? = null) {
+        require(status != GameRequestStatus.QUEUED) { "Queue requests through approved candidate selection" }
+        require(status != GameRequestStatus.DOWNLOADING) { "No acquisition provider is enabled" }
         val gameRequest = gameRequestRepository.findById(id)
             .orElseThrow { NoSuchElementException("No game request found with id $id") }
 
@@ -190,6 +193,26 @@ class GameRequestService(
                 reason = reason?.trim()?.ifBlank { null }
             )
         )
+    }
+
+    /** Cancels only the review record; no provider or torrent-client action is performed. */
+    @Transactional
+    fun cancelRequest(id: Long, reason: String) {
+        require(reason.isNotBlank() && reason.length <= 4096) { "A cancellation reason of at most 4096 characters is required" }
+        val request = gameRequestRepository.findById(id).orElseThrow { NoSuchElementException("No game request found with id $id") }
+        require(request.status !in setOf(GameRequestStatus.FULFILLED, GameRequestStatus.DOWNLOADING, GameRequestStatus.CANCELLED)) {
+            "This request cannot be cancelled as a review record"
+        }
+        changeRequestStatus(id, GameRequestStatus.CANCELLED, reason)
+    }
+
+    /** A retry returns to review, requiring deliberate candidate selection again. */
+    @Transactional
+    fun retryRequest(id: Long, reason: String) {
+        require(reason.isNotBlank() && reason.length <= 4096) { "A retry reason of at most 4096 characters is required" }
+        val request = gameRequestRepository.findById(id).orElseThrow { NoSuchElementException("No game request found with id $id") }
+        require(request.status in setOf(GameRequestStatus.FAILED, GameRequestStatus.CANCELLED)) { "Only failed or cancelled requests can be retried" }
+        changeRequestStatus(id, GameRequestStatus.AWAITING_APPROVAL, reason)
     }
 
     @Transactional

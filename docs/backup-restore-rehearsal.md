@@ -1,0 +1,21 @@
+# Offline H2 backup and restore rehearsal
+
+Before changing the runtime or scanning production, retain its immutable image digest (or local `sha256:` image ID), database, application data, and deployment configuration. The database and data must be captured during the same stopped-service interval. A filesystem snapshot coordinated with the service stop is also suitable. Copying a live `.mv.db` file is not a consistent backup.
+
+The standalone `scripts/rehearsal/OfflineH2Rehearsal.java` tool operates on an offline source or isolated offline copy. It never connects to the source H2 database, starts Gameyfin, runs migrations, or scans game paths. It locks the source MVStore file during copying, refuses lock files and overlapping/existing destinations, hashes database and data inventories, restores into a fresh directory, and compares library/game/variant/content counts through read-only JDBC on the copies. The stopped-service confirmation is required; an OS file lock alone cannot prove application data is quiescent.
+
+Use a Java runtime and H2 JAR compatible with the captured database, ideally those from the running image. Set `GAMEYFIN_REHEARSAL_DB_USER` and `GAMEYFIN_REHEARSAL_DB_PASSWORD` in the process environment through your existing secret mechanism. Do not put credentials in arguments, scripts, logs, or committed evidence. The backup itself contains sensitive application data and must remain private with access restrictions inherited from its protected parent directory.
+
+Example argument shape (replace all placeholders with isolated paths and the captured image reference):
+
+```text
+java --class-path <matching-h2.jar> scripts/rehearsal/OfflineH2Rehearsal.java --offline-confirmed <offline-db-dir> <offline-data-dir> <new-backup-dir> <new-restore-dir> <database-basename> <image@sha256:digest-or-sha256:image-id>
+```
+
+All four directories must be separate, with existing protected parent directories for the two new destinations. Symlinks are refused so the tool cannot follow mounts or links into torrent-managed paths. The data directory is Gameyfin application data, not the game library. Keep deployment configuration and the matching immutable image separately; the tool records the supplied image reference but does not retrieve or validate that image.
+
+A successful run writes `rehearsal.properties` inside the backup. It records UTC rehearsal date, restore duration in milliseconds, database/data SHA-256 inventories, directory inventories, rollback image reference, and the four matching counts. It does not include credentials or database row contents. An interrupted/failed directory is incomplete and must not be treated as a successful backup. The tool refuses to reuse it on a later run.
+
+For rollback, stop the changed instance, preserve its failed state for investigation, and restore the captured database and application data together into fresh mounts. Start the exact captured image with the saved deployment configuration, verify the four counts and health/login behavior, then restore traffic. Do not open a migrated database with an older image, merge old and new data directories, or modify torrent-managed game sources. This document is a rehearsal procedure; applying it to the production server requires the separately authorized deployment/change step.
+
+The synthetic test runs the actual Flyway schema migrations, seeds a known library, then proves a backup restores matching counts, empty directories, data files, and unchanged source database bytes/mtime. It also refuses an actively open H2 database and overlapping/existing destinations. Synthetic evidence does not satisfy issue #26's requirement that a restorable production backup exists. Record the actual captured image and production-backup-copy rehearsal evidence before closing #26 or claiming cutover readiness.

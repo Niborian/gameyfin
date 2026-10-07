@@ -83,7 +83,7 @@ class AcquisitionTransferService(
             val owned = transfers.findByCandidateId(candidateId) ?: error("No provider-backed candidate")
             require(owned.state in allowedStates) { "Transfer state does not permit this action; reconcile uncertain operations first" }
             if (owned.state == "IN_FLIGHT") {
-                require(owned.updatedAt.isBefore(java.time.Instant.now().minusSeconds(300))) { "Wait for the bounded provider call before reconciling an in-flight operation" }
+                require(owned.updatedAt.isBefore(java.time.Instant.now().minusSeconds(600))) { "Wait for the bounded provider call before reconciling an in-flight operation" }
             }
             if (operation == "SUBMIT" || operation == "START") {
                 require(approvals.existsByCandidateId(candidateId) && owned.candidate.selected) { "Deliberate administrator approval and selection are required" }
@@ -101,6 +101,10 @@ class AcquisitionTransferService(
             owned
         })
         val state = try { call(transfer) } catch (failure: Exception) {
+            if (operation == "SUBMIT" && failure is AcquisitionPreflightRefusal) {
+                complete(candidateId, operationToken, "REVIEW", "SUBMIT_REFUSED", "Preflight refused before any add; correct isolated provider setup and deliberately submit again")
+                throw failure
+            }
             complete(candidateId, operationToken, "UNCERTAIN", "${operation}_UNCERTAIN", "Provider outcome uncertain; inspect and reconcile before any retry")
             throw IllegalStateException("Provider outcome uncertain; no automatic retry", failure)
         }

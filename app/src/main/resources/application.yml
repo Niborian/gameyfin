@@ -9,6 +9,7 @@ gameyfin.acquisition:
   qbittorrent-password: ${ACQUISITION_QBITTORRENT_PASSWORD:}
   category: ${ACQUISITION_CATEGORY:gameyfin-acquisition}
   managed-tag: ${ACQUISITION_MANAGED_TAG:gameyfin-managed}
+  save-path: ${ACQUISITION_SAVE_PATH:}
 
 logging.level:
   root: warn

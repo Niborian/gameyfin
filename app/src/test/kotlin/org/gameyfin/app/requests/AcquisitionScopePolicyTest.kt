@@ -53,5 +53,6 @@ class AcquisitionScopePolicyTest {
 
     @Test fun `scope visibility endpoint is restricted to administrators`() {
         assertContentEquals(arrayOf(Role.Names.ADMIN), AcquisitionScopeEndpoint::class.java.getAnnotation(RolesAllowed::class.java).value)
+        assertContentEquals(arrayOf(Role.Names.ADMIN), AcquisitionTransferEndpoint::class.java.getAnnotation(RolesAllowed::class.java).value)
     }
 }

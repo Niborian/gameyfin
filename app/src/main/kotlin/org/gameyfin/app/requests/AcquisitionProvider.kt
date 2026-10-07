@@ -19,6 +19,7 @@ import java.nio.ByteBuffer
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
 import java.util.concurrent.Flow
+import java.util.concurrent.TimeUnit
 
 /** Secrets are supplied externally, never exposed by an endpoint or stored in ConfigEntry. */
 @ConfigurationProperties("gameyfin.acquisition")
@@ -32,12 +33,24 @@ class AcquisitionProviderSettings {
     var qbittorrentPassword = ""
     var category = "gameyfin-acquisition"
     var managedTag = "gameyfin-managed"
+    var savePath = ""
 
     fun requireEnabled() {
         check(enabled && dedicatedClientAcknowledged) { "Acquisition requires an explicitly enabled, dedicated isolated client" }
         check(prowlarrApiKey.isNotBlank() && qbittorrentUsername.isNotBlank() && qbittorrentPassword.isNotBlank()) { "Acquisition credentials are missing" }
         endpoint(prowlarrUrl)
         endpoint(qbittorrentUrl)
+        normalizedSavePath(savePath)
+    }
+
+    fun normalizedSavePath(value: String): String {
+        val path = value.replace('\\', '/').trimEnd('/')
+        require(path.isNotBlank() && path != "/" && !path.matches(Regex("[A-Za-z]:")) &&
+            (path.startsWith("/") || path.matches(Regex("[A-Za-z]:/.+"))) &&
+            !path.any { it.code < 32 } && path.split('/').none { it.trim() in setOf(".", "..") }) {
+            "An explicit absolute dedicated acquisition save path, not a filesystem root or traversal, is required"
+        }
+        return path
     }
 
     private fun endpoint(value: String) {
@@ -54,6 +67,7 @@ class AcquisitionProviderConfiguration
 
 data class AuthorizedSearchResult(val indexerId: String, val title: String, val magnet: String, val hash: String)
 data class OwnedTorrent(val hash: String, val category: String, val tags: Set<String>, val state: String = "")
+class AcquisitionPreflightRefusal(cause: Exception) : IllegalStateException("Submission refused before add; fix isolated provider configuration and review again", cause)
 
 /** No arbitrary download URLs, redirect following, grab endpoint, filesystem or client-wide mutations. */
 @Service
@@ -107,20 +121,30 @@ class AcquisitionProvider(
         require(nodes.isArray && nodes.size() <= 1) { "Ambiguous torrent response" }
         val node = nodes.firstOrNull() ?: return null
         require(node.path("hash").asText().equals(hash, true)) { "Torrent hash mismatch" }
+        require(settings.normalizedSavePath(node.path("save_path").asText()) == settings.normalizedSavePath(settings.savePath)) { "Torrent save path no longer matches the dedicated acquisition root" }
         return OwnedTorrent(hash, node.path("category").asText(), node.path("tags").asText().split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet(), node.path("state").asText())
     }
 
     fun add(result: AuthorizedSearchResult, requestId: Long, candidateId: Long) {
-        settings.requireEnabled()
-        policy.requireApprovedIndexer(result.indexerId)
-        require(result.indexerId in activeIndexers()) { "Approved indexer is no longer active" }
-        require(magnetHash(result.magnet) == result.hash)
-        login()
-        val categories = mapper.readTree(get(settings.qbittorrentUrl, "/api/v2/torrents/categories"))
-        check(categories.isObject && categories.has(policy.category())) { "Dedicated category must already exist before submission" }
-        check(readTorrent(result.hash) == null) { "Existing torrent cannot be adopted or changed" }
+        try {
+            settings.requireEnabled()
+            policy.requireApprovedIndexer(result.indexerId)
+            require(result.indexerId in activeIndexers()) { "Approved indexer is no longer active" }
+            require(magnetHash(result.magnet) == result.hash)
+            login()
+            val categories = mapper.readTree(get(settings.qbittorrentUrl, "/api/v2/torrents/categories"))
+            check(categories.isObject && categories.has(policy.category())) { "Dedicated category must already exist before submission" }
+            require(settings.normalizedSavePath(categories.path(policy.category()).path("savePath").asText()) == settings.normalizedSavePath(settings.savePath)) {
+                "Dedicated category save path must match the configured acquisition root"
+            }
+            check(readTorrent(result.hash) == null) { "Existing torrent cannot be adopted or changed" }
+        } catch (failure: Exception) {
+            if (failure is InterruptedException) Thread.currentThread().interrupt()
+            throw AcquisitionPreflightRefusal(failure)
+        }
         val body = post("/api/v2/torrents/add", mapOf("urls" to result.magnet, "category" to policy.category(),
-            "tags" to policy.ownershipTags(requestId, candidateId).joinToString(","), "autoTMM" to "false", "stopped" to "true"))
+            "tags" to policy.ownershipTags(requestId, candidateId).joinToString(","), "autoTMM" to "false", "stopped" to "true",
+            "savepath" to settings.savePath, "useDownloadPath" to "false"))
         check(body.trim() == "Ok.") { "Provider did not acknowledge submission; inspect before retry" }
         confirmState(result.hash, requestId, candidateId, stopped = true)
         // Never start an unowned/mis-tagged or unexpectedly running add response.
@@ -177,13 +201,19 @@ class AcquisitionProvider(
         return response.body()
     }
 
-    /** Completes only after the bounded body, keeping HttpRequest's deadline active for slow bodies. */
+    /** Explicit body deadline as well as the request/header deadline; hostile streams cannot stall forever. */
     private class LimitedBodySubscriber : HttpResponse.BodySubscriber<String> {
         private val result = CompletableFuture<String>()
         private val output = ByteArrayOutputStream()
-        private lateinit var subscription: Flow.Subscription
+        @Volatile private var subscription: Flow.Subscription? = null
+        init {
+            result.orTimeout(15, TimeUnit.SECONDS).whenComplete { _, failure -> if (failure != null) subscription?.cancel() }
+        }
         override fun getBody(): CompletionStage<String> = result
-        override fun onSubscribe(subscription: Flow.Subscription) { this.subscription = subscription; subscription.request(1) }
+        override fun onSubscribe(subscription: Flow.Subscription) {
+            this.subscription = subscription
+            if (result.isDone) subscription.cancel() else subscription.request(1)
+        }
         override fun onNext(buffers: List<ByteBuffer>) {
             try {
                 for (buffer in buffers) {
@@ -191,8 +221,8 @@ class AcquisitionProvider(
                     val bytes = ByteArray(buffer.remaining())
                     buffer.get(bytes); output.write(bytes)
                 }
-                subscription.request(1)
-            } catch (failure: Exception) { subscription.cancel(); result.completeExceptionally(failure) }
+                subscription?.request(1)
+            } catch (failure: Exception) { subscription?.cancel(); result.completeExceptionally(failure) }
         }
         override fun onError(failure: Throwable) { result.completeExceptionally(failure) }
         override fun onComplete() { result.complete(output.toString(Charsets.UTF_8)) }

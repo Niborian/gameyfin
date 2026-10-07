@@ -19,8 +19,9 @@ Use deployment environment/secrets, not command-line arguments, repository files
 | `ACQUISITION_QBITTORRENT_USERNAME`, `ACQUISITION_QBITTORRENT_PASSWORD` | Isolated client credentials |
 | `ACQUISITION_CATEGORY` | Pre-created dedicated category; default `gameyfin-acquisition` |
 | `ACQUISITION_MANAGED_TAG` | Dedicated tag prefix; default `gameyfin-managed` |
+| `ACQUISITION_SAVE_PATH` | Required explicit absolute isolated acquisition root on the dedicated client; no default |
 
-No user-specific URL, port, path or secret is built in. Remote credentials require HTTPS; HTTP is only allowed on loopback for fixtures. Origins cannot embed credentials/path/query/fragment. Scope labels are bounded simple names. The adapter never changes client-wide settings or creates category/download paths.
+No user-specific URL, port, path or secret is built in. Remote credentials require HTTPS; HTTP is only allowed on loopback for fixtures. Origins cannot embed credentials/path/query/fragment. Scope labels are bounded simple names. The adapter never changes client-wide settings or creates category/download paths. A category alone is not sufficient with manual torrent management: explicitly configure `ACQUISITION_SAVE_PATH`, pre-create the category with that same path, and isolate the server mount. Add supplies that exact save path with automatic management and separate incomplete download path disabled; subsequent client-reported paths must still match. Blank/relative/traversal/filesystem-root paths are refused. Path validation is remote syntax/identity validation, not proof of actual mount isolation; staging must prove that boundary.
 
 ## Review and deliberate add
 
@@ -32,7 +33,9 @@ The dedicated category must already exist before submission. The adapter adds in
 
 ## Audit, stop, resume and uncertainty
 
-An immutable actor/time/reason audit and `IN_FLIGHT` intent commit before HTTP. Concurrent adds are denied; operation tokens refuse stale completion of a superseded intent. A provider timeout or ambiguous outcome becomes `UNCERTAIN`, never a blind automatic retry. A crashed in-flight operation can be explicitly reconciled after 300 seconds: verify exact persisted hash and ownership labels, then stop and confirm stopped state. An absent or mismatched identity stays uncertain for manual isolated-client inspection; no replacement is added.
+An immutable actor/time/reason audit and `IN_FLIGHT` intent commit before HTTP. Concurrent adds are denied; operation tokens refuse stale completion of a superseded intent. A provider timeout or ambiguous outcome becomes `UNCERTAIN`, never a blind automatic retry. A crashed in-flight operation can be explicitly reconciled after 600 seconds, beyond the bounded sequential verification requests: verify exact persisted hash and ownership labels, then stop and confirm stopped state. An absent or mismatched identity stays uncertain for manual isolated-client inspection; no replacement is added.
+
+A typed preflight refusal before the add request (for example missing category/root or rejected credentials) records `SUBMIT_REFUSED` and returns to review, allowing a fresh deliberate add after setup correction. Once add has been attempted, failures remain uncertain: no blanket exception handler resets potentially submitted work to review.
 
 Cancel means **stop**, never delete. Resume means start the same persisted hash, never re-add. Both verify client category and all ownership tags before mutation. No delete API, deletion flag, source mount, rename, move, retirement or import action exists. Review-record cancellation/retry/status edits refuse provider-backed requests. Foreign keys preserve acquisition audit instead of silently deleting it with a request.
 

@@ -21,6 +21,9 @@ class AcquisitionProviderTest {
     private var categoryExists = true
     private var state = "stoppedDL"
     private var acknowledgeWithoutChangingState = false
+    private var oversized = false
+    private var clientVersion = "v5.0.0"
+    private var savePath = "/fixture-acquisition"
     private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
         createContext("/") { exchange ->
             val path = exchange.requestURI.path
@@ -32,7 +35,7 @@ class AcquisitionProviderTest {
                 "/api/v1/indexer" -> {
                     assertEquals("synthetic-api-key", exchange.requestHeaders.getFirst("X-Api-Key"))
                     assertNull(exchange.requestHeaders.getFirst("Cookie"))
-                    """[{"id":2,"enable":true},{"id":3,"enable":true},{"id":4,"enable":false}]"""
+                    if (oversized) "x".repeat(1_048_577) else """[{"id":2,"enable":true},{"id":3,"enable":true},{"id":4,"enable":false}]"""
                 }
                 "/api/v1/search" -> {
                     assertTrue(exchange.requestURI.rawQuery.contains("indexerIds=2"))
@@ -48,10 +51,10 @@ class AcquisitionProviderTest {
                 }
                 "/api/v2/torrents/info" -> {
                     assertTrue(exchange.requestHeaders.getFirst("Cookie").contains("SID=fixture-session"))
-                    if (!added) "[]" else """[{"hash":"$hash","category":"isolated-fixture","state":"$state","tags":"${if (wrongTags) "other" else "fixture-managed,fixture-managed-request-7,fixture-managed-candidate-11"}"}]"""
+                    if (!added) "[]" else """[{"hash":"$hash","category":"isolated-fixture","save_path":"$savePath","state":"$state","tags":"${if (wrongTags) "other" else "fixture-managed,fixture-managed-request-7,fixture-managed-candidate-11"}"}]"""
                 }
-                "/api/v2/app/version" -> "v5.0.0"
-                "/api/v2/torrents/categories" -> if (categoryExists) """{"isolated-fixture":{"name":"isolated-fixture"}}""" else "{}"
+                "/api/v2/app/version" -> clientVersion
+                "/api/v2/torrents/categories" -> if (categoryExists) """{"isolated-fixture":{"name":"isolated-fixture","savePath":"$savePath"}}""" else "{}"
                 "/api/v2/torrents/add" -> { assertEquals("true", fields["stopped"]); added = true; state = "stoppedDL"; "Ok." }
                 "/api/v2/torrents/stop" -> { if (!acknowledgeWithoutChangingState) state = "stoppedDL"; "" }
                 "/api/v2/torrents/start" -> { if (!acknowledgeWithoutChangingState) state = "downloading"; "" }
@@ -68,6 +71,7 @@ class AcquisitionProviderTest {
         prowlarrUrl = "http://127.0.0.1:${server.address.port}"; qbittorrentUrl = prowlarrUrl
         prowlarrApiKey = "synthetic-api-key"; qbittorrentUsername = "synthetic-user"; qbittorrentPassword = "synthetic-password"
         category = "isolated-fixture"; managedTag = "fixture-managed"
+        savePath = "/fixture-acquisition"
     }
     private val config = mockk<ConfigService>().also {
         every { it.get(ConfigProperties.Requests.Acquisition.ApprovedIndexerIds) } returns arrayOf("2", "4")
@@ -89,6 +93,8 @@ class AcquisitionProviderTest {
         val fields = requests.single { it.first.endsWith("/add") }.second
         assertEquals("isolated-fixture", fields["category"])
         assertEquals("true", fields["stopped"])
+        assertEquals("/fixture-acquisition", fields["savepath"])
+        assertEquals("false", fields["useDownloadPath"])
         assertEquals("fixture-managed,fixture-managed-request-7,fixture-managed-candidate-11", fields["tags"])
         provider.stop(hash, 7, 11)
         provider.start(hash, 7, 11)
@@ -114,6 +120,31 @@ class AcquisitionProviderTest {
         assertFailsWith<IllegalStateException> { provider.stop(hash, 7, 11) }
         state = "stoppedDL"
         assertFailsWith<IllegalStateException> { provider.start(hash, 7, 11) }
+    }
+
+    @Test fun `oversized bodies and unsupported client semantics fail before mutations`() {
+        oversized = true
+        assertFails { provider.activeIndexers() }
+        oversized = false
+        val result = provider.search("2", "fixture").single()
+        clientVersion = "v4.6.7"
+        assertFailsWith<IllegalStateException> { provider.add(result, 7, 11) }
+        assertFalse(requests.any { it.first.endsWith("/add") || it.first.endsWith("/start") })
+    }
+
+    @Test fun `dedicated category and reported torrent path must match explicit acquisition root`() {
+        val result = provider.search("2", "fixture").single()
+        savePath = "/other-fixture"
+        assertFailsWith<AcquisitionPreflightRefusal> { provider.add(result, 7, 11) }
+        assertFalse(requests.any { it.first.endsWith("/add") })
+        added = true
+        assertFailsWith<IllegalArgumentException> { provider.start(hash, 7, 11) }
+        assertFalse(requests.any { it.first.endsWith("/start") })
+        for (invalid in listOf("", "/", "relative", "/fixture/../other", "C:\\")) {
+            settings.savePath = invalid
+            assertFailsWith<IllegalArgumentException> { provider.activeIndexers() }
+        }
+        assertEquals("C:/isolated-fixture", settings.normalizedSavePath("C:\\isolated-fixture\\"))
     }
 
     @Test fun `existing torrent is never adopted and missing scope refuses stop`() {

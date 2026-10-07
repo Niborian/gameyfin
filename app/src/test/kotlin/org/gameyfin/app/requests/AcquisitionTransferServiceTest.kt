@@ -81,7 +81,7 @@ class AcquisitionTransferServiceTest {
         transfer.state = "IN_FLIGHT"
         assertFailsWith<IllegalArgumentException> { service.reconcile(11, "Inspect crashed intent") }
         verify(exactly = 0) { provider.lookup(any()) }
-        transfer.updatedAt = Instant.now().minusSeconds(360)
+        transfer.updatedAt = Instant.now().minusSeconds(660)
         every { provider.lookup(transfer.torrentHash) } returns OwnedTorrent(transfer.torrentHash, "fixture", setOf("fixture"))
         assertEquals("STOPPED", service.reconcile(11, "Inspect crashed intent").state)
         verify { policy.requireOwnedTorrent("fixture", setOf("fixture"), 7, 11) }
@@ -117,5 +117,24 @@ class AcquisitionTransferServiceTest {
         assertEquals(1, service.search(7, "2", "fixture").size)
         verify(exactly = 1) { candidates.save(any()) }
         verify(exactly = 1) { audits.save(match { it.operation == "SEARCH_RECORDED" }) }
+    }
+
+    @Test fun `generic record changes refuse provider-backed requests rather than pretending to stop them`() {
+        every { transfers.existsByCandidateGameRequestIdAndStateNot(7, "REVIEW") } returns true
+        val records = GameRequestService(mockk(), mockk(), requests, mockk(), mockk(), transfers)
+        assertFailsWith<IllegalArgumentException> { records.cancelRequest(7, "Record cancellation") }
+        assertFailsWith<IllegalArgumentException> { records.retryRequest(7, "Record retry") }
+        assertFailsWith<IllegalArgumentException> { records.changeRequestStatus(7, GameRequestStatus.REJECTED) }
+        verify(exactly = 0) { provider.stop(any(), any(), any()) }
+        verify(exactly = 0) { requests.findById(any()) }
+    }
+
+    @Test fun `known preflight refusal returns to review while post-add failures remain uncertain`() {
+        every { provider.add(any(), 7, 11) } throws AcquisitionPreflightRefusal(IllegalStateException("fixture category absent"))
+        assertFailsWith<AcquisitionPreflightRefusal> { service.submit(11, "Authorized fixture") }
+        assertEquals("REVIEW", transfer.state)
+        verify { audits.save(match { it.operation == "SUBMIT_REFUSED" }) }
+        every { provider.add(any(), 7, 11) } just Runs
+        assertEquals("ACTIVE", service.submit(11, "Deliberate retry after setup correction").state)
     }
 }

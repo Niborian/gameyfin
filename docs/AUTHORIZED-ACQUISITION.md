@@ -2,7 +2,7 @@
 
 Gameyfin's library and request work must only be used for content that the operator is authorized to obtain: their own material, open-source software, public-domain works, or other content for which they hold the required rights.
 
-This fork does not implement an external acquisition provider today. In particular, it does not connect to Prowlarr or qBittorrent, search indexers, submit torrents, or store provider credentials. A game request is a review record, not authority to acquire a release.
+This fork has an opt-in acquisition adapter, disabled by default and tested only against isolated synthetic HTTP fixtures. No production provider or credential is configured or discovered automatically. A game request is a review record, not authority to acquire a release. See [provider configuration, audit and staging gate](AUTHORIZED-ACQUISITION-PROVIDER.md).
 
 ## Non-negotiable limits
 
@@ -14,7 +14,7 @@ This fork does not implement an external acquisition provider today. In particul
 
 ## Requirements before any provider integration
 
-Any future Prowlarr or qBittorrent integration must be implemented in a separately reviewed, milestone-backed change. It must remain disabled by default and require an explicit administrator opt-in. That change must provide all of the following before a real client call is enabled:
+The Prowlarr/qBittorrent integration must remain disabled by default and requires explicit administrator opt-in, plus verified isolated-client/network/credential boundaries. All of the following must be reviewed before a real client is enabled:
 
 1. A dedicated qBittorrent category and application-owned tags, so Gameyfin can identify only the work it created.
 2. Least-privilege credentials restricted to that dedicated scope, with credentials held only in deployment secrets rather than application data or logs.
@@ -26,16 +26,16 @@ Until those controls are implemented and reviewed, Gameyfin must not initiate pr
 
 ## Request cancellation and retry
 
-The general status editor cannot queue a request or mark it downloading. Queuing requires a recorded candidate, an administrator approval record, and explicit candidate selection. No provider is enabled by this change.
+The general status editor cannot queue a request or mark it downloading. Queuing requires a recorded candidate, an administrator approval record, and explicit candidate selection; this alone still performs no provider action. A separately explicit Add action is required when the isolated provider adapter has been deliberately enabled.
 
 Administrator cancellation records a required reason and retains the request history. It refuses an already fulfilled, cancelled, or downloading request: changing a record cannot prove that an external download stopped. Retrying a failed or cancelled request returns it to `AWAITING_APPROVAL`; it does not queue work. Both actions record the actor, previous/new status, time, and reason.
 
-Dedicated category/tags, administrator-approved indexers, restricted provider credentials, and provider-side cancellation/retry remain prerequisites before external acquisition can be enabled.
+Provider-backed records cannot be cancelled/retried/status-edited through the general editor. Owned transfer cancel means stop without deleting files; retry resumes the same persisted hash. Intent/audit and uncertainty reconciliation are described in the provider guide. Real isolated-client credential and integration proof remains a deployment gate.
 
 ## Scope policy and visibility
 
-Administrators may configure positive numeric Prowlarr indexer IDs in Game Requests settings. An empty list approves none; wildcards, zero, nonnumeric, and overflowing IDs fail closed. Requests display the configured approved set separately from the active set. The active set remains empty and the provider disabled because no acquisition adapter is installed.
+Administrators may configure positive numeric Prowlarr indexer IDs in Game Requests settings. An empty list approves none; wildcards, zero, nonnumeric, and overflowing IDs fail closed. Requests display approved IDs separately from verified active approved IDs. The active set remains empty while the provider is disabled.
 
-The reserved category is `gameyfin-acquisition`. A future adapter must apply `gameyfin-managed`, `gameyfin-request-<id>`, and `gameyfin-candidate-<id>` tags. The tested scope policy rejects an unapproved indexer or a torrent without the exact category and request/candidate tags. These checks are necessary, but labels alone are not sufficient authority to modify a torrent: a reviewed adapter must also verify the torrent hash against the persisted submission audit before any provider-side cancellation or retry.
+Category and managed tag prefix are deployment-configurable, with generic safe defaults. The adapter applies the managed prefix plus request/candidate identity tags. Labels alone are not sufficient authority: the adapter verifies the exact persisted transfer hash and current client category/tags before any stop/resume/reconcile action, and refuses to adopt existing torrents.
 
-The policy stores no credentials and cannot contact a client. A future deployment must use secrets and a dedicated isolated client/credential boundary that cannot access unrelated torrents. This configuration does not demonstrate restricted credentials or provider-side behavior; sandbox integration evidence is still required before #33 can close.
+The pure scope policy stores no credentials. Provider settings use external deployment secrets, never ConfigEntry/audit/UI. qB credentials are client-wide: use a dedicated isolated client rather than pretending category tags restrict credentials. Mock integration proves adapter boundaries; real isolated-client evidence remains required before #33 can close.

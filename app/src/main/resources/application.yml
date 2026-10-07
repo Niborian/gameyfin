@@ -1,3 +1,15 @@
+# Opt-in only. Deployment secrets remain separate from administrator ConfigEntry records.
+gameyfin.acquisition:
+  enabled: ${ACQUISITION_ENABLED:false}
+  dedicated-client-acknowledged: ${ACQUISITION_DEDICATED_CLIENT_ACKNOWLEDGED:false}
+  prowlarr-url: ${ACQUISITION_PROWLARR_URL:}
+  prowlarr-api-key: ${ACQUISITION_PROWLARR_API_KEY:}
+  qbittorrent-url: ${ACQUISITION_QBITTORRENT_URL:}
+  qbittorrent-username: ${ACQUISITION_QBITTORRENT_USERNAME:}
+  qbittorrent-password: ${ACQUISITION_QBITTORRENT_PASSWORD:}
+  category: ${ACQUISITION_CATEGORY:gameyfin-acquisition}
+  managed-tag: ${ACQUISITION_MANAGED_TAG:gameyfin-managed}
+
 logging.level:
   root: warn
   org.atmosphere: warn

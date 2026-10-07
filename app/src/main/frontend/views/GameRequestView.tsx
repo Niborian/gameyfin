@@ -26,6 +26,7 @@ import GameRequestDto from "Frontend/generated/org/gameyfin/app/requests/dto/Gam
 import GameRequestStatus from "Frontend/generated/org/gameyfin/app/requests/status/GameRequestStatus";
 import {isAdmin} from "Frontend/util/utils";
 import {SmallInfoField} from "Frontend/components/general/SmallInfoField";
+import AuthorizedAcquisitionPanel from "Frontend/components/general/AuthorizedAcquisitionPanel";
 
 export default function GameRequestView() {
     const rowsPerPage = 25;
@@ -37,6 +38,7 @@ export default function GameRequestView() {
     const [areGameRequestsEnabled, setAreGameRequestsEnabled] = useState(false);
     const [areGuestsAllowedToRequestGames, setAreGuestsAllowedToRequestGames] = useState(false);
     const [acquisitionScope, setAcquisitionScope] = useState<Awaited<ReturnType<typeof AcquisitionScopeEndpoint.summary>>>();
+    const [acquisitionError, setAcquisitionError] = useState("");
 
     useEffect(() => {
         ConfigEndpoint.areGameRequestsEnabled().then(setAreGameRequestsEnabled);
@@ -44,7 +46,8 @@ export default function GameRequestView() {
     }, []);
 
     useEffect(() => {
-        if (isAdmin(auth)) AcquisitionScopeEndpoint.summary().then(setAcquisitionScope);
+        if (isAdmin(auth)) AcquisitionScopeEndpoint.summary().then(setAcquisitionScope)
+            .catch(() => setAcquisitionError("Acquisition scope could not be verified; provider actions are unavailable."));
     }, [auth.state.user]);
 
     const [searchTerm, setSearchTerm] = useState("");
@@ -207,11 +210,13 @@ export default function GameRequestView() {
         </div>
 
 
+        {isAdmin(auth) && acquisitionError && <p role="alert" className="mb-4 text-danger">{acquisitionError}</p>}
         {isAdmin(auth) && acquisitionScope && <div className="mb-4 text-sm text-default-500">
             <p>{acquisitionScope.reason}</p>
             <p>Approved indexers: {acquisitionScope.approvedIndexerIds.join(", ") || "none"}. Active indexers: {acquisitionScope.activeIndexerIds.join(", ") || "none"}.</p>
             <p>Dedicated category: {acquisitionScope.category}; ownership tag: {acquisitionScope.managedTag}.</p>
         </div>}
+        {isAdmin(auth) && acquisitionScope?.providerEnabled && <AuthorizedAcquisitionPanel requests={gameRequests as GameRequestDto[]} indexers={acquisitionScope.activeIndexerIds}/>}
 
         <div className="flex flex-row gap-2 justify-between mb-4">
             <Input

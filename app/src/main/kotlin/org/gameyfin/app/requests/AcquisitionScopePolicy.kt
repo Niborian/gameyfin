@@ -18,7 +18,7 @@ data class AcquisitionScopeDto(
 
 /** Scope guards for a future adapter; this service has no credentials, transport or provider action. */
 @Service
-class AcquisitionScopePolicy(private val config: ConfigService) {
+class AcquisitionScopePolicy(private val config: ConfigService, private val settings: AcquisitionProviderSettings = AcquisitionProviderSettings()) {
     companion object {
         const val CATEGORY = "gameyfin-acquisition"
         const val MANAGED_TAG = "gameyfin-managed"
@@ -28,8 +28,8 @@ class AcquisitionScopePolicy(private val config: ConfigService) {
         providerEnabled = false,
         approvedIndexerIds = approvedIndexerIds(),
         activeIndexerIds = emptyList(),
-        category = CATEGORY,
-        managedTag = MANAGED_TAG,
+        category = category(),
+        managedTag = managedTag(),
         reason = "External acquisition is unavailable. No indexers are active and no torrent client is connected."
     )
 
@@ -48,11 +48,17 @@ class AcquisitionScopePolicy(private val config: ConfigService) {
 
     fun ownershipTags(requestId: Long, candidateId: Long): Set<String> {
         require(requestId > 0 && candidateId > 0) { "An owned torrent must reference a persisted request and candidate" }
-        return setOf(MANAGED_TAG, "gameyfin-request-$requestId", "gameyfin-candidate-$candidateId")
+        return setOf(managedTag(), "${managedTag()}-request-$requestId", "${managedTag()}-candidate-$candidateId")
+    }
+
+    fun category() = scopeLabel(settings.category)
+    fun managedTag() = scopeLabel(settings.managedTag)
+    private fun scopeLabel(value: String) = value.also {
+        require(it.matches(Regex("[a-zA-Z0-9][a-zA-Z0-9_-]{2,63}"))) { "Dedicated scope must be a nonempty bounded category/tag label" }
     }
 
     fun requireOwnedTorrent(category: String, tags: Set<String>, requestId: Long, candidateId: Long) {
-        require(category == CATEGORY && tags.containsAll(ownershipTags(requestId, candidateId))) {
+        require(category == category() && tags.containsAll(ownershipTags(requestId, candidateId))) {
             "Torrent category and all request/candidate ownership tags must match before a future cancel/retry action"
         }
     }
@@ -60,6 +66,11 @@ class AcquisitionScopePolicy(private val config: ConfigService) {
 
 @Endpoint
 @RolesAllowed(Role.Names.ADMIN)
-class AcquisitionScopeEndpoint(private val policy: AcquisitionScopePolicy) {
-    fun summary() = policy.summary()
+class AcquisitionScopeEndpoint(private val policy: AcquisitionScopePolicy, private val settings: AcquisitionProviderSettings, private val provider: AcquisitionProvider) {
+    fun summary(): AcquisitionScopeDto {
+        val summary = policy.summary()
+        if (!settings.enabled) return summary
+        return summary.copy(providerEnabled = true, activeIndexerIds = provider.activeIndexers(),
+            reason = "Dedicated acquisition provider enabled; only verified active approved indexers may be searched. Submission still requires explicit administrator authorization.")
+    }
 }

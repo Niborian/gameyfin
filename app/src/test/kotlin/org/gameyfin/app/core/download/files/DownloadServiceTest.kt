@@ -92,7 +92,18 @@ class DownloadServiceTest {
         val download = service.getDownload(game, TestProvider::class.java.name, 10L, null) as FileDownload
         assertThrows(IllegalArgumentException::class.java) { pathLeases.whenUnused(tempDir) {} }
         download.data.use { it.readBytes() }
-        pathLeases.whenUnused(tempDir) {}
+        // Pipe EOF can reach the consumer just before the producer releases its
+        // independent lease in finally. Wait for that legitimate cleanup race.
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(5)) {
+            while (true) {
+                try {
+                    pathLeases.whenUnused(tempDir) {}
+                    break
+                } catch (_: IllegalArgumentException) {
+                    Thread.sleep(10)
+                }
+            }
+        }
     }
 
     @Test

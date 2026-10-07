@@ -21,6 +21,10 @@ application {
     mainClass.set(appMainClass)
 }
 
+sourceSets.test {
+    java.srcDir(rootProject.file("scripts/rehearsal"))
+}
+
 springBoot {
     buildInfo()
 }

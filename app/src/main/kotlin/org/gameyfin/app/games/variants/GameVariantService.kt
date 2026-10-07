@@ -21,7 +21,7 @@ class GameVariantService(
     @Transactional
     fun syncVariants(game: Game, discovery: DiscoveredGameVariants, library: Library): Game {
         val desiredKeys = discovery.variants.map { VariantKey(it.name, it.version) }.toSet()
-        game.variants.removeIf { it.scanManaged && VariantKey(it.name, it.version) !in desiredKeys }
+        game.variants.removeIf { it.scanManaged && it.quarantinePath == null && VariantKey(it.name, it.version) !in desiredKeys }
 
         val pinnedDefault = game.variants.firstOrNull { it.defaultLocked }
 
@@ -36,6 +36,9 @@ class GameVariantService(
 
             val existing = game.variants.firstOrNull { VariantKey(it.name, it.version) == key }
                 ?: GameVariant(game = game, path = parsed.path.toString()).also { game.variants.add(it) }
+
+            // A recoverable mirror must stay quarantined until an explicit administrator restore.
+            if (existing.quarantinePath != null) return@forEach
 
             val variantLink = resolvePath(parsed.path, library, discovery.gamePath, "${parsed.name}-${parsed.version}")
             val contentLinkResults = parsed.contents.associateWith { content ->

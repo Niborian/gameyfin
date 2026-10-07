@@ -33,5 +33,7 @@ data class VariantRetirementPreviewDto(
     val supersededByVariantId: Long? = null,
     val catalogDependentVariantIds: List<Long> = emptyList(),
     /** Catalog path sharing is only partial evidence; filesystem hardlinks and downloads remain unverified. */
-    val cleanupDependenciesVerified: Boolean = false
+    val cleanupDependenciesVerified: Boolean = false,
+    val quarantinePath: String? = null,
+    val archiveAllowed: Boolean = false
 )

@@ -60,6 +60,7 @@ class VariantRetirementDecisionService(
 
         variant.retirementState = request.state
         variant.retirementReviewAt = request.reviewAt.takeIf { request.state == VariantRetirementState.ARCHIVED }
+        variant.game.updatedAt = Instant.now()
         gameRepository.save(variant.game)
 
         return decisionRepository.save(
@@ -89,7 +90,10 @@ class VariantRetirementDecisionService(
     }
 
     private fun validateTransition(variant: GameVariant, targetState: VariantRetirementState) {
-        if (targetState == VariantRetirementState.ACTIVE) return
+        if (targetState == VariantRetirementState.ACTIVE) {
+            require(variant.quarantinePath == null) { "Restore quarantined mirror before activating the variant" }
+            return
+        }
         require(variant.retirementState != VariantRetirementState.ARCHIVED) { "Variant is already archived" }
         require(!variant.isDefault && !variant.defaultLocked) { "Selected or pinned default variants cannot be archived" }
         require(!variant.isLatestForVariant) { "Latest variants cannot be archived" }

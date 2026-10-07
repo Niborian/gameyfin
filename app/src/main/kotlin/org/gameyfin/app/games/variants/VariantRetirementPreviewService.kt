@@ -66,7 +66,11 @@ class VariantRetirementPreviewService(
                 val dependencies = paths.flatMap { pathUsers[it].orEmpty() }.distinct().filter { it != variant.id }
                 previewVariant(variant).copy(retainedByPolicy = retain, policyReason = reason,
                     supersededAt = variant.supersededAt, supersededByVariantId = variant.supersededByVariantId,
-                    catalogDependentVariantIds = dependencies)
+                    catalogDependentVariantIds = dependencies, quarantinePath = variant.quarantinePath,
+                    archiveAllowed = !protected && variant.retirementState == VariantRetirementState.ACTIVE && game.variants.any {
+                        it.name == variant.name && it.retirementState == VariantRetirementState.ACTIVE &&
+                            VariantVersionComparator.compare(it.version, variant.version) > 0
+                    })
             }
     }
 

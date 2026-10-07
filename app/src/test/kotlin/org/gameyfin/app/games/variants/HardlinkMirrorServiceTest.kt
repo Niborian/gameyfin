@@ -24,7 +24,7 @@ class HardlinkMirrorServiceTest {
         val sourceFile = sourceRoot.resolve("game.bin")
         sourceFile.writeText("game data")
         val storageRoot = tempDir.resolve("data").createDirectory()
-        val service = HardlinkMirrorService(storageRoot.toString())
+        val service = HardlinkMirrorService(storageRoot.toString(), org.gameyfin.app.core.download.files.DownloadPathLeases())
         val library = Library(id = 7L, name = "Library")
 
         val result = service.mirror(sourceRoot, library, sourceRoot, "Normal-1.0")
@@ -45,7 +45,7 @@ class HardlinkMirrorServiceTest {
     @Test
     fun `mirror should explain when hardlink storage is unavailable`(@TempDir tempDir: Path) {
         val storageRoot = tempDir.resolve("data").createDirectory()
-        val service = HardlinkMirrorService(storageRoot.toString())
+        val service = HardlinkMirrorService(storageRoot.toString(), org.gameyfin.app.core.download.files.DownloadPathLeases())
         val library = Library(id = 7L, name = "Library")
 
         val exception = assertFailsWith<IllegalArgumentException> {
@@ -65,7 +65,7 @@ class HardlinkMirrorServiceTest {
             val source = sourceRoot.resolve("game.bin")
             source.writeText("torrent data")
             val storageRoot = tempDir.resolve("data").createDirectory()
-            val service = HardlinkMirrorService(storageRoot.toString())
+            val service = HardlinkMirrorService(storageRoot.toString(), org.gameyfin.app.core.download.files.DownloadPathLeases())
             val library = Library(id = 7L, name = "Library")
 
             val result = service.mirror(source, library, sourceRoot, "Normal-1.0")

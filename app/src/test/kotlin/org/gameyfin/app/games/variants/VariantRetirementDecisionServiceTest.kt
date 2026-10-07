@@ -149,6 +149,15 @@ class VariantRetirementDecisionServiceTest {
         verify(exactly = 0) { decisionRepository.save(any()) }
     }
 
+    @Test
+    fun `metadata activation requires physical quarantine restoration first`() {
+        val game = gameWithVariant(mirrorRoot.resolve("old"))
+        game.variants.first().also { it.retirementState = VariantRetirementState.ARCHIVED; it.quarantinePath = "quarantine/payload" }
+        every { gameRepository.findByIdOrNull(1L) } returns game
+        assertFailsWith<IllegalArgumentException> { service.setState(1L, 10L, SetVariantRetirementStateRequestDto(VariantRetirementState.ACTIVE)) }
+        verify(exactly = 0) { gameRepository.save(any()) }
+    }
+
     private fun gameWithVariant(path: Path): Game {
         val game = Game(
             id = 1L,

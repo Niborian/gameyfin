@@ -29,6 +29,7 @@ import VariantContentDto from "Frontend/generated/org/gameyfin/app/games/dto/Var
 import FileDto from "Frontend/generated/org/gameyfin/app/core/filesystem/FileDto";
 import {humanFileSize} from "Frontend/util/utils";
 import ContentPathPickerModal from "Frontend/components/general/modals/ContentPathPickerModal";
+import VariantRetirementControls from "Frontend/components/administration/VariantRetirementControls";
 import {gameState} from "Frontend/state/GameState";
 import {CheckIcon, FolderOpenIcon, PlusIcon, TrashIcon, XIcon} from "@phosphor-icons/react";
 
@@ -928,6 +929,7 @@ export default function VariantManagerModal({
                                         </div>
                                     </div>
                                 )}
+                                {game && <VariantRetirementControls gameId={game.id} libraryId={game.libraryId} onChanged={onChanged}/>}
                             </ModalBody>
                             <ModalFooter>
                                 <Button variant="light" onPress={onClose}>

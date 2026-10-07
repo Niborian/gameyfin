@@ -52,7 +52,8 @@ class GameEndpointTest {
             steamUpdateCandidateService,
             variantRetirementPreviewService,
             variantRetirementDecisionService,
-            variantTimestampEvidenceService
+            variantTimestampEvidenceService,
+            mockk<org.gameyfin.app.games.variants.VariantQuarantineService>()
         )
 
         mockkStatic("org.gameyfin.app.core.security.SecurityUtilsKt")

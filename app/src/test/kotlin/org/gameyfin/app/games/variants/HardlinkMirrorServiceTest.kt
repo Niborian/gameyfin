@@ -110,4 +110,32 @@ class HardlinkMirrorServiceTest {
             assertTrue(Files.notExists(storage.resolve("library-hardlinks/library-7")))
         }
     }
+
+    @Test
+    fun `mirror storage inside source falls back before creating source directories`(@TempDir tempDir: Path) {
+        val source = tempDir.resolve("source").createDirectory()
+        source.resolve("payload.bin").writeText("torrent payload")
+        val result = HardlinkMirrorService(source.resolve("data").toString()).mirror(
+            source, Library(id = 7L, name = "Library"), source, "Normal-1.0"
+        )
+        assertEquals(VariantLinkStatus.DIRECT, result.status)
+        assertEquals(source, result.path)
+        assertTrue(result.fallbackReason!!.contains("separate from source"))
+        assertTrue(Files.notExists(source.resolve("data")))
+        assertEquals("torrent payload", source.resolve("payload.bin").readText())
+    }
+
+    @Test
+    fun `a managed mirror used as source cannot be deleted during rescan`(@TempDir tempDir: Path) {
+        val storage = tempDir.resolve("storage").createDirectory()
+        val source = storage.resolve("library-hardlinks/library-7/source/Normal-1.0")
+        Files.createDirectories(source)
+        source.resolve("payload.bin").writeText("existing source payload")
+        val result = HardlinkMirrorService(storage.toString()).mirror(
+            source, Library(id = 7L, name = "Library"), source.parent, "Normal-1.0"
+        )
+        assertEquals(VariantLinkStatus.DIRECT, result.status)
+        assertEquals(source, result.path)
+        assertEquals("existing source payload", source.resolve("payload.bin").readText())
+    }
 }

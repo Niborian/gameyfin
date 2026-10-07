@@ -60,6 +60,23 @@ jobs:
       - name: Run automated tests
         run: ./gradlew :app:test --no-daemon --console=plain
 
+      - name: Require Linux hardlink and variant scan fixture evidence
+        run: |
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          suites = [
+              'org.gameyfin.app.games.variants.HardlinkMirrorServiceTest',
+              'org.gameyfin.app.libraries.VariantScanIntegrityFixtureTest',
+          ]
+          for name in suites:
+              report = Path(f'app/build/test-results/test/TEST-{name}.xml')
+              root = ET.parse(report).getroot()
+              if int(root.get('tests', '0')) == 0 or any(int(root.get(key, '0')) for key in ('failures', 'errors', 'skipped')):
+                  raise SystemExit(f'Missing passing Linux filesystem evidence: {name}')
+              print(f'{name}: {root.get("tests")} passed, none skipped')
+          PY
+
       - name: Publish test report
         if: always()
         uses: mikepenz/action-junit-report@v6

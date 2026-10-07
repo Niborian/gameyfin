@@ -38,22 +38,45 @@ class HardlinkMirrorService(
     fun mirror(source: Path, library: Library, gamePath: Path, targetName: String): LinkResult {
         val target = mirrorTarget(library, gamePath, targetName)
         require(source.exists()) { "Hardlink source path does not exist: $source" }
+        var targetTouched = false
         return try {
+            val actualSource = source.toRealPath()
+            val actualMirrorRoot = resolveThroughExistingParent(mirrorRoot)
+            require(!actualSource.startsWith(actualMirrorRoot) && !actualMirrorRoot.startsWith(actualSource)) {
+                "Hardlink mirror storage must be separate from source paths"
+            }
+            require(resolveThroughExistingParent(target).startsWith(actualMirrorRoot)) {
+                "Hardlink target must remain within managed mirror storage"
+            }
             mirrorRoot.createDirectories()
             require(Files.getFileStore(source) == Files.getFileStore(mirrorRoot)) {
                 "Hardlink mirror requires source and mirror storage on the same filesystem"
             }
+            targetTouched = true
             deleteTargetIfPresent(target)
             linkTree(source, target)
             LinkResult(target, VariantLinkStatus.HARDLINKED, null)
         } catch (e: Exception) {
             log.warn { "Hardlinking '$source' to '$target' failed: ${e.message}" }
-            runCatching { deleteTargetIfPresent(target) }
-                .onFailure { log.warn { "Could not clean incomplete mirror '$target': ${it.message}" } }
+            if (targetTouched) {
+                runCatching { deleteTargetIfPresent(target) }
+                    .onFailure { log.warn { "Could not clean incomplete mirror '$target': ${it.message}" } }
+            }
             // Keep the library usable without copying or writing torrent-managed data.
             LinkResult(source, VariantLinkStatus.DIRECT,
                 "Hardlink unavailable; using original source directly: ${e.message ?: e.javaClass.simpleName}")
         }
+    }
+
+    /** Resolve existing symbolic-link ancestors before creating any mirror directories. */
+    private fun resolveThroughExistingParent(path: Path): Path {
+        var existing = path.toAbsolutePath().normalize()
+        val suffix = mutableListOf<Path>()
+        while (!Files.exists(existing)) {
+            suffix.add(existing.fileName)
+            existing = existing.parent
+        }
+        return suffix.asReversed().fold(existing.toRealPath()) { result, segment -> result.resolve(segment) }
     }
 
     private fun mirrorTarget(library: Library, gamePath: Path, targetName: String): Path {

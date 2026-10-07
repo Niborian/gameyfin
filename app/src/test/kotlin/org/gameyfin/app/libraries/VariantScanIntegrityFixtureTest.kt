@@ -14,16 +14,18 @@ import org.gameyfin.app.games.variants.*
 import org.gameyfin.app.libraries.entities.*
 import org.gameyfin.app.libraries.scan.LibraryGameProcessor
 import org.gameyfin.app.media.ImageService
-import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.EnumSource
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import kotlin.test.*
 
 /** Real filesystem discovery and variant synchronization; external metadata/DB boundaries are stubbed. */
 class VariantScanIntegrityFixtureTest {
-    @Test
-    fun `full and incremental scans retain canonical game attachments and source files`(@TempDir root: Path) {
-        val fixture = VariantLibraryFixture.create(root)
+    @ParameterizedTest
+    @EnumSource(LibraryStorageMode::class)
+    fun `full and incremental scans retain canonical game attachments and source files`(storageMode: LibraryStorageMode, @TempDir root: Path) {
+        val fixture = VariantLibraryFixture.create(java.nio.file.Files.createDirectory(root.resolve("library")))
         val config = mockk<ConfigService>()
         every { config.get(ConfigProperties.Libraries.Scan.GameFileExtensions) } returns arrayOf("rar", "zip")
         every { config.get(ConfigProperties.Libraries.Scan.ScanEmptyDirectories) } returns false
@@ -36,13 +38,13 @@ class VariantScanIntegrityFixtureTest {
         val grouping = mockk<GameVariantGroupingService>()
         val ignored = mockk<IgnoredPathRepository>()
         val plugins = mockk<PluginService>()
-        val library = Library(id = 71, name = "Integrity fixture", directories = mutableListOf(
-            DirectoryMapping(internalPath = root.toString())
+        val library = Library(id = 71, name = "Integrity fixture", storageMode = storageMode, directories = mutableListOf(
+            DirectoryMapping(internalPath = fixture.root.toString())
         ))
         val game = Game(id = 1, library = library, metadata = GameMetadata(path = fixture.gamePath.toString()))
         library.games.add(game)
         library.ignoredPaths.add(IgnoredPath(path = fixture.ignoredAttachedSourcePath.toString(), source = IgnoredPathGroupedVariantSource()))
-        library.ignoredPaths.add(IgnoredPath(path = root.resolve("hardlinks").toString(), source = IgnoredPathUserSource(mockk())))
+        library.ignoredPaths.add(IgnoredPath(path = fixture.root.resolve("hardlinks").toString(), source = IgnoredPathUserSource(mockk())))
         every { repository.save(game) } returns game
         every { metadata.updateMetadata(game) } returns game
         every { grouping.autoGroupExactMatches(library) } returns 0
@@ -84,6 +86,13 @@ class VariantScanIntegrityFixtureTest {
         assertEquals(before, fixture.snapshot())
         assertEquals(2.0, metrics.find("gameyfin.scans.completed").tag("type", "quick").counter()!!.count())
         assertEquals(2.0, metrics.find("gameyfin.scans.completed").tag("type", "full").counter()!!.count())
+        if (storageMode == LibraryStorageMode.HARDLINK_MIRROR) {
+            val latest = game.variants.single { it.name == "Normal" && it.version == "1.1" }
+            assertEquals(VariantLinkStatus.HARDLINKED, latest.linkStatus)
+            assertTrue(java.nio.file.Files.isSameFile(
+                fixture.gamePath.resolve("Normal 1.1/game.bin"), Path.of(latest.path).resolve("game.bin")
+            ))
+        }
         verify(exactly = 0) { metadata.matchFromFile(any(), any()) }
         verify(exactly = 0) { metadata.create(any()) }
     }

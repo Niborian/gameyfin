@@ -145,7 +145,9 @@ class AcquisitionProvider(
         val body = post("/api/v2/torrents/add", mapOf("urls" to result.magnet, "category" to policy.category(),
             "tags" to policy.ownershipTags(requestId, candidateId).joinToString(","), "autoTMM" to "false", "stopped" to "true",
             "savepath" to settings.savePath, "useDownloadPath" to "false"))
-        check(body.trim() == "Ok.") { "Provider did not acknowledge submission; inspect before retry" }
+        // qB5.2 uses an empty successful response; 5.0/5.1 use the legacy text.
+        // Neither acknowledgment is sufficient without the exact owned state below.
+        check(body.trim() in setOf("", "Ok.")) { "Provider did not acknowledge submission; inspect before retry" }
         confirmState(result.hash, requestId, candidateId, stopped = true)
         // Never start an unowned/mis-tagged or unexpectedly running add response.
         post("/api/v2/torrents/start", mapOf("hashes" to result.hash))
@@ -179,7 +181,7 @@ class AcquisitionProvider(
     private fun login() {
         settings.requireEnabled()
         val response = post("/api/v2/auth/login", mapOf("username" to settings.qbittorrentUsername, "password" to settings.qbittorrentPassword))
-        check(response.trim() == "Ok.") { "Torrent client authentication failed" }
+        check(response.trim() in setOf("", "Ok.")) { "Torrent client authentication failed" }
         check(cookies.cookieStore.cookies.any { it.name == "SID" && it.value.isNotBlank() }) { "Torrent client authentication cookie missing" }
         check(get(settings.qbittorrentUrl, "/api/v2/app/version").trim().matches(Regex("v?5\\.[0-9]+.*"))) { "Only reviewed qBittorrent 5.x stopped/start/stop semantics are supported" }
     }

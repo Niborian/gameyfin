@@ -24,6 +24,8 @@ class AcquisitionProviderTest {
     private var oversized = false
     private var clientVersion = "v5.0.0"
     private var savePath = "/fixture-acquisition"
+    private var modernAcknowledgment = false
+    private var loginCookie = true
     private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
         createContext("/") { exchange ->
             val path = exchange.requestURI.path
@@ -47,8 +49,8 @@ class AcquisitionProviderTest {
                     assertEquals("synthetic-user", fields["username"])
                     assertEquals("synthetic-password", fields["password"])
                     assertNull(exchange.requestHeaders.getFirst("X-Api-Key"))
-                    exchange.responseHeaders.add("Set-Cookie", "SID=fixture-session; Path=/; HttpOnly")
-                    "Ok."
+                    if (loginCookie) exchange.responseHeaders.add("Set-Cookie", "SID=fixture-session; Path=/; HttpOnly")
+                    if (modernAcknowledgment) "" else "Ok."
                 }
                 "/api/v2/torrents/info" -> {
                     assertTrue(exchange.requestHeaders.getFirst("Cookie").contains("SID=fixture-session"))
@@ -56,7 +58,7 @@ class AcquisitionProviderTest {
                 }
                 "/api/v2/app/version" -> clientVersion
                 "/api/v2/torrents/categories" -> if (categoryExists) """{"isolated-fixture":{"name":"isolated-fixture","savePath":"$savePath"}}""" else "{}"
-                "/api/v2/torrents/add" -> { assertEquals("true", fields["stopped"]); added = true; state = "stoppedDL"; "Ok." }
+                "/api/v2/torrents/add" -> { assertEquals("true", fields["stopped"]); added = true; state = "stoppedDL"; if (modernAcknowledgment) "" else "Ok." }
                 "/api/v2/torrents/stop" -> { if (!acknowledgeWithoutChangingState) state = "stoppedDL"; "" }
                 "/api/v2/torrents/start" -> { if (!acknowledgeWithoutChangingState) state = "downloading"; "" }
                 else -> { status = 500; "Unexpected endpoint" }
@@ -79,6 +81,28 @@ class AcquisitionProviderTest {
     }
     private val provider = AcquisitionProvider(settings, AcquisitionScopePolicy(config, settings), JsonMapper.builder().build())
     @AfterEach fun close() { server.stop(0) }
+
+    @Test fun `qB52 empty acknowledgments still require authenticated SID and exact owned stopped state`() {
+        modernAcknowledgment = true; clientVersion = "v5.2.4"
+        val result = provider.search("2", "fixture").single()
+        provider.add(result, 7, 11)
+        assertTrue(requests.any { it.first.endsWith("/start") })
+    }
+
+    @Test fun `empty login without SID never permits add`() {
+        modernAcknowledgment = true; loginCookie = false; clientVersion = "v5.2.4"
+        val result = provider.search("2", "fixture").single()
+        assertFailsWith<AcquisitionPreflightRefusal> { provider.add(result, 7, 11) }
+        assertFalse(requests.any { it.first.endsWith("/add") || it.first.endsWith("/start") })
+    }
+
+    @Test fun `modern empty add acknowledgment cannot start a mistagged torrent`() {
+        modernAcknowledgment = true; wrongTags = true; clientVersion = "v5.2.4"
+        val result = provider.search("2", "fixture").single()
+        assertFailsWith<IllegalArgumentException> { provider.add(result, 7, 11) }
+        assertEquals("stoppedDL", state)
+        assertFalse(requests.any { it.first.endsWith("/start") })
+    }
 
     @Test fun `search scopes active approved indexers and ignores arbitrary URL or unexpected indexer results`() {
         assertEquals(listOf("2"), provider.activeIndexers())

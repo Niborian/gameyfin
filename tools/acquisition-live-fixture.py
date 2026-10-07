@@ -158,7 +158,9 @@ try:
             form = urllib.parse.urlencode({"username": "fixture", "password": password}).encode()
             req = urllib.request.Request(origin + "/api/v2/auth/login", data=form, headers={"Referer": origin})
             with opener.open(req, timeout=10) as response:
-                if response.read().decode().strip() != "Ok.": raise RuntimeError("Fixture authentication refused")
+                if response.read().decode().strip() not in ("", "Ok."): raise RuntimeError("Fixture authentication refused")
+            if not any(cookie.name == "SID" for cookie in cookies):
+                raise RuntimeError("Fixture authentication SID absent")
             break
         except Exception as failure:
             qb_failure = str(failure)

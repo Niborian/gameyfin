@@ -108,8 +108,12 @@ image. CI retains the SQL/manifest as synthetic inputs, not execution evidence.
 Import `seed.sql` with the selected image's compatible H2 JAR only after its fresh
 schema has migrated and the fixture application has stopped. Keep the original
 database pristine for separate baseline/candidate restores. Source generation has
-been locally exercised, but actual SQL import/image scan must pass before treating
-the reusable runner as validated; the earlier one-time fixture remains separate.
+been locally exercised. The opt-in test imports the generated SQL into the actual
+Flyway-migrated H2 schema and verifies four libraries, 132 games, 132 variants, 264
+contents and 924 source files. Both this test and the 1,000-game mocked scan/recovery
+passed on JDK 25 on 2026-10-07 (two tests, no skips or failures). Actual-image scan
+execution remains separate; generated inputs plus schema validation are not an
+end-to-end image runner. The earlier one-time fixture remains separate evidence.
 
 The next CI comparison must consume immutable baseline/candidate image references and
 their source revisions as inputs, rather than a mutable tag or any server-specific path.

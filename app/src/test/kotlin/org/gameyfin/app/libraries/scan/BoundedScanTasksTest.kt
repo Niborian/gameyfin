@@ -6,6 +6,8 @@ import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class BoundedScanTasksTest {
     @Test
@@ -39,10 +41,29 @@ class BoundedScanTasksTest {
         try {
             val tasks = (0 until 100).asSequence().map { index ->
                 created.incrementAndGet()
-                Callable { if (index == 0) error("database unavailable") else index }
+                Callable { if (index == 0) error("database unavailable") else Thread.sleep(10000).let { index } }
             }
             assertThrows(ExecutionException::class.java) { executor.invokeBounded(tasks, 2) }
             assertEquals(2, created.get())
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `completed work refills the window while a slow task is still running`() {
+        val thirdTaskStarted = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val results = executor.invokeBounded(sequenceOf(
+                Callable {
+                    assertTrue(thirdTaskStarted.await(5, TimeUnit.SECONDS), "Window stalled behind slow task")
+                    0
+                },
+                Callable { 1 },
+                Callable { thirdTaskStarted.countDown(); 2 }
+            ), 2)
+            assertEquals(listOf(0, 1, 2), results)
         } finally {
             executor.shutdownNow()
         }

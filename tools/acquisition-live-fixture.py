@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -84,9 +85,14 @@ def docker(*args):
 def request(url, body=None, headers=None, opener=None, timeout=10):
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(url, data=data, headers=headers or {})
-    with (opener or urllib.request.build_opener()).open(req, timeout=timeout) as response:
-        result = response.read().decode()
-        return json.loads(result) if result and result[0] in "[{" else result
+    try:
+        with (opener or urllib.request.build_opener()).open(req, timeout=timeout) as response:
+            result = response.read().decode()
+            return json.loads(result) if result and result[0] in "[{" else result
+    except urllib.error.HTTPError as failure:
+        detail = failure.read(4096).decode(errors="replace").replace(key, "[masked]").replace(password, "[masked]")
+        print("Fixture API refusal", failure.code, detail)
+        raise
 
 try:
     docker("network", "create", "--internal", prefix)
@@ -128,7 +134,8 @@ try:
     # fail on the deliberately no-egress network. Bound setup, not app calls.
     schemas = request("http://127.0.0.1:39696/api/v1/indexer/schema", headers=api_headers, timeout=90)
     indexer = next(x for x in schemas if x["implementation"] == "Torznab")
-    indexer.update(name="Lawful synthetic fixture", enable=True, priority=25)
+    profiles = request("http://127.0.0.1:39696/api/v1/appprofile", headers=api_headers)
+    indexer.update(name="Lawful synthetic fixture", enable=True, priority=25, appProfileId=profiles[0]["id"])
     for field in indexer["fields"]:
         if field["name"] == "baseUrl": field["value"] = "http://host.docker.internal:39697"
         if field["name"] == "apiPath": field["value"] = "/api"

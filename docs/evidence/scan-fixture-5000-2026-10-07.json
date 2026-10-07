@@ -1,0 +1,19 @@
+{
+  "fixtureGames": 5000,
+  "variants": 10000,
+  "contents": 30000,
+  "concurrency": 4,
+  "maxHeapBytes": 536870912,
+  "sampledPeakHeapBytes": 137626792,
+  "processLifetimePeakRssBytes": 470560768,
+  "durationSeconds": 5.7955147,
+  "gamesPerSecond": 862.7361431763774,
+  "injectedFailures": 1,
+  "recoveryFailures": 0,
+  "sourceFilesUnchanged": true,
+  "sourceIntegrity": "paths and sizes; before SHA-256 fixture enhancement",
+  "persistence": "mocked",
+  "javaVersion": "25.0.4.1",
+  "os": "Windows",
+  "scannerBaseline": "5ae6c1b"
+}

@@ -121,6 +121,12 @@ dependencyManagement {
 tasks.withType<Test> {
     useJUnitPlatform()
     finalizedBy(tasks.jacocoTestReport)
+    if (providers.gradleProperty("scanBenchmark").orNull == "true") {
+        systemProperty("gameyfin.scanBenchmark", "true")
+        systemProperty("gameyfin.scanBenchmark.games", providers.gradleProperty("scanBenchmarkGames").getOrElse("1000"))
+        maxHeapSize = providers.gradleProperty("scanBenchmarkHeap").getOrElse("512m")
+        jvmArgs("-XX:MaxMetaspaceSize=256m")
+    }
 }
 
 tasks.jacocoTestReport {

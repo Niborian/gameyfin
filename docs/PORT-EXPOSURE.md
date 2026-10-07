@@ -121,6 +121,22 @@ synthetic grouped download manifest through that same proxy and verify exact arc
 members and hashes both with and without the optional content. Never use a production
 game or a large real download as the fixture.
 
+`scripts/proxy-download-smoke.py` provides a reusable bounded archive check after
+seeding an isolated staging fixture. Supply `--base-url`, `--manifest`, and the explicit
+`--isolated-synthetic-staging` acknowledgement. A manifest contains two to eight
+`cases`, each with a same-origin `/download/...` `path` and a `members` object mapping
+each expected archive member name to its SHA256. Include required-group-only and
+required-plus-optional selections. It rejects unexpected/duplicate members, wrong
+hashes, redirects to another origin, and responses or expanded archives over one MiB.
+Use HTTPS or an isolated loopback proxy; pass staging-only username/password through
+`GAMEYFIN_SMOKE_USERNAME`/`GAMEYFIN_SMOKE_PASSWORD` in the test process environment,
+not command arguments, repository files, or saved shell history. The script authenticates
+the expected identity before downloads and logs out after successful checks. If a check
+fails, destroy the disposable instance/session during cleanup. No credentials are written.
+Run `python scripts/test-proxy-download-smoke.py` for daemon-free validator tests.
+Passing these tests validates the harness, not a live proxy download; actual fixture
+execution and browser WebSocket evidence remain separate acceptance requirements.
+
 ## Remaining user/environment choices
 
 Record the intended proxy hostname, where the proxy runs, and which network/interface it

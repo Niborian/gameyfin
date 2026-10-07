@@ -9,10 +9,14 @@ import os
 from pathlib import Path
 import re
 import secrets
+import select
 import shlex
+import socket
+import socketserver
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -28,6 +32,30 @@ def read_context(source):
 def require_internal(network):
     if network.get("Internal") is not True:
         raise ValueError("Synthetic runner network must be internal")
+
+
+def forwarder(ip):
+    class Relay(socketserver.BaseRequestHandler):
+        def handle(self):
+            with socket.create_connection((ip, 8080), timeout=10) as upstream:
+                pair = (self.request, upstream)
+                deadline = time.monotonic() + 180
+                while time.monotonic() < deadline:
+                    readable, _, _ = select.select(pair, [], [], 30)
+                    if not readable:
+                        return
+                    for source in readable:
+                        data = source.recv(65536)
+                        if not data:
+                            return
+                        (upstream if source is self.request else self.request).sendall(data)
+    class Server(socketserver.ThreadingTCPServer):
+        daemon_threads = True
+        block_on_close = False
+    server = Server(("127.0.0.1", 0), Relay)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
 
 
 def main():
@@ -69,16 +97,19 @@ def main():
         proxy_config.write_text(config.read_text().replace("http://gameyfin:8080", "http://" + context["backend"] + ":8080"))
         selected = root / "manifest.json"
         selected.write_text(json.dumps({"cases": cases}))
+        relay = None
         try:
             docker("run", "-d", "--name", name, "--network", context["network"], "--restart", "no",
-                "--cpus", "0.5", "--memory", "128m", "--memory-swap", "128m", "--publish", "127.0.0.1::8080",
+                "--cpus", "0.5", "--memory", "128m", "--memory-swap", "128m",
                 "--mount", f"type=bind,src={proxy_config},dst=/etc/nginx/conf.d/default.conf,readonly", context["proxyImage"])
             proxy = json.loads(docker("inspect", name))[0]
-            bindings = proxy["NetworkSettings"]["Ports"]
-            bindings = {port: values for port, values in bindings.items() if values}
-            if list(bindings) != ["8080/tcp"] or len(bindings["8080/tcp"]) != 1 or bindings["8080/tcp"][0]["HostIp"] != "127.0.0.1":
-                raise ValueError("Proxy must publish exactly one loopback port")
-            base = "http://127.0.0.1:" + bindings["8080/tcp"][0]["HostPort"]
+            if proxy["HostConfig"].get("PortBindings"):
+                raise ValueError("Internal synthetic proxy must not publish Docker ports")
+            ip = proxy["NetworkSettings"]["Networks"][context["network"]]["IPAddress"]
+            # Docker internal networks may discard published ports. Use only a loopback
+            # listener forwarding to this exact inspected, newly created proxy container.
+            relay, relay_thread = forwarder(ip)
+            base = "http://127.0.0.1:" + str(relay.server_address[1])
             for attempt in range(30):
                 try:
                     with urllib.request.urlopen(base + "/login", timeout=2) as response:
@@ -100,6 +131,10 @@ def main():
                 "exactMembersAndHashes": True, "authenticatedIdentity": True, "logoutAnonymous": True,
                 "proxyImage": context["proxyImage"]}))
         finally:
+            if relay is not None:
+                relay.shutdown()
+                relay.server_close()
+                relay_thread.join(timeout=5)
             subprocess.run(command + ["rm", "-f", name], capture_output=True)
             if docker("ps", "-a", "--filter", "name=^/" + name + "$", "--format", "{{.Names}}"):
                 raise RuntimeError("Exact synthetic proxy cleanup could not be verified")

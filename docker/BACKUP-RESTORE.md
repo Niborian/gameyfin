@@ -6,7 +6,7 @@ This is a checklist for [production-operations issue #26](https://github.com/Nib
 
 1. Record the running image ID and digest, application version, container configuration, database path, and mount destinations. Keep environment values and credentials out of tickets and logs.
 2. Locate the persistent `db`, `data`, and `plugindata` volumes. The example Compose file maps these to `/opt/gameyfin/db`, `/opt/gameyfin/data`, and `/opt/gameyfin/plugindata`; verify the actual deployment instead of assuming those paths.
-3. Choose a backup destination outside the live volumes with enough free space, access controls, and a retention policy. Keep the encryption key and application secrets available through the existing secret-management process.
+3. Choose a backup destination outside the live volumes with enough free space, access controls, and a retention policy. Securely retain the original `APP_KEY` through the existing secret-management process, separately from the backup archive and public evidence. A newly generated key is not interchangeable with the original: an isolated rehearsal demonstrated that the same restored user could not authenticate until its matching key was restored. Never put key values in commands, tickets, or logs.
 4. Record the current library, game, variant, content, and ignored-path counts. Check recent scan failures and restarts so the restore can be compared against a known baseline.
 
 ## Capture a consistent backup
@@ -19,6 +19,7 @@ This is a checklist for [production-operations issue #26](https://github.com/Nib
 ## Rehearse away from production
 
 1. Restore a **copy** of the backup into a separate directory and start an isolated Gameyfin instance using the *same image digest* as the backup. Use a separate container name, private network, and no published ports. Do not mount the production database or writable library paths. If a library mount is required for validation, use a read-only fixture or read-only bind mount.
+   Before startup, verify the restored directories and H2 files are writable by that image's actual runtime UID/GID, with appropriate ownership and permissions. Determine the runtime identity from the selected image and deployment configuration rather than assuming a fixed UID. Preserve or explicitly restore ownership during copying; an isolated root-owned copy caused H2 to open read-only and Flyway to fail. Do not solve this by making secret files world-readable or changing ownership on production mounts.
 2. Check database migration and startup logs. Query the restored H2 database independently of login for row counts in `LIBRARY`, `GAME`, `GAME_VARIANT`, `VARIANT_CONTENT`, and `LIBRARY_IGNORED_PATHS`; compare them with the recorded production counts. Also check that a pinned default still refers to the intended variant.
 3. Confirm the restored application can start and serve the expected authenticated path. Run quick/full scans only against an isolated fixture, then compare game/variant/content counts and fixture hashes. Never point the rehearsal at writable torrent-managed files.
 4. Record the restore start/end time, duration, image digest, row-count comparison, log findings, fixture results, and the operator. Treat any mismatch or H2 error as a failed rehearsal; preserve the backup and investigate before a live upgrade.

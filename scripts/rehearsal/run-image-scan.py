@@ -74,6 +74,8 @@ def main():
         spec = importlib.util.spec_from_file_location("seed", Path(__file__).with_name("seed-scan-fixture.py"))
         seed = importlib.util.module_from_spec(spec); spec.loader.exec_module(seed)
         seed.generate(root / "fixture", "/fixture")
+        manifest = json.loads((root / "fixture" / "manifest.json").read_text())
+        expected_games = {game["gameId"]: game for game in manifest["games"]}
         for directory in ("db", "data", "logs", "plugins", "plugindata"):
             (root / directory).mkdir(mode=0o777)
             os.chmod(root / directory, 0o777)
@@ -169,15 +171,28 @@ def main():
             else: raise RuntimeError("Scan timed out")
             if errors: raise RuntimeError("Unexpected scan failure")
             games = json.loads(request("/connect/GameEndpoint/getAll", {}))
-            if len(games) != 132: raise RuntimeError("Game count changed")
+            if len(games) != 132 or {game["id"] for game in games} != set(expected_games):
+                raise RuntimeError("Affected game identity set changed")
             default_count = sum(sum(bool(v["default"]) for v in game["variants"]) for game in games)
-            if args.source_revision != "baseline-unknown" and default_count != 132:
-                raise RuntimeError("Candidate did not retain exactly one default per game")
+            for game in games:
+                expected_game = expected_games[game["id"]]
+                pinned = [variant for variant in game["variants"] if variant["id"] == expected_game["variantId"]]
+                if len(pinned) != 1: raise RuntimeError("Administrator-pinned variant identity changed")
+                contents = {content["id"]: content for content in pinned[0]["contents"]}
+                if set(contents) != {expected_game["requiredContentId"], expected_game["optionalContentId"]}:
+                    raise RuntimeError("Pinned content identities changed")
+                required = contents[expected_game["requiredContentId"]]
+                optional = contents[expected_game["optionalContentId"]]
+                if not required["required"] or required["pathCount"] != 2 or optional["required"] or optional["defaultSelected"]:
+                    raise RuntimeError("Grouped/optional content selection semantics changed")
+                if args.source_revision != "baseline-unknown":
+                    defaults = [variant for variant in game["variants"] if variant["default"]]
+                    if len(defaults) != 1 or defaults[0]["id"] != expected_game["variantId"] or not defaults[0]["defaultLocked"]:
+                        raise RuntimeError("Candidate did not retain this game's exact pinned default")
             report["scanResults"].append({"phase": phase, "seconds": time.monotonic()-started,
                 "completedLibraries": done, "failedLibraries": errors, "sampledPeakHeapBytes": peak_heap,
                 "sampledPeakJvmRssBytes": peak_rss,
                 "defaultVariants": default_count})
-        manifest = json.loads((root / "fixture" / "manifest.json").read_text())
         providers = json.loads(request("/connect/DownloadProviderEndpoint/getProviders", {}))
         if len(providers) != 1: raise RuntimeError("Expected only explicitly supplied direct provider")
         selected_game = manifest["games"][0]

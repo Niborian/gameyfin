@@ -2,7 +2,7 @@
 
 Gameyfin's library and request work must only be used for content that the operator is authorized to obtain: their own material, open-source software, public-domain works, or other content for which they hold the required rights.
 
-This fork has an opt-in acquisition adapter, disabled by default and tested only against isolated synthetic HTTP fixtures. No production provider or credential is configured or discovered automatically. A game request is a review record, not authority to acquire a release. See [provider configuration, audit and staging gate](AUTHORIZED-ACQUISITION-PROVIDER.md).
+This fork has an opt-in acquisition adapter, disabled by default. Synthetic HTTP regressions test refusal and lifecycle boundaries; a separate disposable GitHub Actions fixture exercises a real isolated qBittorrent/Prowlarr pair using an invented no-payload identity. Neither proves an operator's production isolation or authorizes enabling it. No production provider or credential is configured or discovered automatically. A game request is a review record, not authority to acquire a release. See [provider configuration, audit and staging gate](AUTHORIZED-ACQUISITION-PROVIDER.md).
 
 ## Non-negotiable limits
 
@@ -17,7 +17,7 @@ This fork has an opt-in acquisition adapter, disabled by default and tested only
 The Prowlarr/qBittorrent integration must remain disabled by default and requires explicit administrator opt-in, plus verified isolated-client/network/credential boundaries. All of the following must be reviewed before a real client is enabled:
 
 1. A dedicated qBittorrent category and application-owned tags, so Gameyfin can identify only the work it created.
-2. Least-privilege credentials restricted to that dedicated scope, with credentials held only in deployment secrets rather than application data or logs.
+2. Least privilege through a dedicated client and separate credentials, enforced network isolation and filesystem mounts that cannot reach production or unrelated torrent paths. qBittorrent credentials are client-wide; category/tags do not restrict their API permissions. Credentials must be held only in deployment secrets rather than application data or logs.
 3. A visible, administrator-approved set of indexers; unapproved indexers must not be searched.
 4. An auditable request, candidate, approval, queue, cancel, retry, and import-review trail.
 5. Fakes or a sandbox for integration tests; production providers need their own explicit opt-in.

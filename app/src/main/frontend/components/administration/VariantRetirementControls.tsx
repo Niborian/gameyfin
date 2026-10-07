@@ -69,7 +69,7 @@ export default function VariantRetirementControls({gameId, libraryId, onChanged}
         {selected && <>
             <p className="text-sm">{selected.policyReason}</p>
             <p className="text-sm">{humanFileSize(selected.managedBytes)} · Selected content: {selected.selectedContentNames.join(", ") || "None"}</p>
-            <p className="text-sm">Catalog dependencies: {selected.catalogDependentVariantIds.join(", ") || "None recorded"}. File identity and active downloads are checked again before quarantine.</p>
+            <p className="text-sm">Shared catalog paths: {selected.catalogDependentVariantIds.join(", ") || "None recorded"}. This preview does not verify physical hardlink dependencies or active downloads; both are checked before quarantine.</p>
             {selected.supersededAt && <p className="text-sm">Supersession observed: {String(selected.supersededAt)}</p>}
             <div className="text-xs break-all">{selected.effectivePaths.map((path) => <p key={path}>{path}</p>)}</div>
             {selected.quarantinePath && <p className="text-xs break-all">Recoverable mirror: {selected.quarantinePath}</p>}

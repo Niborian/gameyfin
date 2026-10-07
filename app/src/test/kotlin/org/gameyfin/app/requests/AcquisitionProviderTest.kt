@@ -27,6 +27,7 @@ class AcquisitionProviderTest {
     private var modernAcknowledgment = false
     private var loginCookie = true
     private var searchResponse: String? = null
+    private var addResponse: String? = null
     private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
         createContext("/") { exchange ->
             val path = exchange.requestURI.path
@@ -59,7 +60,7 @@ class AcquisitionProviderTest {
                 }
                 "/api/v2/app/version" -> clientVersion
                 "/api/v2/torrents/categories" -> if (categoryExists) """{"isolated-fixture":{"name":"isolated-fixture","savePath":"$savePath"}}""" else "{}"
-                "/api/v2/torrents/add" -> { assertEquals("true", fields["stopped"]); added = true; state = "stoppedDL"; if (modernAcknowledgment) "" else "Ok." }
+                "/api/v2/torrents/add" -> { assertEquals("true", fields["stopped"]); added = true; state = "stoppedDL"; addResponse ?: if (modernAcknowledgment) "" else "Ok." }
                 "/api/v2/torrents/stop" -> { if (!acknowledgeWithoutChangingState) state = "stoppedDL"; "" }
                 "/api/v2/torrents/start" -> { if (!acknowledgeWithoutChangingState) state = "downloading"; "" }
                 else -> { status = 500; "Unexpected endpoint" }
@@ -82,6 +83,19 @@ class AcquisitionProviderTest {
     }
     private val provider = AcquisitionProvider(settings, AcquisitionScopePolicy(config, settings), JsonMapper.builder().build())
     @AfterEach fun close() { server.stop(0) }
+
+    @Test fun `qB52 structured add acknowledgment requires one exact identity and owned stopped state`() {
+        modernAcknowledgment = true; clientVersion = "v5.2.4"
+        addResponse = """{"success_count":1,"failure_count":0,"pending_count":0,"added_torrent_ids":["$hash"]}"""
+        provider.add(provider.search("2", "fixture").single(), 7, 11)
+        assertTrue(requests.any { it.first.endsWith("/start") })
+    }
+
+    @Test fun `structured add with wrong identity never starts even if owned torrent exists`() {
+        addResponse = """{"success_count":1,"failure_count":0,"pending_count":0,"added_torrent_ids":["${"b".repeat(40)}"]}"""
+        assertFailsWith<IllegalStateException> { provider.add(provider.search("2", "fixture").single(), 7, 11) }
+        assertFalse(requests.any { it.first.endsWith("/start") })
+    }
 
     @Test fun `proxied Prowlarr results use exact identity metadata without fetching proxy or trackers`() {
         searchResponse = """[{"indexerId":2,"title":"Fixture","magnetUrl":"https://invalid.example/proxy?apikey=never-follow","infoHash":"${hash.uppercase()}"},{"indexerId":3,"title":"Unapproved","infoHash":"$hash"},{"indexerId":2,"title":"URL only","magnetUrl":"https://invalid.example/proxy"},{"indexerId":2,"title":"Bad hash","infoHash":"invalid"},{"indexerId":2,"title":"Conflicting identity","magnetUrl":"magnet:?xt=urn:btih:${"b".repeat(40)}","infoHash":"$hash"}]"""

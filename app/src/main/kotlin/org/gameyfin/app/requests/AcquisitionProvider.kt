@@ -153,9 +153,16 @@ class AcquisitionProvider(
         val body = post("/api/v2/torrents/add", mapOf("urls" to result.magnet, "category" to policy.category(),
             "tags" to policy.ownershipTags(requestId, candidateId).joinToString(","), "autoTMM" to "false", "stopped" to "true",
             "savepath" to settings.savePath, "useDownloadPath" to "false"))
-        // qB5.2 uses an empty successful response; 5.0/5.1 use the legacy text.
+        // qB5.2 returns counts and exact added identities; older releases use text.
         // Neither acknowledgment is sufficient without the exact owned state below.
-        check(body.trim() in setOf("", "Ok.")) { "Provider did not acknowledge submission; inspect before retry" }
+        val acknowledged = body.trim() in setOf("", "Ok.") || runCatching {
+            val reply = mapper.readTree(body)
+            val ids = reply.path("added_torrent_ids")
+            reply.isObject && reply.path("success_count").asInt(-1) == 1 &&
+                reply.path("failure_count").asInt(-1) == 0 && reply.path("pending_count").asInt(-1) == 0 &&
+                ids.isArray && ids.size() == 1 && ids.first().asText() == result.hash
+        }.getOrDefault(false)
+        check(acknowledged) { "Provider did not acknowledge submission; inspect before retry" }
         confirmState(result.hash, requestId, candidateId, stopped = true)
         // Never start an unowned/mis-tagged or unexpectedly running add response.
         post("/api/v2/torrents/start", mapOf("hashes" to result.hash))

@@ -30,5 +30,7 @@ class VariantRetirementDecision(
     @Lob
     val reason: String? = null,
 
-    val reviewAt: Instant? = null
+    val reviewAt: Instant? = null,
+    val supersededAt: Instant? = null,
+    val supersededByVariantId: Long? = null
 )

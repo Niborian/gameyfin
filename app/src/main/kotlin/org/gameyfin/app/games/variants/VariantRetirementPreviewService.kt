@@ -11,6 +11,9 @@ import org.springframework.data.repository.findByIdOrNull
 import org.springframework.stereotype.Service
 import org.gameyfin.app.libraries.LibraryRetentionPolicyRepository
 import org.gameyfin.app.libraries.entities.LibraryRetentionPolicyMode
+import org.gameyfin.app.games.entities.VariantRetirementState
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 @Service
 class VariantRetirementPreviewService(
@@ -27,6 +30,14 @@ class VariantRetirementPreviewService(
             variants.map { it.version }.distinct().sortedWith(VariantVersionComparator.reversed())
                 .take(policy?.keepLatestCount ?: 1).toSet()
         }
+        val pathUsers = mutableMapOf<String, MutableSet<Long>>()
+        game.variants.forEach { variant ->
+            val id = requireNotNull(variant.id)
+            pathUsers.getOrPut(variant.path) { mutableSetOf() }.add(id)
+            variant.contents.forEach { content -> content.effectivePaths().forEach { path ->
+                pathUsers.getOrPut(path) { mutableSetOf() }.add(id)
+            } }
+        }
         return game.variants
             .sortedWith(compareBy<GameVariant> { it.name }.thenBy { it.version })
             .map { variant ->
@@ -38,11 +49,24 @@ class VariantRetirementPreviewService(
                         keep to if (keep) "Within latest ${policy.keepLatestCount} versions of ${variant.name}"
                             else "Outside latest ${policy.keepLatestCount} versions; administrator archive review required"
                     }
-                    policy?.mode == LibraryRetentionPolicyMode.GRACE_PERIOD -> true to
-                        "Retained until dated supersession evidence can prove the ${policy.gracePeriodDays}-day grace period elapsed"
+                    policy?.mode == LibraryRetentionPolicyMode.GRACE_PERIOD -> {
+                        val replacement = game.variants.firstOrNull { it.id == variant.supersededByVariantId }
+                        val observedAt = variant.supersededAt
+                        val validEvidence = observedAt != null && replacement != null &&
+                            replacement.retirementState == VariantRetirementState.ACTIVE && replacement.name == variant.name &&
+                            VariantVersionComparator.compare(replacement.version, variant.version) > 0
+                        val expired = validEvidence && !Instant.now().isBefore(
+                            requireNotNull(observedAt).plus(requireNotNull(policy.gracePeriodDays).toLong(), ChronoUnit.DAYS))
+                        !expired to if (expired) "Observed supersession grace period elapsed; administrator archive review required"
+                            else "Retained until valid dated supersession evidence proves the ${policy.gracePeriodDays}-day grace period elapsed"
+                    }
                     else -> true to "Keep all versions"
                 }
-                previewVariant(variant).copy(retainedByPolicy = retain, policyReason = reason)
+                val paths = (listOf(variant.path) + variant.contents.flatMap { it.effectivePaths() }).toSet()
+                val dependencies = paths.flatMap { pathUsers[it].orEmpty() }.distinct().filter { it != variant.id }
+                previewVariant(variant).copy(retainedByPolicy = retain, policyReason = reason,
+                    supersededAt = variant.supersededAt, supersededByVariantId = variant.supersededByVariantId,
+                    catalogDependentVariantIds = dependencies)
             }
     }
 

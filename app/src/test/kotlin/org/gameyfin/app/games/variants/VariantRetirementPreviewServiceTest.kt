@@ -110,6 +110,32 @@ class VariantRetirementPreviewServiceTest {
         assertEquals(Instant.parse("2026-09-26T00:00:00Z"), preview.latestDecisionAt)
     }
 
+    @Test
+    fun `grace period requires current replacement evidence and exposes catalog dependencies conservatively`() {
+        val library = Library(id = 1L, name = "Games")
+        val game = Game(id = 1L, library = library, metadata = GameMetadata(path = "/source"))
+        val old = variant(game, 10L, "1.0", "/source/shared", VariantLinkStatus.DIRECT)
+        val newer = variant(game, 11L, "2.0", "/source/shared", VariantLinkStatus.DIRECT)
+        game.variants.addAll(listOf(old, newer))
+        every { gameRepository.findByIdOrNull(1L) } returns game
+        every { decisionRepository.findAllByVariantIdOrderByDecidedAtAsc(any()) } returns emptyList()
+        every { policyRepository.findByLibraryId(1L) } returns org.gameyfin.app.libraries.entities.LibraryRetentionPolicy(
+            library = library, mode = org.gameyfin.app.libraries.entities.LibraryRetentionPolicyMode.GRACE_PERIOD,
+            gracePeriodDays = 30, updatedBy = "admin")
+        fun preview() = service.preview(1L).first { it.variantId == 10L }
+        assertTrue(preview().retainedByPolicy)
+        old.supersededAt = Instant.now().minusSeconds(60L * 86400)
+        old.supersededByVariantId = 11L
+        assertEquals(false, preview().retainedByPolicy)
+        assertEquals(listOf(11L), preview().catalogDependentVariantIds)
+        assertEquals(false, preview().cleanupDependenciesVerified)
+        old.supersededAt = Instant.now()
+        assertTrue(preview().retainedByPolicy)
+        old.supersededAt = Instant.now().minusSeconds(60L * 86400)
+        newer.retirementState = VariantRetirementState.ARCHIVED
+        assertTrue(preview().retainedByPolicy)
+    }
+
     private fun variant(game: Game, id: Long, version: String, path: String, linkStatus: VariantLinkStatus): GameVariant {
         return GameVariant(
             id = id,

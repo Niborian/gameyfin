@@ -62,6 +62,10 @@ class GameEndpoint(
     }
 
     @RolesAllowed(Role.Names.ADMIN)
+    fun markVariantSuperseded(gameId: Long, variantId: Long, request: MarkVariantSupersededRequestDto): VariantRetirementDecisionDto =
+        variantRetirementDecisionService.markSuperseded(gameId, variantId, request)
+
+    @RolesAllowed(Role.Names.ADMIN)
     fun setVariantRetirementState(
         gameId: Long,
         variantId: Long,

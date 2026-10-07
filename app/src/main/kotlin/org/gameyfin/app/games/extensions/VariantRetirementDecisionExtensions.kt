@@ -10,5 +10,7 @@ fun VariantRetirementDecision.toDto() = VariantRetirementDecisionDto(
     decidedAt = decidedAt,
     actor = actor,
     reason = reason,
-    reviewAt = reviewAt
+    reviewAt = reviewAt,
+    supersededAt = supersededAt,
+    supersededByVariantId = supersededByVariantId
 )

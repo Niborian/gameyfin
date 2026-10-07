@@ -79,6 +79,11 @@ class GameVariant(
 
     var retirementReviewAt: Instant? = null,
 
+    /** First administrator observation of an active newer version of this variant. */
+    var supersededAt: Instant? = null,
+
+    var supersededByVariantId: Long? = null,
+
     @OneToMany(mappedBy = "variant", cascade = [ALL], orphanRemoval = true, fetch = FetchType.EAGER)
     var contents: MutableList<VariantContent> = mutableListOf()
 )

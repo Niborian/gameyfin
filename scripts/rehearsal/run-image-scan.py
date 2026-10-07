@@ -282,9 +282,14 @@ def main():
         application_log = subprocess.run([*docker_command, "logs", name], text=True, capture_output=True, check=True)
         log_lines = (application_log.stdout + application_log.stderr).splitlines()
         report["errorLogLineCount"] = sum(bool(re.search(r"\bERROR\b", line)) for line in log_lines)
-        report["oomErrorLineCount"] = sum("OutOfMemoryError" in line for line in log_lines)
+        # Startup prints -XX:+ExitOnOutOfMemoryError: that option is not an OOM.
+        report["oomErrorLineCount"] = sum(bool(re.search(r"\bOutOfMemoryError(?::|\s*$)", line)) for line in log_lines)
+        report["offlineMetadataMissErrorLineCount"] = sum(
+            "No results found for originalIds: {}" in line and bool(re.search(r"\bERROR\b", line)) for line in log_lines)
+        report["unexpectedErrorLogLineCount"] = report["errorLogLineCount"] - report["offlineMetadataMissErrorLineCount"]
         report["closedDatabaseErrorLineCount"] = sum("database is already closed" in line.lower() or "database has been closed" in line.lower() for line in log_lines)
-        if report["oomKilled"] or report["health"] != "UP": raise RuntimeError("Fixture unhealthy after scans")
+        if report["oomKilled"] or report["oomErrorLineCount"] or report["health"] != "UP":
+            raise RuntimeError("Fixture unhealthy after scans")
         report["remainingGaps"] = ["production acceptance"] + ([] if args.interrupt_scan else ["failure/recovery"])
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, indent=2) + "\n")

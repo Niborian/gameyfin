@@ -51,7 +51,7 @@ class VariantScanIntegrityFixtureTest {
         every { core.addGamesToLibrary(emptyList(), library, false) } returns library
         every { libraryRepository.save(library) } returns library
         val discovery = GameVariantDiscoveryService(VariantMetadataParser())
-        val variants = GameVariantService(repository, filesystem, HardlinkMirrorService(root.resolve("storage").toString()))
+        val variants = GameVariantService(repository, filesystem, HardlinkMirrorService(root.resolve("storage").toString(), org.gameyfin.app.core.download.files.DownloadPathLeases()))
         variants.syncVariants(game, discovery.discover(fixture.gamePath), library)
         assertEquals("1.1", game.variants.single { it.isDefault }.version)
         val pinned = game.variants.single { it.name == "Normal" && it.version == "1.0" }

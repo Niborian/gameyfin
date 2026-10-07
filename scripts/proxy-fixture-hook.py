@@ -19,7 +19,10 @@ import urllib.request
 
 
 def main():
-    context = json.loads(sys.stdin.read(65537))
+    encoded = sys.stdin.read(1024 * 1024 + 1)
+    if len(encoded) > 1024 * 1024:
+        raise ValueError("Synthetic hook context exceeds one MiB")
+    context = json.loads(encoded)
     for field in ("backend", "network"):
         if not re.fullmatch(r"gameyfin-scan-(?:net-)?[a-f0-9]{16}", context[field]):
             raise ValueError("Only disposable synthetic runner resources are accepted")
@@ -48,6 +51,9 @@ def main():
     backend = json.loads(docker("inspect", context["backend"]))[0]
     if backend["HostConfig"].get("PortBindings") or context["network"] not in backend["NetworkSettings"]["Networks"]:
         raise ValueError("Backend isolation differs from fixture context")
+    inspected_network = json.loads(docker("network", "inspect", context["network"]))[0]
+    if inspected_network.get("Internal") is not True:
+        raise ValueError("Synthetic runner network must be internal")
     with tempfile.TemporaryDirectory(prefix="gameyfin-proxy-smoke-") as leaf:
         root = Path(leaf)
         config = Path(__file__).parent.parent / "docker" / "exposure-fixture" / "nginx.conf"

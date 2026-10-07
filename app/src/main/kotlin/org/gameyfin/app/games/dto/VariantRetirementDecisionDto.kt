@@ -10,5 +10,7 @@ data class VariantRetirementDecisionDto(
     val decidedAt: Instant,
     val actor: String,
     val reason: String?,
-    val reviewAt: Instant?
+    val reviewAt: Instant?,
+    val supersededAt: Instant? = null,
+    val supersededByVariantId: Long? = null
 )

@@ -24,7 +24,7 @@ class HardlinkMirrorServiceTest {
         val sourceFile = sourceRoot.resolve("game.bin")
         sourceFile.writeText("game data")
         val storageRoot = tempDir.resolve("data").createDirectory()
-        val service = HardlinkMirrorService(storageRoot.toString())
+        val service = HardlinkMirrorService(storageRoot.toString(), org.gameyfin.app.core.download.files.DownloadPathLeases())
         val library = Library(id = 7L, name = "Library")
 
         val result = service.mirror(sourceRoot, library, sourceRoot, "Normal-1.0")
@@ -45,7 +45,7 @@ class HardlinkMirrorServiceTest {
     @Test
     fun `mirror should explain when hardlink storage is unavailable`(@TempDir tempDir: Path) {
         val storageRoot = tempDir.resolve("data").createDirectory()
-        val service = HardlinkMirrorService(storageRoot.toString())
+        val service = HardlinkMirrorService(storageRoot.toString(), org.gameyfin.app.core.download.files.DownloadPathLeases())
         val library = Library(id = 7L, name = "Library")
 
         val exception = assertFailsWith<IllegalArgumentException> {
@@ -65,7 +65,7 @@ class HardlinkMirrorServiceTest {
             val source = sourceRoot.resolve("game.bin")
             source.writeText("torrent data")
             val storageRoot = tempDir.resolve("data").createDirectory()
-            val service = HardlinkMirrorService(storageRoot.toString())
+            val service = HardlinkMirrorService(storageRoot.toString(), org.gameyfin.app.core.download.files.DownloadPathLeases())
             val library = Library(id = 7L, name = "Library")
 
             val result = service.mirror(source, library, sourceRoot, "Normal-1.0")
@@ -85,7 +85,7 @@ class HardlinkMirrorServiceTest {
     fun `unavailable mirror storage retains original source without copying`(@TempDir tempDir: Path) {
         val source = tempDir.resolve("source.bin").also { it.writeText("torrent payload") }
         val storage = tempDir.resolve("storage").also { it.writeText("existing storage file") }
-        val service = HardlinkMirrorService(storage.toString())
+        val service = HardlinkMirrorService(storage.toString(), org.gameyfin.app.core.download.files.DownloadPathLeases())
         val result = service.mirror(source, Library(id = 7L, name = "Library"), source, "Normal-1.0")
         assertEquals(source, result.path)
         assertEquals(VariantLinkStatus.DIRECT, result.status)
@@ -100,7 +100,7 @@ class HardlinkMirrorServiceTest {
         FileSystems.newFileSystem(URI.create("jar:${archive.toUri()}"), mapOf("create" to "true")).use { zip ->
             val source = zip.getPath("/source.bin").also { it.writeText("separate filesystem payload") }
             val storage = tempDir.resolve("storage").createDirectory()
-            val result = HardlinkMirrorService(storage.toString()).mirror(
+            val result = HardlinkMirrorService(storage.toString(), org.gameyfin.app.core.download.files.DownloadPathLeases()).mirror(
                 source, Library(id = 7L, name = "Library"), source, "Normal-1.0"
             )
             assertEquals(source, result.path)
@@ -115,7 +115,7 @@ class HardlinkMirrorServiceTest {
     fun `mirror storage inside source falls back before creating source directories`(@TempDir tempDir: Path) {
         val source = tempDir.resolve("source").createDirectory()
         source.resolve("payload.bin").writeText("torrent payload")
-        val result = HardlinkMirrorService(source.resolve("data").toString()).mirror(
+        val result = HardlinkMirrorService(source.resolve("data").toString(), org.gameyfin.app.core.download.files.DownloadPathLeases()).mirror(
             source, Library(id = 7L, name = "Library"), source, "Normal-1.0"
         )
         assertEquals(VariantLinkStatus.DIRECT, result.status)
@@ -131,7 +131,7 @@ class HardlinkMirrorServiceTest {
         val source = storage.resolve("library-hardlinks/library-7/source/Normal-1.0")
         Files.createDirectories(source)
         source.resolve("payload.bin").writeText("existing source payload")
-        val result = HardlinkMirrorService(storage.toString()).mirror(
+        val result = HardlinkMirrorService(storage.toString(), org.gameyfin.app.core.download.files.DownloadPathLeases()).mirror(
             source, Library(id = 7L, name = "Library"), source.parent, "Normal-1.0"
         )
         assertEquals(VariantLinkStatus.DIRECT, result.status)

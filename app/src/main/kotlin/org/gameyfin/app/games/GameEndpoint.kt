@@ -14,6 +14,7 @@ import org.gameyfin.app.games.variants.SteamUpdateCandidateService
 import org.gameyfin.app.games.variants.VariantRetirementPreviewService
 import org.gameyfin.app.games.variants.VariantRetirementDecisionService
 import org.gameyfin.app.games.variants.VariantTimestampEvidenceService
+import org.gameyfin.app.games.variants.VariantQuarantineService
 import org.gameyfin.app.libraries.LibraryCoreService
 import org.gameyfin.app.libraries.LibraryService
 import org.gameyfin.app.requests.dto.GameRequestCandidateDto
@@ -32,7 +33,8 @@ class GameEndpoint(
     private val steamUpdateCandidateService: SteamUpdateCandidateService,
     private val variantRetirementPreviewService: VariantRetirementPreviewService,
     private val variantRetirementDecisionService: VariantRetirementDecisionService,
-    private val variantTimestampEvidenceService: VariantTimestampEvidenceService
+    private val variantTimestampEvidenceService: VariantTimestampEvidenceService,
+    private val variantQuarantineService: VariantQuarantineService
 ) {
     fun subscribe(): Flux<out List<GameEvent>> {
         return if (isCurrentUserAdmin()) {
@@ -60,6 +62,22 @@ class GameEndpoint(
     fun getVariantRetirementPreview(gameId: Long): List<VariantRetirementPreviewDto> {
         return variantRetirementPreviewService.preview(gameId)
     }
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun markVariantSuperseded(gameId: Long, variantId: Long, request: MarkVariantSupersededRequestDto): VariantRetirementDecisionDto =
+        variantRetirementDecisionService.markSuperseded(gameId, variantId, request)
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun quarantineVariantMirror(gameId: Long, variantId: Long, request: QuarantineVariantRequestDto): VariantQuarantineDto =
+        variantQuarantineService.quarantine(gameId, variantId, request)
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun restoreVariantMirror(gameId: Long, variantId: Long, recordId: Long, confirmation: String): VariantQuarantineDto =
+        variantQuarantineService.restore(gameId, variantId, recordId, confirmation)
+
+    @RolesAllowed(Role.Names.ADMIN)
+    fun getVariantQuarantineHistory(gameId: Long, variantId: Long): List<VariantQuarantineDto> =
+        variantQuarantineService.history(gameId, variantId)
 
     @RolesAllowed(Role.Names.ADMIN)
     fun setVariantRetirementState(

@@ -43,6 +43,7 @@ class DownloadServiceTest {
     private lateinit var configService: ConfigService
     private lateinit var sessionBandwidthManager: SessionBandwidthManager
     private lateinit var service: DownloadService
+    private lateinit var pathLeases: DownloadPathLeases
 
     @BeforeEach
     fun setup() {
@@ -50,13 +51,59 @@ class DownloadServiceTest {
         configService = mockk<ConfigService>(relaxed = true)
         sessionBandwidthManager = mockk<SessionBandwidthManager>(relaxed = true)
         val downloadMetrics = DownloadMetrics(SimpleMeterRegistry(), sessionBandwidthManager)
-        service = DownloadService(pluginManager, configService, sessionBandwidthManager, downloadMetrics)
+        pathLeases = DownloadPathLeases()
+        service = DownloadService(pluginManager, configService, sessionBandwidthManager, downloadMetrics, pathLeases)
     }
 
     @AfterEach
     fun tearDown() {
         unmockkAll()
         clearAllMocks()
+    }
+
+    @Test
+    fun `archived variant rejects explicit download and size requests until restored`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+        val variant = game.variants.first { it.id == 10L }
+        variant.retirementState = org.gameyfin.app.games.entities.VariantRetirementState.ARCHIVED
+        assertThrows(IllegalStateException::class.java) { service.estimateDownloadSize(game, 10L, null) }
+        assertThrows(IllegalStateException::class.java) { service.getDownload(game, TestProvider::class.java.name, 10L, null) }
+        assertEquals("12345", java.nio.file.Files.readString(tempDir.resolve("base.bin")))
+
+        variant.retirementState = org.gameyfin.app.games.entities.VariantRetirementState.ACTIVE
+        assertEquals(9L, service.estimateDownloadSize(game, 10L, null))
+    }
+
+    @Test
+    fun `default download skips archived variants and explicit archived ids fail`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+        val archived = GameVariant(id = 11L, game = game, path = tempDir.resolve("old.bin").toString(),
+            defaultLocked = true, retirementState = org.gameyfin.app.games.entities.VariantRetirementState.ARCHIVED)
+        game.variants.add(0, archived)
+
+        assertEquals(9L, service.estimateDownloadSize(game, null, null))
+        assertThrows(IllegalArgumentException::class.java) { service.estimateDownloadSize(game, 11L, null) }
+        assertThrows(IllegalArgumentException::class.java) { service.getDownload(game, TestProvider::class.java.name, 11L, null) }
+    }
+
+    @Test
+    fun `grouped download protects selected paths until stream finishes`(@TempDir tempDir: java.nio.file.Path) {
+        val game = createVariantGame(tempDir)
+        val download = service.getDownload(game, TestProvider::class.java.name, 10L, null) as FileDownload
+        assertThrows(IllegalArgumentException::class.java) { pathLeases.whenUnused(tempDir) {} }
+        download.data.use { it.readBytes() }
+        // Pipe EOF can reach the consumer just before the producer releases its
+        // independent lease in finally. Wait for that legitimate cleanup race.
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(5)) {
+            while (true) {
+                try {
+                    pathLeases.whenUnused(tempDir) {}
+                    break
+                } catch (_: IllegalArgumentException) {
+                    Thread.sleep(10)
+                }
+            }
+        }
     }
 
     @Test
@@ -123,14 +170,16 @@ class DownloadServiceTest {
     fun `getDownload should return download from provider`() {
         val provider = createMockProvider("TestProvider")
         val path = "/test/path"
-        val expectedDownload = mockk<Download>()
+        val expectedDownload = FileDownload(ByteArrayInputStream(byteArrayOf(1)), "bin", 1L)
 
         every { pluginManager.getExtensions(DownloadProvider::class.java) } returns listOf(provider)
         every { provider.download(Path(path)) } returns expectedDownload
 
         val result = service.getDownload(path, TestProvider::class.java.name)
 
-        assertEquals(expectedDownload, result)
+        assertTrue(result is FileDownload)
+        assertEquals(1, result.data.read())
+        result.data.close()
         verify(exactly = 1) { provider.download(Path(path)) }
     }
 
@@ -149,14 +198,16 @@ class DownloadServiceTest {
     fun `getDownload should find correct provider by class name`() {
         val provider1 = createMockProvider("Provider1")
         val provider2 = createMockProvider("Provider2")
-        val expectedDownload = mockk<Download>()
+        val expectedDownload = FileDownload(ByteArrayInputStream(byteArrayOf(2)), "bin", 1L)
 
         every { pluginManager.getExtensions(DownloadProvider::class.java) } returns listOf(provider1, provider2)
         every { provider2.download(any()) } returns expectedDownload
 
         val result = service.getDownload("/test/path", Provider2::class.java.name)
 
-        assertEquals(expectedDownload, result)
+        assertTrue(result is FileDownload)
+        assertEquals(2, result.data.read())
+        result.data.close()
         verify(exactly = 0) { provider1.download(any()) }
         verify(exactly = 1) { provider2.download(any()) }
     }

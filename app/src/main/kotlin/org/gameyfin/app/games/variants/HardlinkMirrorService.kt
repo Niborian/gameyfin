@@ -3,6 +3,7 @@ package org.gameyfin.app.games.variants
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.gameyfin.app.games.entities.VariantLinkStatus
 import org.gameyfin.app.libraries.entities.Library
+import org.gameyfin.app.core.download.files.DownloadPathLeases
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.io.IOException
@@ -18,7 +19,8 @@ import kotlin.io.path.name
 
 @Service
 class HardlinkMirrorService(
-    @Value($$"${spring.content.fs.filesystem-root:./data/}") storageRoot: String
+    @Value($$"${spring.content.fs.filesystem-root:./data/}") storageRoot: String,
+    private val pathLeases: DownloadPathLeases
 ) {
     companion object {
         private val log = KotlinLogging.logger {}
@@ -36,6 +38,12 @@ class HardlinkMirrorService(
     fun isManagedMirrorPath(path: Path): Boolean = path.toAbsolutePath().normalize().startsWith(mirrorRoot.toAbsolutePath())
 
     fun mirror(source: Path, library: Library, gamePath: Path, targetName: String): LinkResult {
+        return pathLeases.acquire(listOf(source, mirrorTarget(library, gamePath, targetName))).use {
+            mirrorWithLease(source, library, gamePath, targetName)
+        }
+    }
+
+    private fun mirrorWithLease(source: Path, library: Library, gamePath: Path, targetName: String): LinkResult {
         val target = mirrorTarget(library, gamePath, targetName)
         require(source.exists()) { "Hardlink source path does not exist: $source" }
         var targetTouched = false

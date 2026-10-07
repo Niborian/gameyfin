@@ -53,16 +53,21 @@ class DownloadEndpoint(
         val deferredResult = DeferredResult<ResponseEntity<StreamingResponseBody>>()
 
         downloadExecutor.execute {
+            var pendingDownload: FileDownload? = null
             try {
                 val game = gameService.getById(gameId)
                 val sessionId = request.session.id
                 val remoteIp = request.getRemoteIp(LookupPolicy.IPV4_PREFERRED)
                 val selectedIds = if (explicitSelection) contentIds ?: emptyList() else contentIds
                 val download = downloadService.getDownload(game, provider, variantId, selectedIds)
+                pendingDownload = download as? FileDownload
                 gameService.incrementDownloadCount(game)
 
                 val result = when (download) {
                     is FileDownload -> {
+                        deferredResult.onTimeout { download.data.close() }
+                        deferredResult.onError { download.data.close() }
+                        deferredResult.onCompletion { download.data.close() }
                         val baseFilename = game.title?.replace("[\\\\/:*?\"<>|]".toRegex(), "") // Remove common invalid filename chars
                             ?: "download"
 
@@ -104,8 +109,9 @@ class DownloadEndpoint(
                     }
                 }
 
-                deferredResult.setResult(result)
+                if (!deferredResult.setResult(result)) runCatching { pendingDownload?.data?.close() }
             } catch (e: Exception) {
+                runCatching { pendingDownload?.data?.close() }
                 deferredResult.setErrorResult(e)
             }
         }

@@ -79,6 +79,14 @@ class GameVariant(
 
     var retirementReviewAt: Instant? = null,
 
+    /** First administrator observation of an active newer version of this variant. */
+    var supersededAt: Instant? = null,
+
+    var supersededByVariantId: Long? = null,
+
+    /** Archived mirror quarantine location; original catalog paths remain unchanged until restoration. */
+    var quarantinePath: String? = null,
+
     @OneToMany(mappedBy = "variant", cascade = [ALL], orphanRemoval = true, fetch = FetchType.EAGER)
     var contents: MutableList<VariantContent> = mutableListOf()
 )

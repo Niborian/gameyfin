@@ -21,6 +21,23 @@ import kotlin.test.assertTrue
 class GameVariantServiceTest {
 
     @Test
+    fun `scan never recreates or removes a quarantined mirror record`() {
+        val (service, repository, filesystemService, library, game, gamePath) = variantTestContext()
+        val quarantined = GameVariant(game = game, name = "Normal", version = "1.0", path = "/managed/old",
+            retirementState = org.gameyfin.app.games.entities.VariantRetirementState.ARCHIVED,
+            quarantinePath = "/managed/quarantine/payload")
+        game.variants.add(quarantined)
+        every { repository.save(game) } returns game
+        every { filesystemService.calculateFileSize(any()) } returns 0L
+        service.syncVariants(game, discoveredVariants(gamePath), library)
+        assertEquals("/managed/old", quarantined.path)
+        assertEquals("/managed/quarantine/payload", quarantined.quarantinePath)
+        io.mockk.verify(exactly = 0) { filesystemService.calculateFileSize("/managed/old") }
+        service.syncVariants(game, DiscoveredGameVariants(gamePath, emptyList()), library)
+        assertEquals(listOf(quarantined), game.variants)
+    }
+
+    @Test
     fun `syncVariants should select the newest Normal version by default`() {
         val (service, repository, filesystemService, library, game, gamePath) = variantTestContext()
         every { repository.save(game) } returns game

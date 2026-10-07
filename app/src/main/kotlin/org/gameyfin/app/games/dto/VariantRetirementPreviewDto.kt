@@ -26,5 +26,14 @@ data class VariantRetirementPreviewDto(
     val latestDecisionAt: Instant?,
     val latestDecisionState: VariantRetirementState?,
     val disposition: VariantRetirementDisposition,
-    val reason: String
+    val reason: String,
+    val retainedByPolicy: Boolean = true,
+    val policyReason: String = "Keep all versions",
+    val supersededAt: Instant? = null,
+    val supersededByVariantId: Long? = null,
+    val catalogDependentVariantIds: List<Long> = emptyList(),
+    /** Catalog path sharing is only partial evidence; filesystem hardlinks and downloads remain unverified. */
+    val cleanupDependenciesVerified: Boolean = false,
+    val quarantinePath: String? = null,
+    val archiveAllowed: Boolean = false
 )

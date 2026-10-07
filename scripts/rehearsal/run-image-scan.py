@@ -280,9 +280,14 @@ def main():
             lines = (logs.stdout + logs.stderr).splitlines()
             report["failureLogCounts"] = {kind: sum(kind in line for line in lines)
                 for kind in ("ERROR", "OutOfMemoryError", "SQLException", "HikariPool", "TimeoutException")}
-            threads = subprocess.run([*docker_command, "exec", name, "sh", "-c",
-                "jcmd $(pgrep -o java) Thread.print"], capture_output=True, text=True, timeout=15)
-            report["failureThreadFrames"] = [line.strip() for line in threads.stdout.splitlines()
+            # The production-shaped image contains a JRE, not jcmd. Tini forwards
+            # SIGQUIT to this fixture JVM, which emits its diagnostic thread dump.
+            subprocess.run([*docker_command, "kill", "--signal", "QUIT", name],
+                capture_output=True, timeout=15)
+            time.sleep(1)
+            threads = subprocess.run([*docker_command, "logs", "--tail", "3000", name],
+                capture_output=True, text=True, timeout=15)
+            report["failureThreadFrames"] = [line.strip() for line in (threads.stdout + threads.stderr).splitlines()
                 if re.match(r"\s+(?:java.lang.Thread.State:|at (?:org.gameyfin\.|org.h2\.|com.zaxxer.hikari\.|io.micrometer\.))", line)][:250]
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, indent=2) + "\n")

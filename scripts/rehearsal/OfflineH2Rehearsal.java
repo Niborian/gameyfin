@@ -55,8 +55,9 @@ public final class OfflineH2Rehearsal {
             }
         }
         // All JDBC operations happen on copies, after the offline source lock is released.
-        Map<String, Long> expected = counts(backup.resolve("db").resolve(dbName), user, password);
         Map<String, String> backupDb = hashes(backup.resolve("db")), backupData = hashes(backup.resolve("data"));
+        Map<String, Long> expected = counts(backup.resolve("db").resolve(dbName), user, password);
+        verify(backupDb, backup.resolve("db")); verify(backupData, backup.resolve("data"));
         long started = System.nanoTime();
         Files.createDirectory(restore);
         copyTree(backup.resolve("db"), restore.resolve("db")); copyTree(backup.resolve("data"), restore.resolve("data"));

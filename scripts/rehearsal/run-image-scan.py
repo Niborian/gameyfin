@@ -60,6 +60,27 @@ def verify_missing_root_fault(root, request, snapshot, metric, timeout=180):
         parked.rename(source)
 
 
+def sample_post_task_idle(duration, interval, measure, clock=time.monotonic, pause=time.sleep):
+    """Observe natural settling only; never force GC or claim a continuous peak."""
+    if duration <= 0 or duration > 900 or interval <= 0 or interval > duration:
+        raise ValueError("Idle window must be 1..900 seconds with a bounded positive interval")
+    started = clock()
+    samples = []
+    while True:
+        sample = measure()
+        sample["elapsedSeconds"] = clock() - started
+        samples.append(sample)
+        remaining = duration - (clock() - started)
+        if remaining <= 0:
+            break
+        pause(min(interval, remaining))
+    return {"requestedSeconds": duration, "sampleIntervalSeconds": interval,
+        "observedSeconds": clock() - started, "samples": samples,
+        "scope": "post-task idle synthetic workload; sampled observations, no forced GC",
+        "targetsAreNotLimits": True, "idleRssTargetBytes": 500 * 1024 * 1024,
+        "typicalTaskRssTargetBytes": 1024 * 1024 * 1024}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True)
@@ -74,6 +95,8 @@ def main():
     parser.add_argument("--docker-prefix", default="", help="Optional CLI prefix, for example sudo -n")
     parser.add_argument("--interrupt-scan", action="store_true", help="Kill only this disposable fixture while an active scan is observed, then restart and recover")
     parser.add_argument("--missing-root-fault", action="store_true", help="Temporarily hide only a generated fixture root, assert scan failure and unchanged records, then restore before recovery")
+    parser.add_argument("--idle-seconds", type=int, default=0, help="Optional natural post-task idle window, typically 300 or 900 seconds; zero disables")
+    parser.add_argument("--idle-sample-seconds", type=int, default=15, help="Post-task heap/RSS/cgroup sample interval")
     parser.add_argument("--external-probe", type=Path, help="Optional reviewed staging-only Python probe receiving synthetic fixture context on stdin and credentials only in child environment")
     parser.add_argument("--proxy-image", help="Immutable cached proxy image supplied to an external probe")
     args = parser.parse_args()
@@ -86,6 +109,10 @@ def main():
         raise ValueError("Require new output and explicit plugin JARs")
     if not args.h2_jar.startswith("/") or not args.runtime_uid.isdecimal() or not args.runtime_gid.isdecimal():
         raise ValueError("Invalid image runtime configuration")
+    if args.idle_seconds < 0 or args.idle_seconds > 900 or args.idle_sample_seconds <= 0:
+        raise ValueError("Invalid bounded idle sampling configuration")
+    if args.idle_seconds and args.idle_sample_seconds > args.idle_seconds:
+        raise ValueError("Idle interval must not exceed the idle window")
     # No user-selected data directory: all mount sources originate in this new private leaf.
     root = Path(tempfile.mkdtemp(prefix="gameyfin-synthetic-scan-"))
     token = secrets.token_hex(8)
@@ -148,6 +175,7 @@ def main():
             mounts += ["--mount", f"type=bind,src={root / directory},dst=/opt/gameyfin/{directory}"]
         mounts += ["--mount", f"type=bind,src={root / 'fixture' / 'sources'},dst=/fixture,readonly"]
         docker("run", "--pull", "never", "-d", "--name", name, "--network", network, "--cpus", "2",
+            "--cgroupns", "private",
             "--memory", "1536m", "--memory-swap", "1536m", "--restart", "no",
             "--env-file", str(env), *mounts, args.image)
         ip = json.loads(docker("inspect", name))[0]["NetworkSettings"]["Networks"][network]["IPAddress"]
@@ -321,6 +349,32 @@ def main():
                 args.output.write_text(json.dumps(report, indent=2) + "\n")
                 raise RuntimeError("External isolated probe failed: " + report["externalProbeFailure"])
             report["externalProbe"] = json.loads(hook.stdout)
+        if args.idle_seconds:
+            # Use the current fixture JVM after any deliberate process restart.
+            processes = docker("top", name, "-eo", "pid,args").splitlines()[1:]
+            java_pids = [int(line.split(None, 1)[0]) for line in processes
+                if len(line.split(None, 1)) == 2 and "java" in line.split(None, 1)[1].split()[0]]
+            if len(java_pids) != 1:
+                raise RuntimeError("Require one isolated JVM for idle RSS evidence")
+            def idle_measure():
+                resident = re.search(r"VmRSS:\s+(\d+)", Path(f"/proc/{java_pids[0]}/status").read_text())
+                if not resident:
+                    raise RuntimeError("Idle JVM RSS unavailable")
+                sample = snapshot()
+                if metric("gameyfin_scans_active", text=sample) != 0:
+                    raise RuntimeError("Idle evidence invalid: an active scan was observed")
+                # cgroup v2 charge includes file cache and other processes, not
+                # just JVM resident pages. Keep it separate from process RSS.
+                def cgroup_read(path):
+                    return subprocess.check_output([*docker_command, "exec", name, "cat", path], text=True, timeout=10)
+                cgroup_bytes = int(cgroup_read("/sys/fs/cgroup/memory.current"))
+                cgroup_stat = dict(line.split() for line in cgroup_read("/sys/fs/cgroup/memory.stat").splitlines())
+                return {"heapUsedBytes": metric("jvm_memory_used_bytes", 'area="heap"', sample),
+                    "jvmRssBytes": int(resident.group(1)) * 1024,
+                    "containerCgroupCurrentBytes": cgroup_bytes,
+                    "containerAnonymousBytes": int(cgroup_stat["anon"]),
+                    "containerFileCacheBytes": int(cgroup_stat["file"])}
+            report["postTaskIdle"] = sample_post_task_idle(args.idle_seconds, args.idle_sample_seconds, idle_measure)
         final_state = json.loads(docker("inspect", name))[0]
         report["restartCount"] = final_state["RestartCount"]
         report["oomKilled"] = final_state["State"]["OOMKilled"]

@@ -3,6 +3,25 @@
 Issue #27 remains open pending a controlled real-library scan and verification of the
 previously interrupted production records. These measurements run outside TrueNAS.
 
+## Post-task natural idle observations
+
+The reusable image runner accepts `--idle-seconds 300` or `900` for five/fifteen-minute
+natural settling after scans, downloads and any external probe. CI requests five minutes;
+the default runner remains disabled unless explicitly requested. Samples every fifteen
+seconds retain JVM heap **used**, JVM process RSS, and cgroup-v2 container memory charge
+as distinct byte values. Container charge includes anonymous memory, file cache and other
+processes; it is not JVM RSS. Anonymous/file-cache charges are also recorded separately.
+Unsupported/unavailable telemetry fails rather than fabricating zeroes. Samples are not
+continuous peak measurements; observation itself has telemetry/process overhead.
+
+The user's approximate goals are 500 MiB idle process RSS and 1 GiB for typical tasks,
+with exceptional task peaks permitted. They are comparison targets, not hard acceptance
+limits or a newly applied heap/container cap. Existing scan-phase metrics show sampled
+task resource use separately from these post-task observations. No forced GC, artificial
+cache purge, heap reduction or production setting change occurs. A synthetic idle sample
+does not establish representative production idle behavior; repeated paired workload and
+real-library measurements remain necessary before #27 or cutover acceptance.
+
 ## Reproduction
 
 Use JDK 25 with a fresh test JVM:

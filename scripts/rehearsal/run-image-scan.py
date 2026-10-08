@@ -24,6 +24,42 @@ import urllib.request
 import zipfile
 
 
+def verify_missing_root_fault(root, request, snapshot, metric, timeout=180):
+    """Only accept the private generated fixture layout, never caller source paths."""
+    source = root / "fixture" / "sources" / "lib1"
+    parked = root / "fixture" / "fault-lib1"
+    if source.is_symlink() or not source.is_dir() or parked.exists():
+        raise RuntimeError("Synthetic root fault prerequisites not met")
+    before = json.loads(request("/connect/GameEndpoint/getAll", {}))
+    completed_before = metric("gameyfin_scans_completed_total")
+    failed_before = metric("gameyfin_scans_failed_total")
+    source.rename(parked)
+    try:
+        request("/connect/LibraryEndpoint/triggerScan", {"scanType": "FULL", "libraryIds": [27001]})
+        fault_started = time.monotonic()
+        while time.monotonic() - fault_started < timeout:
+            observed = snapshot()
+            failed_delta = metric("gameyfin_scans_failed_total", text=observed) - failed_before
+            completed_delta = metric("gameyfin_scans_completed_total", text=observed) - completed_before
+            if failed_delta or completed_delta:
+                if failed_delta != 1 or completed_delta != 0:
+                    raise RuntimeError("Missing root did not produce exactly one failed scan")
+                if metric("gameyfin_scans_active", text=observed) == 0:
+                    break
+            time.sleep(0.5)
+        else:
+            raise RuntimeError("Missing-root failure was not observed")
+        after = json.loads(request("/connect/GameEndpoint/getAll", {}))
+        canonical = lambda rows: json.dumps(sorted(rows, key=lambda game: game["id"]), sort_keys=True)
+        if canonical(before) != canonical(after):
+            raise RuntimeError("Failed scan changed synthetic game/variant/content records")
+        return {"libraryId": 27001, "failedLibraries": failed_delta,
+            "completedLibraries": completed_delta, "recordsUnchanged": True,
+            "gameCount": len(after), "scope": "generated synthetic paths only"}
+    finally:
+        parked.rename(source)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True)
@@ -37,6 +73,7 @@ def main():
     parser.add_argument("--runtime-gid", default="1337")
     parser.add_argument("--docker-prefix", default="", help="Optional CLI prefix, for example sudo -n")
     parser.add_argument("--interrupt-scan", action="store_true", help="Kill only this disposable fixture while an active scan is observed, then restart and recover")
+    parser.add_argument("--missing-root-fault", action="store_true", help="Temporarily hide only a generated fixture root, assert scan failure and unchanged records, then restore before recovery")
     parser.add_argument("--external-probe", type=Path, help="Optional reviewed staging-only Python probe receiving synthetic fixture context on stdin and credentials only in child environment")
     parser.add_argument("--proxy-image", help="Immutable cached proxy image supplied to an external probe")
     args = parser.parse_args()
@@ -152,7 +189,16 @@ def main():
         page = opener.open(urllib.request.Request(base + "/login",
             urllib.parse.urlencode({"username": "fixture-admin", "password": password, "_csrf": csrf}).encode()), timeout=30).read().decode()
         csrf = re.search(r'<meta[^>]*name="_csrf"[^>]*content="([^"]+)"', page).group(1)
-        for phase in (("cold", "repeat", "recovery") if args.interrupt_scan else ("cold", "repeat")):
+        phases = ["cold", "repeat"]
+        if args.missing_root_fault:
+            phases.append("missing-root-recovery")
+        if args.interrupt_scan:
+            phases.append("recovery")
+        for phase in phases:
+            if phase == "missing-root-recovery":
+                # Only this generated private leaf is eligible; never any caller
+                # path, production mount, database file, or original torrent source.
+                report["missingRootFault"] = verify_missing_root_fault(root, request, snapshot, metric)
             if phase == "recovery":
                 request("/connect/LibraryEndpoint/triggerScan", {"scanType": "FULL", "libraryIds": [27001,27002,27003,27004]})
                 active = metric("gameyfin_scans_active")
@@ -286,13 +332,23 @@ def main():
         report["oomErrorLineCount"] = sum(bool(re.search(r"\bOutOfMemoryError(?::|\s*$)", line)) for line in log_lines)
         report["offlineMetadataMissErrorLineCount"] = sum(
             "No results found for originalIds: {}" in line and bool(re.search(r"\bERROR\b", line)) for line in log_lines)
-        report["unexpectedErrorLogLineCount"] = report["errorLogLineCount"] - report["offlineMetadataMissErrorLineCount"]
+        report["expectedMissingRootErrorLineCount"] = sum(
+            "Error during full scan for library 27001 (OTHER: NoSuchFileException)" in line
+            and bool(re.search(r"\bERROR\b", line)) for line in log_lines) if args.missing_root_fault else 0
+        if args.missing_root_fault and report["expectedMissingRootErrorLineCount"] != 1:
+            raise RuntimeError("Missing-root fault error evidence must occur exactly once")
+        report["unexpectedErrorLogLineCount"] = (report["errorLogLineCount"]
+            - report["offlineMetadataMissErrorLineCount"] - report["expectedMissingRootErrorLineCount"])
         report["loggedExceptionClasses"] = sorted(set(re.findall(
             r"\b(?:[a-z][\w$]*\.)+[A-Z][\w$]*(?:Exception|Error)\b", "\n".join(log_lines))))[:30]
         report["closedDatabaseErrorLineCount"] = sum("database is already closed" in line.lower() or "database has been closed" in line.lower() for line in log_lines)
         if report["oomKilled"] or report["oomErrorLineCount"] or report["health"] != "UP":
             raise RuntimeError("Fixture unhealthy after scans")
-        report["remainingGaps"] = ["production acceptance"] + ([] if args.interrupt_scan else ["failure/recovery"])
+        report["remainingGaps"] = ["production acceptance"]
+        if not args.interrupt_scan:
+            report["remainingGaps"].append("process interruption recovery")
+        if not args.missing_root_fault:
+            report["remainingGaps"].append("filesystem failure retention/recovery")
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, indent=2) + "\n")
     except Exception as error:

@@ -22,6 +22,15 @@ completed on JDK 25: 48 tests, zero failures/errors/skips. The failure test uses
 a deterministic mocked access denial to verify progress and retained records;
 it is not an actual-image filesystem permission rehearsal.
 
+The actual-image fixture can opt into `--missing-root-fault`: after normal scans,
+temporarily park only its generated synthetic `lib1` directory outside the readonly
+source mount. It requires exactly one failed scan, no completed scan, and unchanged
+full game DTOs before restoring the directory in `finally` and scanning all libraries
+again. Source hashes and exact download assertions still run afterwards. One exact
+expected missing-root error is counted separately; unexpected errors are not masked.
+This extension needs a passing exact-head actual-image CI run before execution proof
+is claimed. It does not test production mount availability or actual access denial.
+
 ## Reproduce the synthetic fixture
 
 Use JDK 25 and run:

@@ -61,3 +61,46 @@ tests. It is not the qBittorrent implementation or proof of feature parity; #112
 
 Only after parity is evidenced should a separate reviewed cutover consider disabling or
 removing the original plugin. This work does not authorize that cutover or promote `latest`.
+
+## Actual creator validation foundation
+
+Safe production snapshot acquisition remains unsolved. The proposed copy builder was
+removed after review: descriptor-anchored traversal and repeated hashes did not establish
+the identity of an opened file across a stat/open substitution race, and path-based cache
+writes did not enforce stable exclusive ownership. No source-copy safety guarantee is
+provided by this foundation. Synthetic fixture copies below are newly created test inputs,
+not proof of safe acquisition from concurrently mutable library files. A future solution
+must enforce opened-file identity and cache ownership, including deterministic mid-copy
+failure cleanup; size preflight is advisory and cooperative timeout checks do not impose
+a hard bound on blocked filesystem I/O. No rushed native implementation is implied.
+
+Run `python3 tools/qbittorrent-creator-fixture.py --staging-ack` only on a disposable CI
+runner or an explicitly authorized staging host with the pinned image already loaded.
+The fixture accepts no operator endpoint or source path. It creates tiny invented grouped
+and optional selections, a private authenticated qB client on an internal Docker network,
+and a loopback-only relay; it publishes no Docker ports and mounts only its new fixture
+copies read-only. Synthetic HTTP disables secure-cookie transport only inside that isolated
+fixture; production API transport must remain HTTPS or an explicitly protected private link.
+Credentials are generated per run and deleted with the owned temporary state.
+
+An authorized disposable server rehearsal on 2026-10-08 used qBittorrent v5.2.3,
+`ghcr.io/hotio/qbittorrent@sha256:91d59985ed65fe3504b405b51e6d586524c2189a6cffd56324101b70fe094bde`
+(image ID `sha256:5abfcc362ba366e18acdf10e97427bea3ad883a4aef0681021cf8693670ccd2a`).
+Both required-only and grouped-plus-optional creator tasks passed exact member names,
+sizes, private flag and v1 piece-hash checks. Auto-seeding was explicitly disabled; the
+client had no added torrents, and original hashes remained unchanged. Owned containers,
+network and temporary directories were removed and their absence independently checked.
+This proves the pinned creator capability, not Kotlin-to-client integration or peer transfer.
+An additional selected hidden-file case exposed a limitation: this pinned creator omitted
+the dotfile; this release does not expose an `ignoreDotfiles` creator control, although
+newer source code does. Sending that parameter does not prove support. Exact-member validation
+rejected the incomplete metadata. The fixture retains that negative case; a future provider
+must reject such a selection rather than silently deliver an incomplete torrent. Supporting
+all hidden-file selections requires separate verified resolution before claiming parity.
+
+The dedicated CI workflow exercises the bounded parser and repeats the real pinned creator
+rehearsal. It does not test production snapshot acquisition. Still missing for #112: safe
+snapshot acquisition, provider
+configuration and wiring, persisted idempotent seeding ownership, second-client transfer,
+restart/recovery, tracker admission/revocation, resource/retention evidence, and reviewed
+opt-in cutover. The original plugin and existing download routes remain unchanged.

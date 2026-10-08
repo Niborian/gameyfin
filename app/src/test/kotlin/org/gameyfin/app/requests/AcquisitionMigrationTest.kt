@@ -14,7 +14,7 @@ class AcquisitionMigrationTest {
         val baseline = Flyway.configure().dataSource(url, "sa", "").locations("classpath:db/migration").load()
             .info().pending().filter { it.version < org.flywaydb.core.api.MigrationVersion.fromVersion("2.4.3.37") }.maxBy { it.version }.version
         Flyway.configure().dataSource(url, "sa", "").locations("classpath:db/migration").target(baseline).load().migrate()
-        val upgrade = Flyway.configure().dataSource(url, "sa", "").locations("classpath:db/migration").load().migrate()
+        val upgrade = Flyway.configure().dataSource(url, "sa", "").locations("classpath:db/migration").target("2.4.3.37").load().migrate()
         assertEquals(1, upgrade.migrationsExecuted)
         DriverManager.getConnection(url, "sa", "").use { connection ->
             connection.createStatement().use { statement ->

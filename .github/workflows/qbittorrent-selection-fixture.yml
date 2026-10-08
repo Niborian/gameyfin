@@ -1,0 +1,23 @@
+name: Isolated qB creator validation foundation
+on:
+  pull_request:
+    branches: [main]
+    paths: ['tools/qbittorrent-creator-fixture.py', 'tools/test_qbittorrent_creator_fixture.py', '.github/workflows/qbittorrent-selection-fixture.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: qb-selection-fixture-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  isolated-creator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate bounded metadata parser negative cases
+        run: python3 -m unittest discover -s tools -p test_qbittorrent_creator_fixture.py
+      - name: Load reviewed immutable synthetic creator image
+        run: docker pull ghcr.io/hotio/qbittorrent@sha256:91d59985ed65fe3504b405b51e6d586524c2189a6cffd56324101b70fe094bde
+      - name: Verify exact metadata without adding or seeding torrents
+        run: python3 tools/qbittorrent-creator-fixture.py --staging-ack

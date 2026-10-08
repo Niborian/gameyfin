@@ -3,6 +3,25 @@
 Issue #19 remains open until representative scans, recovery, and rollout checks are evidenced.
 This change bounds scheduler overhead; it does not establish a production memory budget.
 
+## Fail-closed filesystem reconciliation
+
+Scanning now propagates failures while enumerating configured roots, inspecting child
+attributes, and reading candidate directories. A missing root or denied directory
+must not be interpreted as an empty successful scan and produce metadata removals.
+The ordinary directory-browser endpoint still returns an empty result on read errors.
+Missing roots, roots replaced by regular files, and failure/progress/recovery semantics
+are covered by isolated JVM tests; this does not prove a production mount outage test.
+This protection preserves metadata; scans do not delete original source bytes. Successful
+complete enumeration still allows legitimate absent game paths to be reconciled.
+This cannot detect a disconnected mount that leaves a readable empty mountpoint:
+mount identity/availability needs a separate operator policy, and an empty readable
+directory is still considered a successful enumeration.
+
+On 2026-10-08, targeted `FilesystemServiceTest` and `LibraryScanServiceTest`
+completed on JDK 25: 48 tests, zero failures/errors/skips. The failure test uses
+a deterministic mocked access denial to verify progress and retained records;
+it is not an actual-image filesystem permission rehearsal.
+
 ## Reproduce the synthetic fixture
 
 Use JDK 25 and run:

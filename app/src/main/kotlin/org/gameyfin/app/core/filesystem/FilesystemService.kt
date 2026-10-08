@@ -91,6 +91,7 @@ class FilesystemService(
         // Also check if the directory is empty and if empty directories should be included
         val currentFilesystemPaths = validPaths.flatMap { validDirectory ->
             readScanDirectoryContents(validDirectory)
+                .asSequence()
                 .map { it to Files.readAttributes(it, BasicFileAttributes::class.java) }
                 .filter { (path, attributes) -> attributes.isDirectory || path.extension.lowercase() in gamefileExtensions }
                 .filter { (path, attributes) ->
@@ -105,6 +106,7 @@ class FilesystemService(
                     }
                 }
                 .map { it.first }
+                .toList()
         }
 
         // Get all paths already in the library as game files or as ignored paths

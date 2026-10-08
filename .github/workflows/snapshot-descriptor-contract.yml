@@ -1,0 +1,27 @@
+name: Snapshot descriptor contract
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/snapshot-descriptor-contract.yml'
+      - 'docs/QBITTORRENT-SNAPSHOT-BOUNDARY.md'
+      - 'tools/test_snapshot_descriptor_contract.py'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/snapshot-descriptor-contract.yml'
+      - 'docs/QBITTORRENT-SNAPSHOT-BOUNDARY.md'
+      - 'tools/test_snapshot_descriptor_contract.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  descriptor-primitives:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Linux primitive contracts
+        run: python3 -m unittest discover -s tools -p test_snapshot_descriptor_contract.py -v

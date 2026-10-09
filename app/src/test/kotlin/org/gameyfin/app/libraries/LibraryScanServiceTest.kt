@@ -209,6 +209,79 @@ class LibraryScanServiceTest {
     }
 
     @Test
+    fun `coordinator interruption preserves flag and never records successful quick or full scan`() {
+        for (full in listOf(false, true)) {
+            val library = createTestLibrary(if (full) 99304L else 99303L)
+            every { filesystemService.scanLibraryForGamefiles(library) } throws InterruptedException("synthetic coordinator cancellation")
+            val method = if (full) LibraryScanService::class.java.getDeclaredMethod("fullScan", Library::class.java, Boolean::class.javaPrimitiveType)
+                else LibraryScanService::class.java.getDeclaredMethod("quickScan", Library::class.java)
+            method.isAccessible = true
+            try {
+                if (full) method.invoke(libraryScanService, library, false) else method.invoke(libraryScanService, library)
+                assertTrue(Thread.currentThread().isInterrupted)
+                assertEquals(0.0, meterRegistry.find("gameyfin.scans.completed").tag("type", if (full) "full" else "quick").counter()!!.count())
+                verify(exactly = 0) { libraryRepository.save(any()) }
+            } finally { Thread.interrupted() }
+        }
+    }
+
+    @Test
+    fun `interrupted new processing fails quick scan without unmatched or library mutations`() {
+        verifyInterruptedProcessing(ScanType.QUICK, 99301L, false)
+    }
+
+    @Test
+    fun `interrupted existing processing fails full scan without library mutations`() {
+        verifyInterruptedProcessing(ScanType.FULL, 99302L, true)
+    }
+
+    @Test
+    fun `new processor returning with interrupt cannot count success`() {
+        verifyInterruptedProcessing(ScanType.QUICK, 99305L, false, true)
+    }
+
+    @Test
+    fun `existing processor returning with interrupt cannot count success`() {
+        verifyInterruptedProcessing(ScanType.FULL, 99306L, true, true)
+    }
+
+    private fun verifyInterruptedProcessing(type: ScanType, id: Long, existing: Boolean, returnsInterrupted: Boolean = false) {
+        val game = createTestGame(id, "/synthetic/interrupted-$id")
+        val retained = mutableListOf(game)
+        val library = createTestLibrary(id, games = retained)
+        val ignored = IgnoredPath(path = "/synthetic/retained-$id", source = IgnoredPathUserSource(mockk()))
+        library.ignoredPaths.add(ignored)
+        every { libraryRepository.findAllById(listOf(id)) } returns listOf(library)
+        every { filesystemService.scanLibraryForGamefiles(library) } returns FilesystemScanResult(
+            if (existing) emptyList() else listOf(Path("/synthetic/new-$id")),
+            listOf(Path("/synthetic/interrupted-$id")), listOf(ignored))
+        if (existing) every { libraryGameProcessor.processExistingGame(game) } answers {
+            if (!returnsInterrupted) throw InterruptedException("synthetic cancellation")
+            Thread.currentThread().interrupt(); game
+        }
+        else every { libraryGameProcessor.processNewGame(any(), library) } answers {
+            if (!returnsInterrupted) throw InterruptedException("synthetic cancellation")
+            Thread.currentThread().interrupt(); game
+        }
+        val failed = CountDownLatch(1)
+        val subscription = LibraryScanService.subscribeToScanProgressEvents().subscribe { events ->
+            if (events.any { it.libraryId == id && it.status == LibraryScanStatus.FAILED }) failed.countDown()
+        }
+        try {
+            libraryScanService.triggerScan(type, listOf(id))
+            assertTrue(failed.await(5, TimeUnit.SECONDS))
+            val metricType = type.name.lowercase()
+            assertEquals(1.0, meterRegistry.find("gameyfin.scans.failed").tag("type", metricType).counter()!!.count())
+            assertEquals(0.0, meterRegistry.find("gameyfin.scans.completed").tag("type", metricType).counter()!!.count())
+            assertEquals(listOf(game), library.games)
+            assertEquals(listOf(ignored), library.ignoredPaths)
+            verify(exactly = 0) { libraryRepository.save(any()) }
+            verify(exactly = 0) { ignoredPathRepository.findByPath(any()) }
+            verify(exactly = 0) { libraryCoreService.addGamesToLibrary(any(), any(), any()) }
+        } finally { subscription.dispose() }
+    }
+
+    @Test
     fun `filesystem failure emits FAILED retains records and can recover`() {
         val existingGame = createTestGame(9919L, "/unavailable/game")
         val library = createTestLibrary(9919L, games = mutableListOf(existingGame))

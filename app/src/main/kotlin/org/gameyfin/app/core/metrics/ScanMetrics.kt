@@ -3,6 +3,7 @@ package org.gameyfin.app.core.metrics
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
+import io.micrometer.core.instrument.Gauge
 import org.gameyfin.app.libraries.enums.ScanType
 import org.springframework.stereotype.Component
 import org.springframework.dao.DataAccessException
@@ -40,7 +41,7 @@ class ScanMetrics(private val registry: MeterRegistry) {
     }
 
     private val activeScans = AtomicInteger(0)
-    private val drainingScans = AtomicInteger(0)
+    private val ownedWorkerScopes = AtomicInteger(0)
 
     // Pre-register per-type counters & timers
     private val scansStarted = ScanType.entries.associateWith { type ->
@@ -99,11 +100,15 @@ class ScanMetrics(private val registry: MeterRegistry) {
 
     init {
         registry.gauge("gameyfin.scans.active", activeScans) { it.get().toDouble() }
-        registry.gauge("gameyfin.scans.draining", drainingScans) { it.get().toDouble() }
+        // Retain the telemetry key, but count full owned scopes, not only drain phase.
+        // A terminal coordinator event must never create a false idle handoff gap.
+        Gauge.builder("gameyfin.scans.draining", ownedWorkerScopes) { it.get().toDouble() }
+            .description("Owned scan worker scopes from before processing through actual termination, including draining")
+            .register(registry)
     }
 
-    fun recordWorkersDraining() { drainingScans.incrementAndGet() }
-    fun recordWorkersQuiescent() { drainingScans.decrementAndGet() }
+    fun recordWorkerScopeOpened() { ownedWorkerScopes.incrementAndGet() }
+    fun recordWorkersQuiescent() { ownedWorkerScopes.decrementAndGet() }
 
     /** Call when a scan starts. */
     fun recordScanStarted(type: ScanType) {

@@ -127,6 +127,9 @@ class LibraryScanService(
             if (scansInProgress.putIfAbsent(libraryId, true) == null) {
                 executor.submit {
                     val workers = Executors.newVirtualThreadPerTaskExecutor()
+                    // Register before any worker can run or terminal scan accounting can
+                    // clear active. This ownership remains until actual body termination.
+                    scanMetrics.recordWorkerScopeOpened()
                     try {
                         when (scanType) {
                             ScanType.QUICK -> quickScan(library, workers)
@@ -134,7 +137,6 @@ class LibraryScanService(
                             ScanType.SCHEDULED -> fullScan(library, true, workers)
                         }
                     } finally {
-                        scanMetrics.recordWorkersDraining()
                         if (drainScanWorkers(workers, 5, TimeUnit.SECONDS)) {
                             scansInProgress.remove(libraryId)
                             scanMetrics.recordWorkersQuiescent()

@@ -13,8 +13,11 @@ checks actual termination once per second. A duplicate scan cannot overlap those
 Only proved termination releases ownership. No thread is forcibly killed.
 
 `gameyfin_scans_active` describes coordinator scan progress, not worker quiescence.
-`gameyfin_scans_draining` is a label-free bounded-cardinality gauge for retained worker
-scopes, including the initial drain and subsequent quarantine. Idle evidence must require
+`gameyfin_scans_draining` retains its original telemetry key but is now a label-free
+bounded-cardinality **owned worker-scope** gauge, registered before workers can start.
+It covers active processing, terminal progress/logging, drain and subsequent quarantine;
+it is not merely a drain-phase counter. This prevents a false zero/zero handoff between
+terminal active accounting and coordinator cleanup. Idle evidence must require
 both gauges to be zero; a reported failed scan alone is not proof that writes have ended.
 The quarantine log also identifies the affected library for operator diagnosis.
 

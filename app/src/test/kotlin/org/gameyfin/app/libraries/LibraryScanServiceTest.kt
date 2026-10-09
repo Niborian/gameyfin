@@ -44,6 +44,64 @@ import kotlin.io.path.Path
 class LibraryScanServiceTest {
 
     @Test
+    fun `terminal failure logging cannot expose idle while owned workers are alive`() {
+        for (type in ScanType.entries) {
+            val id = 99400L + type.ordinal
+            val library = createTestLibrary(id)
+            val heldGame = createTestGame(id, "/synthetic/held-$id")
+            val workerEntered = CountDownLatch(1)
+            val releaseWorker = CountDownLatch(1)
+            val terminalLogging = CountDownLatch(1)
+            val releaseCoordinator = CountDownLatch(1)
+            val metricType = type.name.lowercase()
+            every { configService.get(ConfigProperties.Libraries.Scan.MaxConcurrency) } returns 2
+            every { libraryRepository.findAllById(listOf(id)) } returns listOf(library)
+            setupSuccessfulQuickScan(library)
+            every { filesystemService.scanLibraryForGamefiles(library) } returns FilesystemScanResult(
+                listOf(Path("held-$id"), Path("failure-$id")), emptyList(), emptyList())
+            every { libraryGameProcessor.processNewGame(Path("held-$id"), library) } answers {
+                workerEntered.countDown()
+                while (true) { try { releaseWorker.await(); break } catch (_: InterruptedException) { } }
+                heldGame
+            }
+            every { libraryGameProcessor.processNewGame(Path("failure-$id"), library) } answers {
+                check(workerEntered.await(3, TimeUnit.SECONDS))
+                throw SQLException("synthetic terminal failure")
+            }
+            // Terminal error logging reads this ID after recordScanFailed cleared active,
+            // but before progress emission and the outer worker-draining finally.
+            every { library.id } answers {
+                if (Thread.currentThread().isVirtual && meterRegistry.get("gameyfin.scans.failed").tag("type", metricType).counter().count() > 0) {
+                    terminalLogging.countDown()
+                    check(releaseCoordinator.await(5, TimeUnit.SECONDS))
+                }
+                id
+            }
+            try {
+                libraryScanService.triggerScan(type, listOf(id))
+                assertTrue(terminalLogging.await(4, TimeUnit.SECONDS))
+                assertEquals(0.0, meterRegistry.get("gameyfin.scans.active").gauge().value())
+                assertEquals(1.0, meterRegistry.get("gameyfin.scans.draining").gauge().value())
+                assertEquals(0.0, meterRegistry.get("gameyfin.scans.completed").tag("type", metricType).counter().count())
+                releaseCoordinator.countDown()
+                assertEquals(1.0, meterRegistry.get("gameyfin.scans.draining").gauge().value())
+                releaseWorker.countDown()
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(4)
+                while (meterRegistry.get("gameyfin.scans.draining").gauge().value() != 0.0 && System.nanoTime() < deadline) Thread.sleep(5)
+                assertEquals(0.0, meterRegistry.get("gameyfin.scans.draining").gauge().value())
+                every { library.id } returns id
+                setupSuccessfulQuickScan(library)
+                libraryScanService.triggerScan(type, listOf(id))
+                val successDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(4)
+                while ((meterRegistry.get("gameyfin.scans.completed").tag("type", metricType).counter().count() == 0.0 ||
+                            meterRegistry.get("gameyfin.scans.draining").gauge().value() != 0.0) && System.nanoTime() < successDeadline) Thread.sleep(5)
+                assertEquals(1.0, meterRegistry.get("gameyfin.scans.completed").tag("type", metricType).counter().count())
+                assertEquals(0.0, meterRegistry.get("gameyfin.scans.draining").gauge().value())
+            } finally { releaseCoordinator.countDown(); releaseWorker.countDown() }
+        }
+    }
+
+    @Test
     fun `failed scan retains ownership while interruption ignoring worker remains alive`() {
         val library = createTestLibrary(99119L)
         val entered = CountDownLatch(1)

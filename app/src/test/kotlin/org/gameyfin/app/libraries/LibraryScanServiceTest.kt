@@ -22,6 +22,7 @@ import org.gameyfin.app.libraries.entities.IgnoredPathGroupedVariantSource
 import org.gameyfin.app.libraries.entities.IgnoredPathUserSource
 import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.app.libraries.enums.ScanType
+import org.gameyfin.app.libraries.dto.LibraryScanStatus
 import org.gameyfin.app.libraries.scan.LibraryGameProcessor
 import org.gameyfin.pluginapi.gamemetadata.GameMetadataProvider
 import org.junit.jupiter.api.AfterEach
@@ -35,6 +36,9 @@ import org.pf4j.PluginState
 import java.nio.file.Path
 import java.sql.SQLException
 import java.time.Instant
+import java.nio.file.AccessDeniedException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.io.path.Path
 
 class LibraryScanServiceTest {
@@ -202,6 +206,38 @@ class LibraryScanServiceTest {
 
         verify(exactly = 0) { libraryRepository.findAll() }
         verify(exactly = 0) { filesystemService.scanLibraryForGamefiles(any()) }
+    }
+
+    @Test
+    fun `filesystem failure emits FAILED retains records and can recover`() {
+        val existingGame = createTestGame(9919L, "/unavailable/game")
+        val library = createTestLibrary(9919L, games = mutableListOf(existingGame))
+        every { libraryRepository.findAllById(listOf(9919L)) } returns listOf(library)
+        every { filesystemService.scanLibraryForGamefiles(library) } throws AccessDeniedException("synthetic-root")
+        val failed = CountDownLatch(1)
+        val completed = CountDownLatch(1)
+        val subscription = LibraryScanService.subscribeToScanProgressEvents().subscribe { events ->
+            events.filter { it.libraryId == 9919L }.forEach {
+                if (it.status == LibraryScanStatus.FAILED && it.finishedAt != null) failed.countDown()
+                if (it.status == LibraryScanStatus.COMPLETED) completed.countDown()
+            }
+        }
+        try {
+            libraryScanService.triggerScan(ScanType.FULL, listOf(9919L))
+            assertTrue(failed.await(5, TimeUnit.SECONDS), "FAILED progress must be observable")
+            assertEquals(1.0, meterRegistry.find("gameyfin.scans.failed").tag("type", "full").counter()!!.count())
+            assertEquals(listOf(existingGame), library.games)
+            verify(exactly = 0) { libraryRepository.save(any()) }
+            verify(exactly = 0) { gameRepository.deleteAll(any<Iterable<Game>>()) }
+            verify(exactly = 0) { libraryGameProcessor.processExistingGame(any()) }
+            setupFullScanWithExistingGames(library, existingGame)
+            libraryScanService.triggerScan(ScanType.FULL, listOf(9919L))
+            assertTrue(completed.await(5, TimeUnit.SECONDS), "Restored input must recover")
+            assertEquals(listOf(existingGame), library.games)
+            assertEquals(1.0, meterRegistry.find("gameyfin.scans.completed").tag("type", "full").counter()!!.count())
+        } finally {
+            subscription.dispose()
+        }
     }
 
     @Test

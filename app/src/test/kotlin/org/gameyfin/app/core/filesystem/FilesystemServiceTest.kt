@@ -15,10 +15,12 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
+import java.nio.file.NoSuchFileException
 import kotlin.io.path.*
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.test.assertFailsWith
 
 class FilesystemServiceTest {
 
@@ -487,7 +489,7 @@ class FilesystemServiceTest {
     }
 
     @Test
-    fun `scanLibraryForGamefiles should skip invalid library directories`() {
+    fun `scanLibraryForGamefiles should reject a missing root even with another healthy root`() {
         every { configService.get(ConfigProperties.Libraries.Scan.GameFileExtensions) } returns arrayOf("exe")
         every { configService.get(ConfigProperties.Libraries.Scan.ScanEmptyDirectories) } returns false
 
@@ -510,10 +512,13 @@ class FilesystemServiceTest {
         every { mockLibrary.games } returns mutableListOf()
         every { mockLibrary.ignoredPaths } returns mutableListOf()
 
-        val result = filesystemService.scanLibraryForGamefiles(mockLibrary)
-
-        assertEquals(1, result.newPaths.size)
-        assertTrue(result.newPaths.any { it.name == "game.exe" })
+        assertFailsWith<NoSuchFileException> {
+            filesystemService.scanLibraryForGamefiles(mockLibrary)
+        }
+        invalidLibraryDir.createDirectory()
+        val recovered = filesystemService.scanLibraryForGamefiles(mockLibrary)
+        assertEquals(listOf(gameFile), recovered.newPaths)
+        assertTrue(recovered.removedGamePaths.isEmpty())
     }
 
     @Test
@@ -551,12 +556,12 @@ class FilesystemServiceTest {
     }
 
     @Test
-    fun `scanLibraryForGamefiles should handle inaccessible directories gracefully`() {
+    fun `scanLibraryForGamefiles should reject a root replaced by a regular file`() {
         every { configService.get(ConfigProperties.Libraries.Scan.GameFileExtensions) } returns arrayOf("exe")
         every { configService.get(ConfigProperties.Libraries.Scan.ScanEmptyDirectories) } returns false
 
         val libraryDir = tempDir.resolve("library")
-        libraryDir.createDirectory()
+        libraryDir.createFile()
 
         val mockLibraryDirectory = mockk<DirectoryMapping>()
         every { mockLibraryDirectory.internalPath } returns libraryDir.toString()
@@ -567,13 +572,9 @@ class FilesystemServiceTest {
         every { mockLibrary.games } returns mutableListOf()
         every { mockLibrary.ignoredPaths } returns mutableListOf()
 
-        libraryDir.toFile().setReadable(false)
-
-        val result = filesystemService.scanLibraryForGamefiles(mockLibrary)
-
-        libraryDir.toFile().setReadable(true)
-
-        assertTrue(result.newPaths.isEmpty())
+        assertFailsWith<java.nio.file.NotDirectoryException> {
+            filesystemService.scanLibraryForGamefiles(mockLibrary)
+        }
     }
 
     @Test

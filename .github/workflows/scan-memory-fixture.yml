@@ -29,6 +29,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
       - name: Generate isolated actual-image scan inputs
         run: |
+          python3 -B scripts/rehearsal/test_image_scan_fault.py
+          python3 -B scripts/rehearsal/test_idle_memory_sampling.py
           mkdir -p app/build/reports
           python3 scripts/rehearsal/seed-scan-fixture.py --output app/build/reports/image-scan-fixture --container-fixture-root /fixture
       - name: Measure fixture recovery with explicit heap

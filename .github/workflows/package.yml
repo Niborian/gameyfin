@@ -334,7 +334,7 @@ jobs:
             --h2-jar "${h2_jars[0]}" \
             --metadata-plugin plugins/steam/build/libs/steam-1.2.0.jar \
             --direct-plugin plugins/directdownload/build/libs/directdownload-1.0.2.jar \
-            --output app/build/reports/actual-image-scan.json --interrupt-scan
+            --output app/build/reports/actual-image-scan.json --interrupt-scan --missing-root-fault --idle-seconds 300
 
       - name: Retain actual-image synthetic evidence
         if: always()

@@ -24,6 +24,74 @@ import urllib.request
 import zipfile
 
 
+def observe_jvm_options(docker_command, name, runtime_uid, runtime_gid):
+    """Read one fixed option key as the fixture JVM owner, without extra capabilities."""
+    probe = ('for task in /proc/[0-9]*/comm; do '
+        'if [ "$(cat "$task" 2>/dev/null)" = java ]; then '
+        'tr "\\000" "\\n" < "${task%/comm}/environ" | '
+        'sed -n "s/^JDK_JAVA_OPTIONS=//p"; fi; done')
+    return subprocess.check_output([*docker_command, "exec", "--user",
+        runtime_uid + ":" + runtime_gid, name, "sh", "-c", probe],
+        text=True, timeout=10).splitlines()
+
+
+def verify_missing_root_fault(root, request, snapshot, metric, timeout=180):
+    """Only accept the private generated fixture layout, never caller source paths."""
+    source = root / "fixture" / "sources" / "lib1"
+    parked = root / "fixture" / "fault-lib1"
+    if source.is_symlink() or not source.is_dir() or parked.exists():
+        raise RuntimeError("Synthetic root fault prerequisites not met")
+    before = json.loads(request("/connect/GameEndpoint/getAll", {}))
+    completed_before = metric("gameyfin_scans_completed_total")
+    failed_before = metric("gameyfin_scans_failed_total")
+    source.rename(parked)
+    try:
+        request("/connect/LibraryEndpoint/triggerScan", {"scanType": "FULL", "libraryIds": [27001]})
+        fault_started = time.monotonic()
+        while time.monotonic() - fault_started < timeout:
+            observed = snapshot()
+            failed_delta = metric("gameyfin_scans_failed_total", text=observed) - failed_before
+            completed_delta = metric("gameyfin_scans_completed_total", text=observed) - completed_before
+            if failed_delta or completed_delta:
+                if failed_delta != 1 or completed_delta != 0:
+                    raise RuntimeError("Missing root did not produce exactly one failed scan")
+                if metric("gameyfin_scans_active", text=observed) == 0:
+                    break
+            time.sleep(0.5)
+        else:
+            raise RuntimeError("Missing-root failure was not observed")
+        after = json.loads(request("/connect/GameEndpoint/getAll", {}))
+        canonical = lambda rows: json.dumps(sorted(rows, key=lambda game: game["id"]), sort_keys=True)
+        if canonical(before) != canonical(after):
+            raise RuntimeError("Failed scan changed synthetic game/variant/content records")
+        return {"libraryId": 27001, "failedLibraries": failed_delta,
+            "completedLibraries": completed_delta, "recordsUnchanged": True,
+            "gameCount": len(after), "scope": "generated synthetic paths only"}
+    finally:
+        parked.rename(source)
+
+
+def sample_post_task_idle(duration, interval, measure, clock=time.monotonic, pause=time.sleep):
+    """Observe natural settling only; never force GC or claim a continuous peak."""
+    if duration <= 0 or duration > 900 or interval <= 0 or interval > duration:
+        raise ValueError("Idle window must be 1..900 seconds with a bounded positive interval")
+    started = clock()
+    samples = []
+    while True:
+        sample = measure()
+        sample["elapsedSeconds"] = clock() - started
+        samples.append(sample)
+        remaining = duration - (clock() - started)
+        if remaining <= 0:
+            break
+        pause(min(interval, remaining))
+    return {"requestedSeconds": duration, "sampleIntervalSeconds": interval,
+        "observedSeconds": clock() - started, "samples": samples,
+        "scope": "post-task idle synthetic workload; sampled observations, no forced GC",
+        "targetsAreNotLimits": True, "idleRssTargetBytes": 500 * 1024 * 1024,
+        "typicalTaskRssTargetBytes": 1024 * 1024 * 1024}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True)
@@ -37,6 +105,9 @@ def main():
     parser.add_argument("--runtime-gid", default="1337")
     parser.add_argument("--docker-prefix", default="", help="Optional CLI prefix, for example sudo -n")
     parser.add_argument("--interrupt-scan", action="store_true", help="Kill only this disposable fixture while an active scan is observed, then restart and recover")
+    parser.add_argument("--missing-root-fault", action="store_true", help="Temporarily hide only a generated fixture root, assert scan failure and unchanged records, then restore before recovery")
+    parser.add_argument("--idle-seconds", type=int, default=0, help="Optional natural post-task idle window, typically 300 or 900 seconds; zero disables")
+    parser.add_argument("--idle-sample-seconds", type=int, default=15, help="Post-task heap/RSS/cgroup sample interval")
     parser.add_argument("--external-probe", type=Path, help="Optional reviewed staging-only Python probe receiving synthetic fixture context on stdin and credentials only in child environment")
     parser.add_argument("--proxy-image", help="Immutable cached proxy image supplied to an external probe")
     args = parser.parse_args()
@@ -49,6 +120,10 @@ def main():
         raise ValueError("Require new output and explicit plugin JARs")
     if not args.h2_jar.startswith("/") or not args.runtime_uid.isdecimal() or not args.runtime_gid.isdecimal():
         raise ValueError("Invalid image runtime configuration")
+    if args.idle_seconds < 0 or args.idle_seconds > 900 or args.idle_sample_seconds <= 0:
+        raise ValueError("Invalid bounded idle sampling configuration")
+    if args.idle_seconds and args.idle_sample_seconds > args.idle_seconds:
+        raise ValueError("Idle interval must not exceed the idle window")
     # No user-selected data directory: all mount sources originate in this new private leaf.
     root = Path(tempfile.mkdtemp(prefix="gameyfin-synthetic-scan-"))
     token = secrets.token_hex(8)
@@ -80,6 +155,11 @@ def main():
         "image": args.image, "sourceRevision": args.source_revision,
         "sourceProvenanceKnown": args.source_revision != "baseline-unknown",
         "heapLimit": "512m", "containerLimit": "1536m", "scanResults": []}
+    controlled_jvm_options = "-Xms128m -Xmx512m -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError"
+    report["jvmProfile"] = {"name": "controlled-fixture-override", "usesImageDefaults": False,
+        "configuredOptions": controlled_jvm_options.split(),
+        "interpretation": "JAVA_OPTS_OVERRIDE replaces image defaults; no shipped periodic-GC/reclaim flags or AOT cache requested",
+        "effectiveFlagValuesObserved": False}
     try:
         spec = importlib.util.spec_from_file_location("seed", Path(__file__).with_name("seed-scan-fixture.py"))
         seed = importlib.util.module_from_spec(spec); spec.loader.exec_module(seed)
@@ -94,7 +174,7 @@ def main():
         shutil.copyfile(args.direct_plugin, root / "plugins" / args.direct_plugin.name)
         env = root / "runtime.env"
         env.write_text("APP_KEY=" + base64.b64encode(os.urandom(32)).decode() +
-            "\nAPP_URL=http://localhost:8080\nJAVA_OPTS_OVERRIDE=-Xms128m -Xmx512m -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError\n")
+            "\nAPP_URL=http://localhost:8080\nJAVA_OPTS_OVERRIDE=" + controlled_jvm_options + "\n")
         env.chmod(0o600)
         image = json.loads(docker("image", "inspect", args.image))[0]
         labels = image["Config"].get("Labels") or {}
@@ -111,6 +191,7 @@ def main():
             mounts += ["--mount", f"type=bind,src={root / directory},dst=/opt/gameyfin/{directory}"]
         mounts += ["--mount", f"type=bind,src={root / 'fixture' / 'sources'},dst=/fixture,readonly"]
         docker("run", "--pull", "never", "-d", "--name", name, "--network", network, "--cpus", "2",
+            "--cgroupns", "private",
             "--memory", "1536m", "--memory-swap", "1536m", "--restart", "no",
             "--env-file", str(env), *mounts, args.image)
         ip = json.loads(docker("inspect", name))[0]["NetworkSettings"]["Networks"][network]["IPAddress"]
@@ -152,7 +233,24 @@ def main():
         page = opener.open(urllib.request.Request(base + "/login",
             urllib.parse.urlencode({"username": "fixture-admin", "password": password, "_csrf": csrf}).encode()), timeout=30).read().decode()
         csrf = re.search(r'<meta[^>]*name="_csrf"[^>]*content="([^"]+)"', page).group(1)
-        for phase in (("cold", "repeat", "recovery") if args.interrupt_scan else ("cold", "repeat")):
+        # Inspect only the fixture JVM's one selected option key inside its own
+        # container. Never emit the rest of /proc/environ (which contains APP_KEY).
+        observed_profile = observe_jvm_options(docker_command, name, args.runtime_uid, args.runtime_gid)
+        if len(observed_profile) != 1 or observed_profile[0].split() != controlled_jvm_options.split():
+            raise RuntimeError("Fixture JVM did not receive the exact controlled option profile")
+        report["jvmProfile"]["runtimeOptionEnvironmentVerified"] = True
+        # Environment verification proves supplied options, not every ergonomic
+        # JVM flag's resolved value; PrintFlagsFinal is still not claimed.
+        phases = ["cold", "repeat"]
+        if args.missing_root_fault:
+            phases.append("missing-root-recovery")
+        if args.interrupt_scan:
+            phases.append("recovery")
+        for phase in phases:
+            if phase == "missing-root-recovery":
+                # Only this generated private leaf is eligible; never any caller
+                # path, production mount, database file, or original torrent source.
+                report["missingRootFault"] = verify_missing_root_fault(root, request, snapshot, metric)
             if phase == "recovery":
                 request("/connect/LibraryEndpoint/triggerScan", {"scanType": "FULL", "libraryIds": [27001,27002,27003,27004]})
                 active = metric("gameyfin_scans_active")
@@ -275,6 +373,32 @@ def main():
                 args.output.write_text(json.dumps(report, indent=2) + "\n")
                 raise RuntimeError("External isolated probe failed: " + report["externalProbeFailure"])
             report["externalProbe"] = json.loads(hook.stdout)
+        if args.idle_seconds:
+            # Use the current fixture JVM after any deliberate process restart.
+            processes = docker("top", name, "-eo", "pid,args").splitlines()[1:]
+            java_pids = [int(line.split(None, 1)[0]) for line in processes
+                if len(line.split(None, 1)) == 2 and "java" in line.split(None, 1)[1].split()[0]]
+            if len(java_pids) != 1:
+                raise RuntimeError("Require one isolated JVM for idle RSS evidence")
+            def idle_measure():
+                resident = re.search(r"VmRSS:\s+(\d+)", Path(f"/proc/{java_pids[0]}/status").read_text())
+                if not resident:
+                    raise RuntimeError("Idle JVM RSS unavailable")
+                sample = snapshot()
+                if metric("gameyfin_scans_active", text=sample) != 0:
+                    raise RuntimeError("Idle evidence invalid: an active scan was observed")
+                # cgroup v2 charge includes file cache and other processes, not
+                # just JVM resident pages. Keep it separate from process RSS.
+                def cgroup_read(path):
+                    return subprocess.check_output([*docker_command, "exec", name, "cat", path], text=True, timeout=10)
+                cgroup_bytes = int(cgroup_read("/sys/fs/cgroup/memory.current"))
+                cgroup_stat = dict(line.split() for line in cgroup_read("/sys/fs/cgroup/memory.stat").splitlines())
+                return {"heapUsedBytes": metric("jvm_memory_used_bytes", 'area="heap"', sample),
+                    "jvmRssBytes": int(resident.group(1)) * 1024,
+                    "containerCgroupCurrentBytes": cgroup_bytes,
+                    "containerAnonymousBytes": int(cgroup_stat["anon"]),
+                    "containerFileCacheBytes": int(cgroup_stat["file"])}
+            report["postTaskIdle"] = sample_post_task_idle(args.idle_seconds, args.idle_sample_seconds, idle_measure)
         final_state = json.loads(docker("inspect", name))[0]
         report["restartCount"] = final_state["RestartCount"]
         report["oomKilled"] = final_state["State"]["OOMKilled"]
@@ -286,13 +410,23 @@ def main():
         report["oomErrorLineCount"] = sum(bool(re.search(r"\bOutOfMemoryError(?::|\s*$)", line)) for line in log_lines)
         report["offlineMetadataMissErrorLineCount"] = sum(
             "No results found for originalIds: {}" in line and bool(re.search(r"\bERROR\b", line)) for line in log_lines)
-        report["unexpectedErrorLogLineCount"] = report["errorLogLineCount"] - report["offlineMetadataMissErrorLineCount"]
+        report["expectedMissingRootErrorLineCount"] = sum(
+            "Error during full scan for library 27001 (OTHER: NoSuchFileException)" in line
+            and bool(re.search(r"\bERROR\b", line)) for line in log_lines) if args.missing_root_fault else 0
+        if args.missing_root_fault and report["expectedMissingRootErrorLineCount"] != 1:
+            raise RuntimeError("Missing-root fault error evidence must occur exactly once")
+        report["unexpectedErrorLogLineCount"] = (report["errorLogLineCount"]
+            - report["offlineMetadataMissErrorLineCount"] - report["expectedMissingRootErrorLineCount"])
         report["loggedExceptionClasses"] = sorted(set(re.findall(
             r"\b(?:[a-z][\w$]*\.)+[A-Z][\w$]*(?:Exception|Error)\b", "\n".join(log_lines))))[:30]
         report["closedDatabaseErrorLineCount"] = sum("database is already closed" in line.lower() or "database has been closed" in line.lower() for line in log_lines)
         if report["oomKilled"] or report["oomErrorLineCount"] or report["health"] != "UP":
             raise RuntimeError("Fixture unhealthy after scans")
-        report["remainingGaps"] = ["production acceptance"] + ([] if args.interrupt_scan else ["failure/recovery"])
+        report["remainingGaps"] = ["production acceptance"]
+        if not args.interrupt_scan:
+            report["remainingGaps"].append("process interruption recovery")
+        if not args.missing_root_fault:
+            report["remainingGaps"].append("filesystem failure retention/recovery")
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, indent=2) + "\n")
     except Exception as error:

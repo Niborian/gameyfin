@@ -3,6 +3,35 @@
 Issue #27 remains open pending a controlled real-library scan and verification of the
 previously interrupted production records. These measurements run outside TrueNAS.
 
+## Post-task natural idle observations
+
+The report names the controlled fixture override and records its configured JVM flags:
+`-Xms128m -Xmx512m -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError`.
+This replaces, rather than appends to, the image defaults. The shipped entrypoint
+already requests periodic G1 collection/reclaim ratios and additional native limits;
+this fixture does **not** measure that shipped profile. The report does not claim
+runtime `PrintFlagsFinal` inspection. It verifies only the exact `JDK_JAVA_OPTIONS`
+value delivered to the fixture JVM, never publishing other environment values.
+Do not use these samples to conclude the
+shipping image's idle-GC settings worked or failed.
+
+The reusable image runner accepts `--idle-seconds 300` or `900` for five/fifteen-minute
+natural settling after scans, downloads and any external probe. CI requests five minutes;
+the default runner remains disabled unless explicitly requested. Samples every fifteen
+seconds retain JVM heap **used**, JVM process RSS, and cgroup-v2 container memory charge
+as distinct byte values. Container charge includes anonymous memory, file cache and other
+processes; it is not JVM RSS. Anonymous/file-cache charges are also recorded separately.
+Unsupported/unavailable telemetry fails rather than fabricating zeroes. Samples are not
+continuous peak measurements; observation itself has telemetry/process overhead.
+
+The user's approximate goals are 500 MiB idle process RSS and 1 GiB for typical tasks,
+with exceptional task peaks permitted. They are comparison targets, not hard acceptance
+limits or a newly applied heap/container cap. Existing scan-phase metrics show sampled
+task resource use separately from these post-task observations. No forced GC, artificial
+cache purge, heap reduction or production setting change occurs. A synthetic idle sample
+does not establish representative production idle behavior; repeated paired workload and
+real-library measurements remain necessary before #27 or cutover acceptance.
+
 ## Reproduction
 
 Use JDK 25 with a fresh test JVM:

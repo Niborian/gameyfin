@@ -25,14 +25,18 @@ the expected SHA-256 per member and BEP3 SHA-1 pieces across member boundaries. 
 is mandated torrent interoperability, not the trusted content-integrity digest.
 
 The result records metadata SHA-256, info-hash, validated root name, byte count and member
-count. Any later add must bind the exact recorded metadata digest and root name to its
+count. Construction now requires `TorrentNetworkPolicy`, and canonical root metadata must
+pass that gate before any snapshot member is opened or any validated result is returned.
+There is no permissive/default policy or policy-free validation entry point. Approved
+network fields cannot bypass exact-content validation. Any later add must bind the exact recorded metadata digest and root name to its
 owned snapshot; it must independently validate tracker admission and configured peer
 policy. This validator does not authorize any metadata-driven network destination: the
 future add policy must reject or explicitly whitelist every network-bearing field,
 including `announce`, `announce-list`, `url-list`, `httpseeds` and unknown extensions.
 Checking only the primary tracker URL is insufficient; webseeds and secondary trackers
 must not bypass peer/API exposure restrictions. No active client may consume metadata
-until that separate host policy is implemented and reviewed. Stream interruption
+until the required host policy, client egress and lifecycle integration are reviewed.
+See [the inactive tracker policy](QBITTORRENT-NETWORK-POLICY.md). Stream interruption
 is cooperative; the future process/lifecycle boundary must manage elapsed-time limits
 and uncertain blocked I/O. No timeout or physical recovery guarantee is claimed here.
 

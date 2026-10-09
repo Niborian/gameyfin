@@ -15,7 +15,10 @@ internal data class ValidatedTorrentMetadata(val metadataSha256: String, val inf
 /** Pure inactive validation; no provider, path resolution, client call or seeding authority.
  * Owns and closes metadata and member streams. Bounds allocations and actual bytes read;
  * interruption is cooperative, not a guarantee against a blocked InputStream implementation. */
-internal class TorrentMetadataValidator(private val maxSourceBytes: Long = 64L * 1024 * 1024 * 1024) {
+internal class TorrentMetadataValidator(
+    private val networkPolicy: TorrentNetworkPolicy,
+    private val maxSourceBytes: Long = 64L * 1024 * 1024 * 1024
+) {
     init { require(maxSourceBytes in 1..(1024L * 1024 * 1024 * 1024)) }
 
     fun validate(metadata: InputStream, expected: List<SnapshotMember>, reader: OwnedSnapshotReader): ValidatedTorrentMetadata = metadata.use { input ->
@@ -32,8 +35,10 @@ internal class TorrentMetadataValidator(private val maxSourceBytes: Long = 64L *
         val encoded = input.readNBytes(1024 * 1024 + 1)
         require(encoded.size <= 1024 * 1024) { "Metadata exceeds byte budget" }
         val parser = Parser(encoded)
-        val root = parser.parse() as? Map<*, *> ?: error("Expected torrent dictionary")
+        @Suppress("UNCHECKED_CAST") // Parser dictionaries always have ASCII String keys and non-null values.
+        val root = parser.parse() as? Map<String, Any> ?: error("Expected torrent dictionary")
         require(parser.position == encoded.size) { "Trailing metadata" }
+        networkPolicy.validate(root)
         val info = root["info"] as? Map<*, *> ?: error("Missing info dictionary")
         require(info.keys == setOf("files", "name", "piece length", "pieces", "private")) { "Unsupported info fields" }
         require(info["private"] == 1L) { "Private torrent required" }

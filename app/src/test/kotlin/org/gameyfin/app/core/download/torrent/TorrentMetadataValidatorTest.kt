@@ -6,6 +6,8 @@ import java.security.MessageDigest
 import kotlin.test.*
 
 class TorrentMetadataValidatorTest {
+    private val tracker = "https://tracker.invalid/private/announce"
+    private fun validator(maxBytes: Long = 64L * 1024 * 1024 * 1024) = TorrentMetadataValidator(TorrentNetworkPolicy(setOf(tracker), true), maxBytes)
     private val payload = linkedMapOf("Grouped/base-a.bin" to ByteArray(12000) { 1 }, "Grouped/base-b.bin" to ByteArray(9000) { 2 }, "Optional/music.bin" to byteArrayOf(3, 4))
     private fun digest(bytes: ByteArray, algorithm: String = "SHA-256") = MessageDigest.getInstance(algorithm).digest(bytes)
     private fun manifest(data: Map<String, ByteArray> = payload) = data.map { (name, bytes) -> SnapshotMember(name, bytes.size.toLong(), digest(bytes).joinToString("") { "%02x".format(it) }) }
@@ -22,7 +24,7 @@ class TorrentMetadataValidatorTest {
         is Map<*, *> -> byteArrayOf('d'.code.toByte()) + value.entries.sortedBy { it.key.toString() }.fold(byteArrayOf()) { a, b -> a + encode(b.key.toString()) + encode(requireNotNull(b.value)) } + byteArrayOf('e'.code.toByte())
         else -> error("Unsupported test value")
     }
-    private fun metadata(value: Map<String, Any> = info()) = encode(mapOf("info" to value))
+    private fun metadata(value: Map<String, Any> = info()) = encode(mapOf("announce" to tracker, "info" to value))
     private class Tracked(bytes: ByteArray) : ByteArrayInputStream(bytes) {
         var closed = false
         override fun close() { closed = true; super.close() }
@@ -31,7 +33,7 @@ class TorrentMetadataValidatorTest {
     @Test fun `grouped and optional members span exact torrent pieces with streams closed`() {
         val streams = mutableListOf<Tracked>()
         val input = Tracked(metadata())
-        val result = TorrentMetadataValidator().validate(input, manifest()) { name -> Tracked(payload.getValue(name)).also { streams += it } }
+        val result = validator().validate(input, manifest()) { name -> Tracked(payload.getValue(name)).also { streams += it } }
         assertEquals(21002L, result.sourceBytes)
         assertEquals(3, result.members)
         assertEquals(40, result.infoHash.length)
@@ -40,14 +42,14 @@ class TorrentMetadataValidatorTest {
 
     @Test fun `required only and empty members validate without optional leakage`() {
         val selected = linkedMapOf("Grouped/base-a.bin" to payload.getValue("Grouped/base-a.bin"), "Grouped/empty.bin" to byteArrayOf())
-        assertEquals(2, TorrentMetadataValidator().validate(ByteArrayInputStream(metadata(info(selected))), manifest(selected)) { ByteArrayInputStream(selected.getValue(it)) }.members)
+        assertEquals(2, validator().validate(ByteArrayInputStream(metadata(info(selected))), manifest(selected)) { ByteArrayInputStream(selected.getValue(it)) }.members)
     }
 
     @Test fun `truncation growth and changed source digest close all streams`() {
         for (changed in listOf(payload.getValue("Grouped/base-a.bin").dropLast(1).toByteArray(), payload.getValue("Grouped/base-a.bin") + 5, ByteArray(12000) { 9 })) {
             val streams = mutableListOf<Tracked>()
             val input = Tracked(metadata())
-            assertFails { TorrentMetadataValidator().validate(input, manifest()) { name -> Tracked(if (name == "Grouped/base-a.bin") changed else payload.getValue(name)).also { streams += it } } }
+            assertFails { validator().validate(input, manifest()) { name -> Tracked(if (name == "Grouped/base-a.bin") changed else payload.getValue(name)).also { streams += it } } }
             assertTrue(input.closed && streams.all { it.closed })
         }
     }
@@ -64,38 +66,38 @@ class TorrentMetadataValidatorTest {
             info().apply { this["pieces"] = byteArrayOf() },
             info().apply { this["meta version"] = 2L }
         )
-        for (bad in cases) assertFails { TorrentMetadataValidator().validate(ByteArrayInputStream(metadata(bad)), manifest()) { error("Must not read source") } }
+        for (bad in cases) assertFails { validator().validate(ByteArrayInputStream(metadata(bad)), manifest()) { error("Must not read source") } }
     }
 
     @Test fun `corrupt piece digest is refused`() {
         val bad = info().apply { this["pieces"] = ByteArray(40) }
-        assertFails { TorrentMetadataValidator().validate(ByteArrayInputStream(metadata(bad)), manifest()) { ByteArrayInputStream(payload.getValue(it)) } }
-        assertFails { TorrentMetadataValidator().validate(ByteArrayInputStream(metadata()), manifest().map { it.copy(sha256 = "0".repeat(64)) }) { ByteArrayInputStream(payload.getValue(it)) } }
+        assertFails { validator().validate(ByteArrayInputStream(metadata(bad)), manifest()) { ByteArrayInputStream(payload.getValue(it)) } }
+        assertFails { validator().validate(ByteArrayInputStream(metadata()), manifest().map { it.copy(sha256 = "0".repeat(64)) }) { ByteArrayInputStream(payload.getValue(it)) } }
     }
 
     @Test fun `canonical parsing rejects malformed nesting duplicates integers lengths and trailing bytes`() {
         val malformed = listOf("d4:infoi0e4:infoi0ee", "d4:infoi01ee", "d4:infoi-0ee", "d4:infoi9223372036854775808ee", "d04:infoi0ee", "d4:info3:xe", "l".repeat(18) + "e".repeat(18))
         for (raw in malformed.map { it.toByteArray() } + listOf(metadata() + 'x'.code.toByte(), ("l" + "0:".repeat(32769) + "e").toByteArray())) {
             val input = Tracked(raw)
-            assertFails { TorrentMetadataValidator().validate(input, manifest()) { error("Must not read") } }
+            assertFails { validator().validate(input, manifest()) { error("Must not read") } }
             assertTrue(input.closed)
         }
     }
 
     @Test fun `metadata member and actual byte budgets fail closed`() {
         val input = Tracked(ByteArray(1024 * 1024 + 1))
-        assertFails { TorrentMetadataValidator().validate(input, manifest()) { error("Must not read") } }
+        assertFails { validator().validate(input, manifest()) { error("Must not read") } }
         assertTrue(input.closed)
-        assertFails { TorrentMetadataValidator(21001).validate(ByteArrayInputStream(metadata()), manifest()) { error("Must not read") } }
-        assertFails { TorrentMetadataValidator().validate(ByteArrayInputStream(metadata()), List(4097) { manifest().first() }) { error("Must not read") } }
-        assertFails { TorrentMetadataValidator().validate(ByteArrayInputStream(metadata()), listOf(manifest().first(), manifest().first().copy(generatedName = "grouped/base-a.bin"))) { error("Must not read") } }
+        assertFails { validator(21001).validate(ByteArrayInputStream(metadata()), manifest()) { error("Must not read") } }
+        assertFails { validator().validate(ByteArrayInputStream(metadata()), List(4097) { manifest().first() }) { error("Must not read") } }
+        assertFails { validator().validate(ByteArrayInputStream(metadata()), listOf(manifest().first(), manifest().first().copy(generatedName = "grouped/base-a.bin"))) { error("Must not read") } }
     }
 
     @Test fun `interruption closes member without clearing interrupted state`() {
         val source = Tracked(payload.values.first())
         Thread.currentThread().interrupt()
         try {
-            assertFails { TorrentMetadataValidator().validate(ByteArrayInputStream(metadata()), manifest()) { source } }
+            assertFails { validator().validate(ByteArrayInputStream(metadata()), manifest()) { source } }
             assertTrue(source.closed)
             assertTrue(Thread.currentThread().isInterrupted)
         } finally { Thread.interrupted() }
@@ -103,7 +105,7 @@ class TorrentMetadataValidatorTest {
 
     @Test fun `all empty members require no pieces and still verify exact EOF`() {
         val selected = linkedMapOf("Grouped/empty.bin" to byteArrayOf())
-        assertEquals(0L, TorrentMetadataValidator().validate(ByteArrayInputStream(metadata(info(selected))), manifest(selected)) { ByteArrayInputStream(byteArrayOf()) }.sourceBytes)
+        assertEquals(0L, validator().validate(ByteArrayInputStream(metadata(info(selected))), manifest(selected)) { ByteArrayInputStream(byteArrayOf()) }.sourceBytes)
     }
 
     @Test fun `stalled stream and reader failure close metadata without unbounded retry`() {
@@ -114,10 +116,38 @@ class TorrentMetadataValidatorTest {
             override fun read(buffer: ByteArray, offset: Int, length: Int) = 0
             override fun close() { closed = true }
         }
-        assertFails { TorrentMetadataValidator().validate(input, manifest()) { stalled } }
+        assertFails { validator().validate(input, manifest()) { stalled } }
         assertTrue(closed && input.closed)
         val throwingInput = Tracked(metadata())
-        assertFails { TorrentMetadataValidator().validate(throwingInput, manifest()) { error("Synthetic reader refusal") } }
+        assertFails { validator().validate(throwingInput, manifest()) { error("Synthetic reader refusal") } }
         assertTrue(throwingInput.closed)
+    }
+
+    @Test fun `network refusal prevents any snapshot read or accepted metadata output`() {
+        val roots = listOf(
+            mapOf("announce" to "https://foreign.invalid/announce", "info" to info()),
+            mapOf("announce" to tracker, "info" to info(), "announce-list" to listOf(listOf(tracker, "https://foreign.invalid/announce"))),
+            mapOf("announce" to tracker, "info" to info(), "url-list" to "https://foreign.invalid/seed"),
+            mapOf("announce" to tracker, "info" to info(), "x-network" to "https://foreign.invalid/unknown"),
+            mapOf("info" to info())
+        )
+        for (root in roots) {
+            val input = Tracked(encode(root))
+            var reads = 0
+            assertFails { validator().validate(input, manifest()) { reads++; error("Must not open snapshot") } }
+            assertEquals(0, reads)
+            assertTrue(input.closed)
+        }
+    }
+
+    @Test fun `approved network cannot bypass content failure or metadata digest binding`() {
+        val bytes = metadata()
+        val result = validator().validate(ByteArrayInputStream(bytes), manifest()) { ByteArrayInputStream(payload.getValue(it)) }
+        assertEquals(digest(bytes).joinToString("") { "%02x".format(it) }, result.metadataSha256)
+        assertEquals("Owned_snapshot", result.rootName)
+        assertEquals(digest(encode(info()), "SHA-1").joinToString("") { "%02x".format(it) }, result.infoHash)
+        val input = Tracked(bytes)
+        assertFails { validator().validate(input, manifest()) { ByteArrayInputStream(byteArrayOf(99)) } }
+        assertTrue(input.closed)
     }
 }

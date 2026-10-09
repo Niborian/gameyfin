@@ -3,7 +3,9 @@
 `TorrentNetworkPolicy` is an internal metadata-field gate, not an endpoint or network
 client. Nothing registers or invokes an active provider. It takes an already bounded,
 canonically parsed root dictionary; exact-content validation remains a separate required
-gate. The future host must invoke both gates and bind the recorded metadata digest before
+gate. `TorrentMetadataValidator` now requires this policy and invokes it on canonical
+root metadata before snapshot reads; neither gate can be omitted from that validation
+entry point. The future host must use that combined gate and bind the recorded metadata digest before
 any client add. This does not complete #112 or replace the original torrent route.
 
 Administrator configuration must explicitly confirm private tracker admission and supply

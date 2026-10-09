@@ -10,7 +10,9 @@ The report names the controlled fixture override and records its configured JVM 
 This replaces, rather than appends to, the image defaults. The shipped entrypoint
 already requests periodic G1 collection/reclaim ratios and additional native limits;
 this fixture does **not** measure that shipped profile. The report does not claim
-runtime `PrintFlagsFinal` inspection. Do not use these samples to conclude the
+runtime `PrintFlagsFinal` inspection. It verifies only the exact `JDK_JAVA_OPTIONS`
+value delivered to the fixture JVM, never publishing other environment values.
+Do not use these samples to conclude the
 shipping image's idle-GC settings worked or failed.
 
 The reusable image runner accepts `--idle-seconds 300` or `900` for five/fifteen-minute

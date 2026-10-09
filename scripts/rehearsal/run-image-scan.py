@@ -222,6 +222,19 @@ def main():
         page = opener.open(urllib.request.Request(base + "/login",
             urllib.parse.urlencode({"username": "fixture-admin", "password": password, "_csrf": csrf}).encode()), timeout=30).read().decode()
         csrf = re.search(r'<meta[^>]*name="_csrf"[^>]*content="([^"]+)"', page).group(1)
+        # Inspect only the fixture JVM's one selected option key inside its own
+        # container. Never emit the rest of /proc/environ (which contains APP_KEY).
+        profile_probe = ('for task in /proc/[0-9]*/comm; do '
+            'if [ "$(cat "$task" 2>/dev/null)" = java ]; then '
+            'tr "\\000" "\\n" < "${task%/comm}/environ" | '
+            'sed -n "s/^JDK_JAVA_OPTIONS=//p"; fi; done')
+        observed_profile = subprocess.check_output([*docker_command, "exec", name, "sh", "-c", profile_probe],
+            text=True, timeout=10).splitlines()
+        if len(observed_profile) != 1 or observed_profile[0].split() != controlled_jvm_options.split():
+            raise RuntimeError("Fixture JVM did not receive the exact controlled option profile")
+        report["jvmProfile"]["runtimeOptionEnvironmentVerified"] = True
+        # Environment verification proves supplied options, not every ergonomic
+        # JVM flag's resolved value; PrintFlagsFinal is still not claimed.
         phases = ["cold", "repeat"]
         if args.missing_root_fault:
             phases.append("missing-root-recovery")

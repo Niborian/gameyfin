@@ -24,6 +24,17 @@ import urllib.request
 import zipfile
 
 
+def observe_jvm_options(docker_command, name, runtime_uid, runtime_gid):
+    """Read one fixed option key as the fixture JVM owner, without extra capabilities."""
+    probe = ('for task in /proc/[0-9]*/comm; do '
+        'if [ "$(cat "$task" 2>/dev/null)" = java ]; then '
+        'tr "\\000" "\\n" < "${task%/comm}/environ" | '
+        'sed -n "s/^JDK_JAVA_OPTIONS=//p"; fi; done')
+    return subprocess.check_output([*docker_command, "exec", "--user",
+        runtime_uid + ":" + runtime_gid, name, "sh", "-c", probe],
+        text=True, timeout=10).splitlines()
+
+
 def verify_missing_root_fault(root, request, snapshot, metric, timeout=180):
     """Only accept the private generated fixture layout, never caller source paths."""
     source = root / "fixture" / "sources" / "lib1"
@@ -224,12 +235,7 @@ def main():
         csrf = re.search(r'<meta[^>]*name="_csrf"[^>]*content="([^"]+)"', page).group(1)
         # Inspect only the fixture JVM's one selected option key inside its own
         # container. Never emit the rest of /proc/environ (which contains APP_KEY).
-        profile_probe = ('for task in /proc/[0-9]*/comm; do '
-            'if [ "$(cat "$task" 2>/dev/null)" = java ]; then '
-            'tr "\\000" "\\n" < "${task%/comm}/environ" | '
-            'sed -n "s/^JDK_JAVA_OPTIONS=//p"; fi; done')
-        observed_profile = subprocess.check_output([*docker_command, "exec", name, "sh", "-c", profile_probe],
-            text=True, timeout=10).splitlines()
+        observed_profile = observe_jvm_options(docker_command, name, args.runtime_uid, args.runtime_gid)
         if len(observed_profile) != 1 or observed_profile[0].split() != controlled_jvm_options.split():
             raise RuntimeError("Fixture JVM did not receive the exact controlled option profile")
         report["jvmProfile"]["runtimeOptionEnvironmentVerified"] = True

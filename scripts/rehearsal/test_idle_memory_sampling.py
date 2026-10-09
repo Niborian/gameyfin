@@ -2,6 +2,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("image_scan", Path(__file__).with_name("run-image-scan.py"))
 image_scan = importlib.util.module_from_spec(spec)
@@ -9,6 +10,17 @@ spec.loader.exec_module(image_scan)
 
 
 class IdleSamplingTest(unittest.TestCase):
+    def test_option_probe_runs_as_jvm_owner_and_emits_only_fixed_key(self):
+        with patch.object(image_scan.subprocess, "check_output", return_value="-Xms128m -Xmx512m\n") as output:
+            self.assertEqual(image_scan.observe_jvm_options(["sudo", "-n", "docker"], "owned-fixture", "1337", "1337"),
+                ["-Xms128m -Xmx512m"])
+        command = output.call_args.args[0]
+        self.assertEqual(command[:9], ["sudo", "-n", "docker", "exec", "--user", "1337:1337", "owned-fixture", "sh", "-c"])
+        self.assertIn('sed -n "s/^JDK_JAVA_OPTIONS=//p"', command[-1])
+        self.assertNotIn("APP_KEY", command[-1])
+        self.assertNotIn("privileged", command)
+        self.assertEqual(output.call_args.kwargs, {"text": True, "timeout": 10})
+
     def test_five_and_fifteen_minute_windows_keep_distinct_memory_metrics(self):
         for duration in (300, 900):
             with self.subTest(duration=duration):

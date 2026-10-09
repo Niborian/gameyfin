@@ -54,13 +54,12 @@ These assertions concern host reconciliation/accounting only. A transactional pr
 may have committed changes before returning with its interrupt flag set; this guard does
 not undo those changes or earlier completed per-game transactions.
 
-Remaining cancellation limitation: `invokeBounded` requests `Future.cancel(true)` in its
-`finally` but does not wait for worker termination. `triggerScan` removes the library's
-`scansInProgress` entry when the coordinator exits. A metadata provider that ignores
-interruption can therefore keep working after cancellation while a later same-library
-scan begins. This change does not claim quiescence, atomic rollback of earlier individual
-game transactions, or recovery safety for such an uncooperative provider. A separate
-reviewed lifecycle design and deterministic fixture are required before closing #19.
+`invokeBounded` requests `Future.cancel(true)` but cancelled Future state alone does not
+prove body exit. The integrated worker-lifetime gate retains `scansInProgress` ownership
+until the per-scan executor actually terminates; see `SCAN-WORKER-LIFETIME.md`.
+This does not provide atomic rollback of earlier individual game transactions or make
+an indefinitely uncooperative provider automatically recoverable. Representative recovery
+acceptance remains necessary before closing #19.
 
 On 2026-10-07 the three bounded-task tests and 17 library-scan tests passed under
 Temurin 25.0.4.1. Full main and test Kotlin compilation also passed. The frontend build

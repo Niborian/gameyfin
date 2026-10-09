@@ -309,15 +309,16 @@ class LibraryScanServiceTest {
         for (full in listOf(false, true)) {
             val library = createTestLibrary(if (full) 99304L else 99303L)
             every { filesystemService.scanLibraryForGamefiles(library) } throws InterruptedException("synthetic coordinator cancellation")
-            val method = if (full) LibraryScanService::class.java.getDeclaredMethod("fullScan", Library::class.java, Boolean::class.javaPrimitiveType)
-                else LibraryScanService::class.java.getDeclaredMethod("quickScan", Library::class.java)
+            val workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()
+            val method = if (full) LibraryScanService::class.java.getDeclaredMethod("fullScan", Library::class.java, Boolean::class.javaPrimitiveType, java.util.concurrent.ExecutorService::class.java)
+                else LibraryScanService::class.java.getDeclaredMethod("quickScan", Library::class.java, java.util.concurrent.ExecutorService::class.java)
             method.isAccessible = true
             try {
-                if (full) method.invoke(libraryScanService, library, false) else method.invoke(libraryScanService, library)
+                if (full) method.invoke(libraryScanService, library, false, workers) else method.invoke(libraryScanService, library, workers)
                 assertTrue(Thread.currentThread().isInterrupted)
                 assertEquals(0.0, meterRegistry.find("gameyfin.scans.completed").tag("type", if (full) "full" else "quick").counter()!!.count())
                 verify(exactly = 0) { libraryRepository.save(any()) }
-            } finally { Thread.interrupted() }
+            } finally { Thread.interrupted(); workers.close() }
         }
     }
 

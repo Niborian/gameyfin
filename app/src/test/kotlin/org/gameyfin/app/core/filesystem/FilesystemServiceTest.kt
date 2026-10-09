@@ -187,6 +187,30 @@ class FilesystemServiceTest {
     }
 
     @Test
+    fun `scan membership preserves ignored identity and duplicate removal order`() {
+        every { configService.get(ConfigProperties.Libraries.Scan.GameFileExtensions) } returns arrayOf("exe")
+        every { configService.get(ConfigProperties.Libraries.Scan.ScanEmptyDirectories) } returns false
+        val known = tempDir.resolve("known.exe").createFile()
+        val ignored = tempDir.resolve("ignored.exe").createFile()
+        val added = tempDir.resolve("added.exe").createFile()
+        val absent = tempDir.resolve("missing.exe")
+        fun game(path: Path) = mockk<Game> { every { metadata.path } returns path.toString() }
+        val removedIgnored = IgnoredPath(path = tempDir.resolve("ignored-missing.exe").toString(),
+            source = IgnoredPathPluginSource(mutableListOf()))
+        val presentIgnored = IgnoredPath(path = ignored.toString(), source = IgnoredPathPluginSource(mutableListOf()))
+        val library = mockk<Library> {
+            every { directories } returns mutableListOf(DirectoryMapping(internalPath = tempDir.toString()))
+            every { games } returns mutableListOf(game(known), game(absent), game(absent))
+            every { ignoredPaths } returns mutableListOf(presentIgnored, removedIgnored)
+        }
+        val result = filesystemService.scanLibraryForGamefiles(library)
+        assertEquals(listOf(added), result.newPaths)
+        assertEquals(listOf(absent, absent), result.removedGamePaths)
+        assertEquals(listOf(removedIgnored), result.removedIgnoredPaths)
+        assertTrue(known.exists() && ignored.exists() && added.exists())
+    }
+
+    @Test
     fun `scanLibraryForGamefiles should find new game files`() {
         every { configService.get(ConfigProperties.Libraries.Scan.GameFileExtensions) } returns arrayOf("exe", "zip")
         every { configService.get(ConfigProperties.Libraries.Scan.ScanEmptyDirectories) } returns false

@@ -71,6 +71,14 @@ def verify_missing_root_fault(root, request, snapshot, metric, timeout=180):
         parked.rename(source)
 
 
+def require_scan_quiescence(metric, sample):
+    """Both mandatory meters must be present and zero; failed coordination is not body exit."""
+    active = metric("gameyfin_scans_active", text=sample)
+    draining = metric("gameyfin_scans_draining", text=sample)
+    if active != 0 or draining != 0:
+        raise RuntimeError("Idle evidence invalid: active or draining scan workers observed")
+
+
 def sample_post_task_idle(duration, interval, measure, clock=time.monotonic, pause=time.sleep):
     """Observe natural settling only; never force GC or claim a continuous peak."""
     if duration <= 0 or duration > 900 or interval <= 0 or interval > duration:
@@ -139,7 +147,7 @@ def main():
     def snapshot():
         # Ask Actuator only for the meters needed by this workload. Scraping all
         # binders also invokes unrelated datasource/filesystem gauges under load.
-        names = ("jvm_memory_used_bytes,gameyfin_scans_active,"
+        names = ("jvm_memory_used_bytes,gameyfin_scans_active,gameyfin_scans_draining,"
             "gameyfin_scans_completed,gameyfin_scans_completed_total,"
             "gameyfin_scans_failed,gameyfin_scans_failed_total")
         with telemetry.open(metrics + "?" + urllib.parse.urlencode({"includedNames": names}), timeout=10) as response:
@@ -385,8 +393,7 @@ def main():
                 if not resident:
                     raise RuntimeError("Idle JVM RSS unavailable")
                 sample = snapshot()
-                if metric("gameyfin_scans_active", text=sample) != 0:
-                    raise RuntimeError("Idle evidence invalid: an active scan was observed")
+                require_scan_quiescence(metric, sample)
                 # cgroup v2 charge includes file cache and other processes, not
                 # just JVM resident pages. Keep it separate from process RSS.
                 def cgroup_read(path):

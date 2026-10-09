@@ -1,0 +1,20 @@
+{
+  "scope": "synthetic mocked-persistence recovery fixture, not production acceptance",
+  "baseRevision": "9dcc564a49628f882af8c391d05aeca87a788fc6",
+  "change": "scan-local HashSet membership indexes; no persistent cache",
+  "operatingSystem": "Windows",
+  "fixtureGames": 5000,
+  "variants": 10000,
+  "contents": 30000,
+  "concurrency": 4,
+  "maxHeapBytes": 536870912,
+  "sampledPeakHeapBytes": 149612384,
+  "processLifetimePeakRssBytes": 479301632,
+  "durationSeconds": 1.7271683,
+  "gamesPerSecond": 2894.9118623819113,
+  "injectedFailures": 1,
+  "recoveryFailures": 0,
+  "sourceFilesUnchanged": true,
+  "persistence": "mocked",
+  "javaVersion": "25.0.4.1"
+}

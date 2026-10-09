@@ -144,6 +144,11 @@ def main():
         "image": args.image, "sourceRevision": args.source_revision,
         "sourceProvenanceKnown": args.source_revision != "baseline-unknown",
         "heapLimit": "512m", "containerLimit": "1536m", "scanResults": []}
+    controlled_jvm_options = "-Xms128m -Xmx512m -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError"
+    report["jvmProfile"] = {"name": "controlled-fixture-override", "usesImageDefaults": False,
+        "configuredOptions": controlled_jvm_options.split(),
+        "interpretation": "JAVA_OPTS_OVERRIDE replaces image defaults; no shipped periodic-GC/reclaim flags or AOT cache requested",
+        "effectiveFlagValuesObserved": False}
     try:
         spec = importlib.util.spec_from_file_location("seed", Path(__file__).with_name("seed-scan-fixture.py"))
         seed = importlib.util.module_from_spec(spec); spec.loader.exec_module(seed)
@@ -158,7 +163,7 @@ def main():
         shutil.copyfile(args.direct_plugin, root / "plugins" / args.direct_plugin.name)
         env = root / "runtime.env"
         env.write_text("APP_KEY=" + base64.b64encode(os.urandom(32)).decode() +
-            "\nAPP_URL=http://localhost:8080\nJAVA_OPTS_OVERRIDE=-Xms128m -Xmx512m -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError\n")
+            "\nAPP_URL=http://localhost:8080\nJAVA_OPTS_OVERRIDE=" + controlled_jvm_options + "\n")
         env.chmod(0o600)
         image = json.loads(docker("image", "inspect", args.image))[0]
         labels = image["Config"].get("Labels") or {}

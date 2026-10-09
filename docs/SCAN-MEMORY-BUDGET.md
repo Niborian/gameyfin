@@ -5,6 +5,14 @@ previously interrupted production records. These measurements run outside TrueNA
 
 ## Post-task natural idle observations
 
+The report names the controlled fixture override and records its configured JVM flags:
+`-Xms128m -Xmx512m -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError`.
+This replaces, rather than appends to, the image defaults. The shipped entrypoint
+already requests periodic G1 collection/reclaim ratios and additional native limits;
+this fixture does **not** measure that shipped profile. The report does not claim
+runtime `PrintFlagsFinal` inspection. Do not use these samples to conclude the
+shipping image's idle-GC settings worked or failed.
+
 The reusable image runner accepts `--idle-seconds 300` or `900` for five/fifteen-minute
 natural settling after scans, downloads and any external probe. CI requests five minutes;
 the default runner remains disabled unless explicitly requested. Samples every fifteen

@@ -17,7 +17,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * - `gameyfin_scans_started_total`        – counter of scans started (tags: type)
  * - `gameyfin_scans_completed_total`      – counter of scans completed (tags: type)
  * - `gameyfin_scans_failed_total`         – counter of scans that failed (tags: type)
- * - `gameyfin_scans_active`               – gauge of currently running scans
+ * - `gameyfin_scans_active`               – gauge of coordinator scan progress
+ * - `gameyfin_scans_draining`             – gauge of worker scopes awaiting actual termination
  * - `gameyfin_scans_duration_seconds`     – timer of scan duration (tags: type)
  * - `gameyfin_scans_games_new_total`      – counter of newly matched games
  * - `gameyfin_scans_games_removed_total`  – counter of removed games
@@ -39,6 +40,7 @@ class ScanMetrics(private val registry: MeterRegistry) {
     }
 
     private val activeScans = AtomicInteger(0)
+    private val drainingScans = AtomicInteger(0)
 
     // Pre-register per-type counters & timers
     private val scansStarted = ScanType.entries.associateWith { type ->
@@ -97,7 +99,11 @@ class ScanMetrics(private val registry: MeterRegistry) {
 
     init {
         registry.gauge("gameyfin.scans.active", activeScans) { it.get().toDouble() }
+        registry.gauge("gameyfin.scans.draining", drainingScans) { it.get().toDouble() }
     }
+
+    fun recordWorkersDraining() { drainingScans.incrementAndGet() }
+    fun recordWorkersQuiescent() { drainingScans.decrementAndGet() }
 
     /** Call when a scan starts. */
     fun recordScanStarted(type: ScanType) {

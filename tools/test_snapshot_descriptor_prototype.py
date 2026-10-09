@@ -193,6 +193,27 @@ class SnapshotPrototypeTest(unittest.TestCase):
                 self.copy()
         self.assertEqual(len(list(self.cache.iterdir())), 1)
 
+    def test_nul_source_refused_not_truncated_to_authorized_prefix(self):
+        self.members = [("selected\x00/other", "output", self.expected)]
+        with self.assertRaisesRegex(ValueError, "invalid relative"):
+            self.copy()
+        self.assertEqual(list(self.cache.iterdir()), [])
+
+    def test_success_path_substitution_never_returns_foreign_operation_name(self):
+        replaced = []
+        def substitute_once():
+            if not replaced:
+                replaced.append(True)
+                operation = next(self.cache.iterdir())
+                operation.rename(self.cache / "relocated-operation")
+                operation.mkdir(mode=0o700)
+                (operation / "foreign").write_bytes(b"preserve")
+        with self.assertRaisesRegex(RuntimeError, "uncertain operation name"):
+            self.copy(after_chunk=substitute_once)
+        foreign = next(p for p in self.cache.iterdir() if p.name.startswith("copy-"))
+        self.assertEqual((foreign / "foreign").read_bytes(), b"preserve")
+        self.assertEqual(list((self.cache / "relocated-operation").iterdir()), [])
+
 
 if __name__ == "__main__":
     unittest.main()

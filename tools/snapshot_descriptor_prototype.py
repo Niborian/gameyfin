@@ -26,7 +26,7 @@ def fingerprint(value):
 def open_beneath(root_fd, relative):
     if not sys.platform.startswith("linux") or os.uname().machine not in ("x86_64", "aarch64"):
         raise OSError(errno.ENOSYS, "unsupported descriptor backend")
-    if not relative or relative.startswith("/") or any(p in ("", ".", "..") for p in relative.split("/")):
+    if not relative or "\x00" in relative or relative.startswith("/") or any(p in ("", ".", "..") for p in relative.split("/")):
         raise ValueError("invalid relative member")
     # Linux x86_64/aarch64 SYS_openat2=437. Fail closed on syscall/flag errors.
     how = OpenHow(os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK, 0, 0x08 | 0x04 | 0x02 | 0x01)
@@ -58,7 +58,7 @@ def copy_members(source_fd, cache_fd, members, max_bytes, max_files, cancelled=l
     if max_bytes < 0 or max_files < 0 or len(members) > max_files:
         raise ValueError("quota")
     names = [member[1] for member in members]
-    if len(set(names)) != len(names) or any(not n or n in (".", "..") or "/" in n or "\\" in n for n in names):
+    if len(set(names)) != len(names) or any(not n or "\x00" in n or n in (".", "..") or "/" in n or "\\" in n for n in names):
         raise ValueError("unsafe output names")
     operation = "copy-" + uuid.uuid4().hex
     os.mkdir(operation, mode=0o700, dir_fd=cache_fd)
@@ -168,6 +168,9 @@ def copy_members(source_fd, cache_fd, members, max_bytes, max_files, cancelled=l
             finally:
                 os.close(source)
         os.fsync(operation_fd)
+        named = os.stat(operation, dir_fd=cache_fd, follow_symlinks=False)
+        if (named.st_dev, named.st_ino) != operation_identity:
+            raise RuntimeError("uncertain operation identity before return")
         return operation, manifest
     except BaseException:
         # Descriptor-relative files only; refuse to remove a substituted operation name.

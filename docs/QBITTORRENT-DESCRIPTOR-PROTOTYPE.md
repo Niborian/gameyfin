@@ -21,13 +21,14 @@ is also re-read and hashed. Source hardlink aliases and
 special files are refused. Flat generated output names are exclusively created through an
 owned operation directory descriptor. Actual bytes and file counts are bounded.
 
-Eighteen deterministic synthetic tests exercise exact copy, real post-first-chunk cancellation
+Twenty deterministic synthetic tests exercise exact copy, real post-first-chunk cancellation
 and cleanup, actual-byte quota cleanup, file quota preflight, in-place mutation refusal,
 A-stat/B-open/A-restore rejection, ancestor symlink refusal, unsupported syscall refusal,
 cache pathname replacement without redirecting writes, operation-name substitution without
 foreign deletion, inaccessible-mode requirements, hardlink refusal and output traversal
 refusal, destination corruption refusal, mkdir/open/fsync failure, and uncertain failed
-open-cleanup reporting. They create only temporary
+open-cleanup reporting, NUL-source refusal and final operation-name identity refusal.
+They create only temporary
 invented files. Run on Linux:
 
 ```sh
@@ -39,7 +40,8 @@ review are required. No Docker is needed.
 
 On 2026-10-08 the root reviewer independently executed these exact synthetic modules through
 an in-memory SSH-stdin harness on the authorized Linux staging host: 18 tests passed in
-0.015 seconds. No persistent server payload was installed; test temporary directories used
+0.015 seconds before the two subsequent NUL/final-identity regression tests were added.
+No persistent server payload was installed; test temporary directories used
 normal scoped cleanup. This is evidence only for the experiment's tested primitives, not a
 production helper or full #112 acceptance. Exact-head Ubuntu CI must be checked before merge.
 

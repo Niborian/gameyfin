@@ -9,6 +9,8 @@ import org.springframework.stereotype.Service
 import java.io.File
 import java.nio.file.FileSystems
 import java.nio.file.Path
+import java.nio.file.Files
+import java.nio.file.attribute.BasicFileAttributes
 import kotlin.io.path.*
 
 @Service
@@ -81,33 +83,30 @@ class FilesystemService(
         // Cache the game file extensions to avoid reading them multiple times in the same scan
         val gamefileExtensions = gameFileExtensions
 
-        // Filter out invalid directories (directories could have been changed externally after the library was created)
+        // A missing/unreadable mount is not an empty library. Abort before a
+        // removal delta can be produced; browsing remains deliberately forgiving.
         val validPaths = library.directories.map { Path(it.internalPath) }
-            .filter { path ->
-                if (!path.isDirectory()) {
-                    log.warn { "Invalid directory '$path' in library '${library.name}'" }
-                    false
-                } else {
-                    true
-                }
-            }
 
         // Get all paths that are directories or match the game file extensions
         // Also check if the directory is empty and if empty directories should be included
         val currentFilesystemPaths = validPaths.flatMap { validDirectory ->
-            safeReadDirectoryContents(validDirectory)
-                .filter { it.isDirectory() || it.extension.lowercase() in gamefileExtensions }
-                .filter {
-                    if (!it.isDirectory()) return@filter true
+            readScanDirectoryContents(validDirectory)
+                .asSequence()
+                .map { it to Files.readAttributes(it, BasicFileAttributes::class.java) }
+                .filter { (path, attributes) -> attributes.isDirectory || path.extension.lowercase() in gamefileExtensions }
+                .filter { (path, attributes) ->
+                    if (!attributes.isDirectory) return@filter true
 
-                    val contents = safeReadDirectoryContents(it)
+                    val contents = readScanDirectoryContents(path)
                     return@filter if (contents.isEmpty() && !config.get(ConfigProperties.Libraries.Scan.ScanEmptyDirectories)!!) {
-                        log.debug { "Directory '$it' is empty and will be ignored" }
+                        log.debug { "Directory '$path' is empty and will be ignored" }
                         false
                     } else {
                         true
                     }
                 }
+                .map { it.first }
+                .toList()
         }
 
         // Get all paths already in the library as game files or as ignored paths
@@ -170,4 +169,7 @@ class FilesystemService(
             emptyList()
         }
     }
+
+    private fun readScanDirectoryContents(path: Path): List<Path> =
+        path.listDirectoryEntries().filter { !it.isHidden() }
 }

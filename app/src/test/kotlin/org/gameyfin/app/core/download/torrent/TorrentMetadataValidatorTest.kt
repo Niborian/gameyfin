@@ -93,12 +93,14 @@ class TorrentMetadataValidatorTest {
         assertFails { validator().validate(ByteArrayInputStream(metadata()), listOf(manifest().first(), manifest().first().copy(generatedName = "grouped/base-a.bin"))) { error("Must not read") } }
     }
 
-    @Test fun `interruption closes member without clearing interrupted state`() {
-        val source = Tracked(payload.values.first())
+    @Test fun `preexisting interruption closes metadata without opening members or clearing flag`() {
+        val input = Tracked(metadata())
+        var opened = 0
         Thread.currentThread().interrupt()
         try {
-            assertFails { validator().validate(ByteArrayInputStream(metadata()), manifest()) { source } }
-            assertTrue(source.closed)
+            assertFails { validator().validate(input, manifest()) { opened++; error("Must not open") } }
+            assertEquals(0, opened)
+            assertTrue(input.closed)
             assertTrue(Thread.currentThread().isInterrupted)
         } finally { Thread.interrupted() }
     }
@@ -106,6 +108,36 @@ class TorrentMetadataValidatorTest {
     @Test fun `all empty members require no pieces and still verify exact EOF`() {
         val selected = linkedMapOf("Grouped/empty.bin" to byteArrayOf())
         assertEquals(0L, validator().validate(ByteArrayInputStream(metadata(info(selected))), manifest(selected)) { ByteArrayInputStream(byteArrayOf()) }.sourceBytes)
+    }
+
+    @Test fun `preinterrupted all-empty snapshot never opens members or returns success`() {
+        val selected = linkedMapOf("Grouped/empty.bin" to byteArrayOf())
+        val input = Tracked(metadata(info(selected)))
+        var opened = 0
+        Thread.currentThread().interrupt()
+        try {
+            assertFails { validator().validate(input, manifest(selected)) { opened++; ByteArrayInputStream(byteArrayOf()) } }
+            assertEquals(0, opened)
+            assertTrue(input.closed)
+            assertTrue(Thread.currentThread().isInterrupted)
+        } finally { Thread.interrupted() }
+    }
+
+    @Test fun `interruption at empty member EOF is observed before opening next member`() {
+        val selected = linkedMapOf("Grouped/empty-a.bin" to byteArrayOf(), "Grouped/empty-b.bin" to byteArrayOf())
+        val input = Tracked(metadata(info(selected)))
+        var opened = 0
+        var closed = false
+        val source = object : ByteArrayInputStream(byteArrayOf()) {
+            override fun read(): Int { Thread.currentThread().interrupt(); return super.read() }
+            override fun close() { closed = true; super.close() }
+        }
+        try {
+            assertFails { validator().validate(input, manifest(selected)) { opened++; source } }
+            assertEquals(1, opened)
+            assertTrue(input.closed && closed)
+            assertTrue(Thread.currentThread().isInterrupted)
+        } finally { Thread.interrupted() }
     }
 
     @Test fun `stalled stream and reader failure close metadata without unbounded retry`() {

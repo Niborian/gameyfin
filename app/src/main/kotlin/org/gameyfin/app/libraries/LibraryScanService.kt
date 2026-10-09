@@ -16,7 +16,9 @@ import org.gameyfin.app.libraries.entities.IgnoredPathSourceType
 import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.app.libraries.enums.ScanType
 import org.gameyfin.app.libraries.scan.LibraryGameProcessor
+import org.gameyfin.app.libraries.scan.ResizableScanSemaphore
 import org.gameyfin.app.libraries.scan.invokeBounded
+import org.gameyfin.app.libraries.scan.drainScanWorkers
 import org.gameyfin.app.libraries.scan.MatchNewGamesResult
 import org.gameyfin.app.libraries.scan.UpdateExistingGamesResult
 import org.gameyfin.app.libraries.scan.UpdateLibraryResult
@@ -87,20 +89,22 @@ class LibraryScanService(
             latestProgressPerScan.values.removeIf { it.finishedAt?.isBefore(cutoff) == true }
         }
 
-        @Volatile
-        private var scanSemaphore = Semaphore(ConfigProperties.Libraries.Scan.MaxConcurrency.default!!)
+        private val scanSemaphore = ResizableScanSemaphore(ConfigProperties.Libraries.Scan.MaxConcurrency.default!!)
         private val executor: ExecutorService = Executors.newVirtualThreadPerTaskExecutor()
+        private val drainingScans = Executors.newSingleThreadScheduledExecutor { task ->
+            Thread(task, "scan-worker-quiescence").apply { isDaemon = true }
+        }
         private val scansInProgress = ConcurrentHashMap<Long, Boolean>()
     }
 
     /**
-     * Re-creates the concurrency semaphore from the current config value.
+     * Resizes the stable shared concurrency semaphore from the current config value.
      * Called once at the start of each scan so that config changes take
      * effect without restarting the application.
      */
     private fun refreshScanSemaphore() {
         val permits = configService.get(ConfigProperties.Libraries.Scan.MaxConcurrency)!!
-        scanSemaphore = Semaphore(permits)
+        scanSemaphore.resize(permits)
     }
 
     /**
@@ -122,14 +126,24 @@ class LibraryScanService(
             val libraryId = library.id!!
             if (scansInProgress.putIfAbsent(libraryId, true) == null) {
                 executor.submit {
+                    val workers = Executors.newVirtualThreadPerTaskExecutor()
+                    // Register before any worker can run or terminal scan accounting can
+                    // clear active. This ownership remains until actual body termination.
+                    scanMetrics.recordWorkerScopeOpened()
                     try {
                         when (scanType) {
-                            ScanType.QUICK -> quickScan(library)
-                            ScanType.FULL -> fullScan(library, false)
-                            ScanType.SCHEDULED -> fullScan(library, true)
+                            ScanType.QUICK -> quickScan(library, workers)
+                            ScanType.FULL -> fullScan(library, false, workers)
+                            ScanType.SCHEDULED -> fullScan(library, true, workers)
                         }
                     } finally {
-                        scansInProgress.remove(libraryId)
+                        if (drainScanWorkers(workers, 5, TimeUnit.SECONDS)) {
+                            scansInProgress.remove(libraryId)
+                            scanMetrics.recordWorkersQuiescent()
+                        } else {
+                            log.error { "Library $libraryId scan workers still active; retaining scan ownership until quiescent." }
+                            releaseWhenQuiescent(libraryId, workers)
+                        }
                     }
                 }
             } else {
@@ -138,7 +152,17 @@ class LibraryScanService(
         }
     }
 
-    private fun quickScan(library: Library) {
+    private fun releaseWhenQuiescent(libraryId: Long, workers: ExecutorService) {
+        drainingScans.schedule({
+            if (workers.isTerminated) {
+                scansInProgress.remove(libraryId)
+                scanMetrics.recordWorkersQuiescent()
+            }
+            else releaseWhenQuiescent(libraryId, workers)
+        }, 1, TimeUnit.SECONDS)
+    }
+
+    private fun quickScan(library: Library, workers: ExecutorService) {
         val progress = LibraryScanProgress(
             libraryId = library.id!!,
             type = ScanType.QUICK,
@@ -157,7 +181,7 @@ class LibraryScanService(
             val (newUnmatchedPaths, persistedNewGames) = processNewGamesWithProgress(
                 library,
                 scanData.allPathsToProcess,
-                progress
+                progress, workers
             )
             autoGroupExactMatches(library)
 
@@ -190,6 +214,7 @@ class LibraryScanService(
                 unmatchedPaths = newUnmatchedPaths.size
             )
         } catch (e: Exception) {
+            preserveScanInterruption(e)
             scanMetrics.recordScanFailed(
                 ScanType.QUICK,
                 System.currentTimeMillis() - scanStartTime,
@@ -199,7 +224,7 @@ class LibraryScanService(
         }
     }
 
-    private fun fullScan(library: Library, triggeredBySchedule: Boolean) {
+    private fun fullScan(library: Library, triggeredBySchedule: Boolean, workers: ExecutorService) {
         val scanType = if (triggeredBySchedule) ScanType.SCHEDULED else ScanType.FULL
         val progress = LibraryScanProgress(
             libraryId = library.id!!,
@@ -223,13 +248,13 @@ class LibraryScanService(
             )
             emit(progress)
 
-            val (updatedGames) = updateExistingGames(library.games, progress)
+            val (updatedGames) = updateExistingGames(library.games, progress, workers)
 
             // 2. Process new games (individually, including re-scanned plugin ignored paths)
             val (newUnmatchedPaths, persistedNewGames) = processNewGamesWithProgress(
                 library,
                 scanData.allPathsToProcess,
-                progress
+                progress, workers
             )
             autoGroupExactMatches(library)
 
@@ -263,6 +288,7 @@ class LibraryScanService(
                 updatedGames = updatedGames.size
             )
         } catch (e: Exception) {
+            preserveScanInterruption(e)
             scanMetrics.recordScanFailed(
                 scanType,
                 System.currentTimeMillis() - scanStartTime,
@@ -301,7 +327,8 @@ class LibraryScanService(
     private fun processNewGamesWithProgress(
         library: Library,
         gamePaths: List<Path>,
-        progress: LibraryScanProgress
+        progress: LibraryScanProgress,
+        workers: ExecutorService
     ): MatchNewGamesResult {
         progress.currentStep = LibraryScanStep(
             description = "Processing new games",
@@ -310,7 +337,7 @@ class LibraryScanService(
         )
         emit(progress)
 
-        return processNewGames(library, gamePaths, progress)
+        return processNewGames(library, gamePaths, progress, workers)
     }
 
     private fun finishScanWithProgress(
@@ -347,6 +374,18 @@ class LibraryScanService(
         emit(progress)
     }
 
+    private fun preserveScanInterruption(error: Throwable): Boolean {
+        val interrupted = Thread.currentThread().isInterrupted ||
+            generateSequence(error) { it.cause }.take(8).any { it is InterruptedException }
+        if (interrupted) Thread.currentThread().interrupt()
+        return interrupted
+    }
+
+    private fun acquireScanPermit() {
+        try { scanSemaphore.acquire() }
+        catch (e: InterruptedException) { Thread.currentThread().interrupt(); throw e }
+    }
+
     private fun autoGroupExactMatches(library: Library) {
         val grouped = gameVariantGroupingService.autoGroupExactMatches(library)
         if (grouped > 0) {
@@ -357,16 +396,18 @@ class LibraryScanService(
     private fun processNewGames(
         library: Library,
         gamePaths: List<Path>,
-        progress: LibraryScanProgress
+        progress: LibraryScanProgress,
+        workers: ExecutorService
     ): MatchNewGamesResult {
         val completed = AtomicInteger(0)
         val newUnmatchedPaths = ConcurrentHashMap.newKeySet<IgnoredPath>()
 
         val tasks = gamePaths.asSequence().map { path ->
             Callable<Game?> {
-                scanSemaphore.acquire()
+                acquireScanPermit()
                 try {
                     val persisted = libraryGameProcessor.processNewGame(path, library)
+                    if (Thread.currentThread().isInterrupted) throw InterruptedException("Scan processing interrupted")
 
                     if (persisted == null) {
                         // Not identified, mark as unmatched by all current metadata providers
@@ -382,6 +423,7 @@ class LibraryScanService(
 
                     return@Callable persisted
                 } catch (e: Exception) {
+                    if (preserveScanInterruption(e)) throw e
                     // A database failure invalidates the scan as a whole. Do not silently
                     // count the affected source as merely unmatched.
                     if (ScanMetrics.FailureKind.from(e) == ScanMetrics.FailureKind.DATABASE) throw e
@@ -408,7 +450,7 @@ class LibraryScanService(
             }
         }
 
-        val persistedGames = executor.invokeBounded(tasks, scanTaskWindow()).filterNotNull()
+        val persistedGames = workers.invokeBounded(tasks, scanTaskWindow()).filterNotNull()
 
         return MatchNewGamesResult(
             unmatchedPaths = newUnmatchedPaths.toList(),
@@ -465,17 +507,20 @@ class LibraryScanService(
 
     private fun updateExistingGames(
         games: List<Game>,
-        progress: LibraryScanProgress
+        progress: LibraryScanProgress,
+        workers: ExecutorService
     ): UpdateExistingGamesResult {
         val completedUpdates = AtomicInteger(0)
 
         val updateTasks = games.asSequence().map { game ->
             Callable<Game?> {
-                scanSemaphore.acquire()
+                acquireScanPermit()
                 try {
                     val updated = libraryGameProcessor.processExistingGame(game)
+                    if (Thread.currentThread().isInterrupted) throw InterruptedException("Scan processing interrupted")
                     return@Callable updated
                 } catch (e: Exception) {
+                    if (preserveScanInterruption(e)) throw e
                     if (ScanMetrics.FailureKind.from(e) == ScanMetrics.FailureKind.DATABASE) throw e
                     log.error { "Error updating game ${game.id} (${e.javaClass.simpleName})" }
                     log.debug(e) {}
@@ -488,7 +533,7 @@ class LibraryScanService(
             }
         }
 
-        val updatedGames = executor.invokeBounded(updateTasks, scanTaskWindow()).filterNotNull()
+        val updatedGames = workers.invokeBounded(updateTasks, scanTaskWindow()).filterNotNull()
         return UpdateExistingGamesResult(updatedGames = updatedGames)
     }
 

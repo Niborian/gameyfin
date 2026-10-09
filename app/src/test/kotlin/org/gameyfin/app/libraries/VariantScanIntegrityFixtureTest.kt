@@ -71,11 +71,13 @@ class VariantScanIntegrityFixtureTest {
         val expectedContent = game.variants.associate { it.name + it.version to it.contents.map { content -> content.path }.sorted() }
 
         // Invoke synchronous scan entry points so assertions cannot race completion/in-progress cleanup.
-        val quick = LibraryScanService::class.java.getDeclaredMethod("quickScan", Library::class.java).apply { isAccessible = true }
-        val full = LibraryScanService::class.java.getDeclaredMethod("fullScan", Library::class.java, Boolean::class.javaPrimitiveType).apply { isAccessible = true }
-        repeat(2) {
-            quick.invoke(scanner, library)
-            full.invoke(scanner, library, false)
+        val quick = LibraryScanService::class.java.getDeclaredMethod("quickScan", Library::class.java, java.util.concurrent.ExecutorService::class.java).apply { isAccessible = true }
+        val full = LibraryScanService::class.java.getDeclaredMethod("fullScan", Library::class.java, Boolean::class.javaPrimitiveType, java.util.concurrent.ExecutorService::class.java).apply { isAccessible = true }
+        java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor().use { workers ->
+            repeat(2) {
+                quick.invoke(scanner, library, workers)
+                full.invoke(scanner, library, false, workers)
+            }
         }
 
         assertEquals(1, library.games.size)

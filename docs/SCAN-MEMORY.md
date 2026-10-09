@@ -47,6 +47,20 @@ finishes and retains the original result order. A latch-based fixture proves tha
 first task does not prevent a later task starting. A failed task propagates the failure,
 cancels the remaining submitted window, and prevents further work being submitted.
 
+Processor interruption is a scan failure, never an unmatched/null result. Interrupted
+workers and coordinators preserve their interrupt flag; library reconciliation and
+success accounting are skipped when interrupted processing propagates.
+These assertions concern host reconciliation/accounting only. A transactional processor
+may have committed changes before returning with its interrupt flag set; this guard does
+not undo those changes or earlier completed per-game transactions.
+
+`invokeBounded` requests `Future.cancel(true)` but cancelled Future state alone does not
+prove body exit. The integrated worker-lifetime gate retains `scansInProgress` ownership
+until the per-scan executor actually terminates; see `SCAN-WORKER-LIFETIME.md`.
+This does not provide atomic rollback of earlier individual game transactions or make
+an indefinitely uncooperative provider automatically recoverable. Representative recovery
+acceptance remains necessary before closing #19.
+
 On 2026-10-07 the three bounded-task tests and 17 library-scan tests passed under
 Temurin 25.0.4.1. Full main and test Kotlin compilation also passed. The frontend build
 was excluded because these tests exercise JVM scan logic.

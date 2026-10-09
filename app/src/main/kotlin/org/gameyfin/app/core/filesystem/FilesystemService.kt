@@ -111,24 +111,27 @@ class FilesystemService(
 
         // Get all paths already in the library as game files or as ignored paths
         val currentLibraryGamePaths = library.games.map { Path(it.metadata.path) }
-        val currentLibraryIgnoredPaths = library.ignoredPaths.map { Path(it.path) }
-        val allCurrentLibraryPaths = currentLibraryGamePaths + currentLibraryIgnoredPaths
+        // Per-scan indexes only: do not retain a cache across scans. Path hash/equality
+        // preserves the same provider-specific lexical semantics as the former any().
+        val allCurrentLibraryPaths = currentLibraryGamePaths.toHashSet()
+        library.ignoredPaths.forEach { allCurrentLibraryPaths.add(Path(it.path)) }
+        val filesystemPathIndex = currentFilesystemPaths.toHashSet()
 
         //Get all paths that are on the filesystem, but not in the library (either as game or as ignored path)
         val newPaths = currentFilesystemPaths.filter { path ->
-            val isInLibrary = allCurrentLibraryPaths.any { it == path }
+            val isInLibrary = path in allCurrentLibraryPaths
             !isInLibrary
         }
 
         //Get all paths that are in the library (either as game or as ignored path), but not on the filesystem
         val removedGamePaths = currentLibraryGamePaths.filter { path ->
-            val isOnFilesystem = currentFilesystemPaths.any { it == path }
+            val isOnFilesystem = path in filesystemPathIndex
             !isOnFilesystem
         }
 
         val removedIgnoredPaths = library.ignoredPaths.filter { ignoredPath ->
             val path = Path(ignoredPath.path)
-            val isOnFilesystem = currentFilesystemPaths.any { it == path }
+            val isOnFilesystem = path in filesystemPathIndex
             !isOnFilesystem
         }
 

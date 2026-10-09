@@ -8,6 +8,8 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertEquals
 
 class PluginManagerConfigTest {
 
@@ -82,10 +84,12 @@ class PluginManagerConfigTest {
     }
 
     @Test
-    fun `loadPlugins should be annotated with Async`() {
+    fun `startup load is synchronous and ordered before dependent ready listeners`() {
         val method = PluginManagerConfig::class.java.getDeclaredMethod("loadPlugins")
         val asyncAnnotation = method.getAnnotation(org.springframework.scheduling.annotation.Async::class.java)
-        assertNotNull(asyncAnnotation)
+        assertNull(asyncAnnotation)
+        assertEquals(org.springframework.core.Ordered.HIGHEST_PRECEDENCE,
+            method.getAnnotation(org.springframework.core.annotation.Order::class.java).value)
     }
 
     @Test

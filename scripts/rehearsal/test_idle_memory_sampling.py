@@ -10,6 +10,30 @@ spec.loader.exec_module(image_scan)
 
 
 class IdleSamplingTest(unittest.TestCase):
+    def test_idle_requires_coordinator_and_draining_worker_meters_zero(self):
+        for active, draining in ((1, 0), (0, 1), (1, 1)):
+            with self.subTest(active=active, draining=draining):
+                values = {"gameyfin_scans_active": active, "gameyfin_scans_draining": draining}
+                with self.assertRaisesRegex(RuntimeError, "active or draining"):
+                    image_scan.require_scan_quiescence(lambda name, text: values[name], "snapshot")
+
+    def test_idle_does_not_default_missing_draining_meter_to_zero(self):
+        def metric(name, text):
+            if name == "gameyfin_scans_active":
+                return 0
+            raise RuntimeError("Required synthetic telemetry meter absent: " + name)
+        with self.assertRaisesRegex(RuntimeError, "meter absent: gameyfin_scans_draining"):
+            image_scan.require_scan_quiescence(metric, "snapshot")
+
+    def test_idle_accepts_both_mandatory_meters_zero_from_same_snapshot(self):
+        observed = []
+        def metric(name, text):
+            observed.append((name, text))
+            return 0
+        image_scan.require_scan_quiescence(metric, "one-snapshot")
+        self.assertEqual(observed, [("gameyfin_scans_active", "one-snapshot"),
+                                   ("gameyfin_scans_draining", "one-snapshot")])
+
     def test_option_probe_runs_as_jvm_owner_and_emits_only_fixed_key(self):
         with patch.object(image_scan.subprocess, "check_output", return_value="-Xms128m -Xmx512m\n") as output:
             self.assertEqual(image_scan.observe_jvm_options(["sudo", "-n", "docker"], "owned-fixture", "1337", "1337"),

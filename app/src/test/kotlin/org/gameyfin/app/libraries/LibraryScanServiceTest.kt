@@ -43,6 +43,111 @@ import kotlin.io.path.Path
 
 class LibraryScanServiceTest {
 
+    @Test
+    fun `terminal failure logging cannot expose idle while owned workers are alive`() {
+        for (type in ScanType.entries) {
+            val id = 99400L + type.ordinal
+            val library = createTestLibrary(id)
+            val heldGame = createTestGame(id, "/synthetic/held-$id")
+            val workerEntered = CountDownLatch(1)
+            val releaseWorker = CountDownLatch(1)
+            val terminalLogging = CountDownLatch(1)
+            val releaseCoordinator = CountDownLatch(1)
+            val metricType = type.name.lowercase()
+            every { configService.get(ConfigProperties.Libraries.Scan.MaxConcurrency) } returns 2
+            every { libraryRepository.findAllById(listOf(id)) } returns listOf(library)
+            setupSuccessfulQuickScan(library)
+            every { filesystemService.scanLibraryForGamefiles(library) } returns FilesystemScanResult(
+                listOf(Path("held-$id"), Path("failure-$id")), emptyList(), emptyList())
+            every { libraryGameProcessor.processNewGame(Path("held-$id"), library) } answers {
+                workerEntered.countDown()
+                while (true) { try { releaseWorker.await(); break } catch (_: InterruptedException) { } }
+                heldGame
+            }
+            every { libraryGameProcessor.processNewGame(Path("failure-$id"), library) } answers {
+                check(workerEntered.await(3, TimeUnit.SECONDS))
+                throw SQLException("synthetic terminal failure")
+            }
+            // Terminal error logging reads this ID after recordScanFailed cleared active,
+            // but before progress emission and the outer worker-draining finally.
+            every { library.id } answers {
+                if (Thread.currentThread().isVirtual && meterRegistry.get("gameyfin.scans.failed").tag("type", metricType).counter().count() > 0) {
+                    terminalLogging.countDown()
+                    check(releaseCoordinator.await(5, TimeUnit.SECONDS))
+                }
+                id
+            }
+            try {
+                libraryScanService.triggerScan(type, listOf(id))
+                assertTrue(terminalLogging.await(4, TimeUnit.SECONDS))
+                assertEquals(0.0, meterRegistry.get("gameyfin.scans.active").gauge().value())
+                assertEquals(1.0, meterRegistry.get("gameyfin.scans.draining").gauge().value())
+                assertEquals(0.0, meterRegistry.get("gameyfin.scans.completed").tag("type", metricType).counter().count())
+                releaseCoordinator.countDown()
+                assertEquals(1.0, meterRegistry.get("gameyfin.scans.draining").gauge().value())
+                releaseWorker.countDown()
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(4)
+                while (meterRegistry.get("gameyfin.scans.draining").gauge().value() != 0.0 && System.nanoTime() < deadline) Thread.sleep(5)
+                assertEquals(0.0, meterRegistry.get("gameyfin.scans.draining").gauge().value())
+                every { library.id } returns id
+                setupSuccessfulQuickScan(library)
+                libraryScanService.triggerScan(type, listOf(id))
+                val successDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(4)
+                while ((meterRegistry.get("gameyfin.scans.completed").tag("type", metricType).counter().count() == 0.0 ||
+                            meterRegistry.get("gameyfin.scans.draining").gauge().value() != 0.0) && System.nanoTime() < successDeadline) Thread.sleep(5)
+                assertEquals(1.0, meterRegistry.get("gameyfin.scans.completed").tag("type", metricType).counter().count())
+                assertEquals(0.0, meterRegistry.get("gameyfin.scans.draining").gauge().value())
+            } finally { releaseCoordinator.countDown(); releaseWorker.countDown() }
+        }
+    }
+
+    @Test
+    fun `failed scan retains ownership while interruption ignoring worker remains alive`() {
+        val library = createTestLibrary(99119L)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        every { configService.get(ConfigProperties.Libraries.Scan.MaxConcurrency) } returns 2
+        every { libraryRepository.findAllById(listOf(99119L)) } returns listOf(library)
+        setupSuccessfulQuickScan(library)
+        every { filesystemService.scanLibraryForGamefiles(library) } returns FilesystemScanResult(
+            newPaths = listOf(Path("held"), Path("failure")), removedGamePaths = emptyList(), removedIgnoredPaths = emptyList()
+        )
+        every { libraryGameProcessor.processNewGame(Path("held"), library) } answers {
+            entered.countDown()
+            while (true) {
+                try { release.await(); break } catch (_: InterruptedException) { }
+            }
+            null
+        }
+        every { libraryGameProcessor.processNewGame(Path("failure"), library) } answers {
+            check(entered.await(2, TimeUnit.SECONDS))
+            throw SQLException("synthetic worker failure")
+        }
+        try {
+            libraryScanService.triggerScan(ScanType.QUICK, listOf(99119L))
+            assertTrue(entered.await(2, TimeUnit.SECONDS))
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
+            while (meterRegistry.get("gameyfin.scans.draining").gauge().value() == 0.0 && System.nanoTime() < deadline) Thread.sleep(10)
+            assertEquals(1.0, meterRegistry.get("gameyfin.scans.draining").gauge().value())
+            // Exercise both immediate drain and retained/quarantined ownership after its deadline.
+            libraryScanService.triggerScan(ScanType.QUICK, listOf(99119L))
+            Thread.sleep(5200)
+            libraryScanService.triggerScan(ScanType.QUICK, listOf(99119L))
+            verify(exactly = 1) { filesystemService.scanLibraryForGamefiles(library) }
+            assertEquals(1.0, meterRegistry.get("gameyfin.scans.draining").gauge().value())
+            assertEquals(0.0, meterRegistry.get("gameyfin.scans.active").gauge().value())
+            release.countDown()
+            val exitDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
+            while (meterRegistry.get("gameyfin.scans.draining").gauge().value() != 0.0 && System.nanoTime() < exitDeadline) Thread.sleep(10)
+            assertEquals(0.0, meterRegistry.get("gameyfin.scans.draining").gauge().value())
+            setupSuccessfulQuickScan(library)
+            libraryScanService.triggerScan(ScanType.QUICK, listOf(99119L))
+            verify(timeout = 2000, exactly = 2) { filesystemService.scanLibraryForGamefiles(library) }
+        } finally {
+            release.countDown()
+        }
+    }
+
     private lateinit var libraryRepository: LibraryRepository
     private lateinit var filesystemService: FilesystemService
     private lateinit var libraryCoreService: LibraryCoreService
@@ -143,6 +248,55 @@ class LibraryScanServiceTest {
     }
 
     @Test
+    fun `overlapping library and skipped duplicate triggers retain one shared processing permit`() {
+        val first = createTestLibrary(99201L)
+        val second = createTestLibrary(99202L)
+        val firstGame = createTestGame(99201L, "/synthetic/first")
+        val secondGame = createTestGame(99202L, "/synthetic/second")
+        val firstEntered = CountDownLatch(1)
+        val releaseFirst = CountDownLatch(1)
+        val secondScanned = CountDownLatch(1)
+        val secondEntered = CountDownLatch(1)
+        val completed = CountDownLatch(2)
+        val completedLibraries = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
+        every { configService.get(ConfigProperties.Libraries.Scan.MaxConcurrency) } returns 1
+        every { libraryRepository.findAllById(listOf(99201L)) } returns listOf(first)
+        every { libraryRepository.findAllById(listOf(99202L)) } returns listOf(second)
+        setupQuickScanWithNewGames(first, listOf(Path(firstGame.metadata.path)), firstGame)
+        setupQuickScanWithNewGames(second, listOf(Path(secondGame.metadata.path)), secondGame)
+        every { gameRepository.findAllById(listOf(99201L)) } returns listOf(firstGame)
+        every { gameRepository.findAllById(listOf(99202L)) } returns listOf(secondGame)
+        every { filesystemService.scanLibraryForGamefiles(second) } answers {
+            secondScanned.countDown()
+            FilesystemScanResult(listOf(Path(secondGame.metadata.path)), emptyList(), emptyList())
+        }
+        every { libraryGameProcessor.processNewGame(any(), first) } answers {
+            firstEntered.countDown()
+            check(releaseFirst.await(5, TimeUnit.SECONDS))
+            firstGame
+        }
+        every { libraryGameProcessor.processNewGame(any(), second) } answers { secondEntered.countDown(); secondGame }
+        val subscription = LibraryScanService.subscribeToScanProgressEvents().subscribe { events ->
+            events.filter { it.libraryId in setOf(first.id, second.id) && it.status == LibraryScanStatus.COMPLETED }
+                .forEach { if (completedLibraries.add(it.libraryId)) completed.countDown() }
+        }
+        try {
+            libraryScanService.triggerScan(ScanType.QUICK, listOf(first.id!!))
+            assertTrue(firstEntered.await(3, TimeUnit.SECONDS))
+            libraryScanService.triggerScan(ScanType.QUICK, listOf(second.id!!))
+            assertTrue(secondScanned.await(3, TimeUnit.SECONDS))
+            libraryScanService.triggerScan(ScanType.QUICK, listOf(first.id!!))
+            assertTrue(!secondEntered.await(100, TimeUnit.MILLISECONDS))
+            releaseFirst.countDown()
+            assertTrue(secondEntered.await(3, TimeUnit.SECONDS))
+            assertTrue(completed.await(4, TimeUnit.SECONDS))
+            verify(exactly = 1) { filesystemService.scanLibraryForGamefiles(first) }
+            verify(exactly = 1) { libraryGameProcessor.processNewGame(any(), first) }
+            verify(exactly = 1) { libraryGameProcessor.processNewGame(any(), second) }
+        } finally { releaseFirst.countDown(); subscription.dispose() }
+    }
+
+    @Test
     fun `triggerScan should handle quick scan type`() {
         val library = createTestLibrary(1L)
 
@@ -206,6 +360,80 @@ class LibraryScanServiceTest {
 
         verify(exactly = 0) { libraryRepository.findAll() }
         verify(exactly = 0) { filesystemService.scanLibraryForGamefiles(any()) }
+    }
+
+    @Test
+    fun `coordinator interruption preserves flag and never records successful quick or full scan`() {
+        for (full in listOf(false, true)) {
+            val library = createTestLibrary(if (full) 99304L else 99303L)
+            every { filesystemService.scanLibraryForGamefiles(library) } throws InterruptedException("synthetic coordinator cancellation")
+            val workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()
+            val method = if (full) LibraryScanService::class.java.getDeclaredMethod("fullScan", Library::class.java, Boolean::class.javaPrimitiveType, java.util.concurrent.ExecutorService::class.java)
+                else LibraryScanService::class.java.getDeclaredMethod("quickScan", Library::class.java, java.util.concurrent.ExecutorService::class.java)
+            method.isAccessible = true
+            try {
+                if (full) method.invoke(libraryScanService, library, false, workers) else method.invoke(libraryScanService, library, workers)
+                assertTrue(Thread.currentThread().isInterrupted)
+                assertEquals(0.0, meterRegistry.find("gameyfin.scans.completed").tag("type", if (full) "full" else "quick").counter()!!.count())
+                verify(exactly = 0) { libraryRepository.save(any()) }
+            } finally { Thread.interrupted(); workers.close() }
+        }
+    }
+
+    @Test
+    fun `interrupted new processing fails quick scan without unmatched or library mutations`() {
+        verifyInterruptedProcessing(ScanType.QUICK, 99301L, false)
+    }
+
+    @Test
+    fun `interrupted existing processing fails full scan without library mutations`() {
+        verifyInterruptedProcessing(ScanType.FULL, 99302L, true)
+    }
+
+    @Test
+    fun `new processor returning with interrupt cannot count success`() {
+        verifyInterruptedProcessing(ScanType.QUICK, 99305L, false, true)
+    }
+
+    @Test
+    fun `existing processor returning with interrupt cannot count success`() {
+        verifyInterruptedProcessing(ScanType.FULL, 99306L, true, true)
+    }
+
+    private fun verifyInterruptedProcessing(type: ScanType, id: Long, existing: Boolean, returnsInterrupted: Boolean = false) {
+        val game = createTestGame(id, "/synthetic/interrupted-$id")
+        val retained = mutableListOf(game)
+        val library = createTestLibrary(id, games = retained)
+        val ignored = IgnoredPath(path = "/synthetic/retained-$id", source = IgnoredPathUserSource(mockk()))
+        library.ignoredPaths.add(ignored)
+        every { libraryRepository.findAllById(listOf(id)) } returns listOf(library)
+        every { filesystemService.scanLibraryForGamefiles(library) } returns FilesystemScanResult(
+            if (existing) emptyList() else listOf(Path("/synthetic/new-$id")),
+            listOf(Path("/synthetic/interrupted-$id")), listOf(ignored))
+        if (existing) every { libraryGameProcessor.processExistingGame(game) } answers {
+            if (!returnsInterrupted) throw InterruptedException("synthetic cancellation")
+            Thread.currentThread().interrupt(); game
+        }
+        else every { libraryGameProcessor.processNewGame(any(), library) } answers {
+            if (!returnsInterrupted) throw InterruptedException("synthetic cancellation")
+            Thread.currentThread().interrupt(); game
+        }
+        val failed = CountDownLatch(1)
+        val subscription = LibraryScanService.subscribeToScanProgressEvents().subscribe { events ->
+            if (events.any { it.libraryId == id && it.status == LibraryScanStatus.FAILED }) failed.countDown()
+        }
+        try {
+            libraryScanService.triggerScan(type, listOf(id))
+            assertTrue(failed.await(5, TimeUnit.SECONDS))
+            val metricType = type.name.lowercase()
+            assertEquals(1.0, meterRegistry.find("gameyfin.scans.failed").tag("type", metricType).counter()!!.count())
+            assertEquals(0.0, meterRegistry.find("gameyfin.scans.completed").tag("type", metricType).counter()!!.count())
+            assertEquals(listOf(game), library.games)
+            assertEquals(listOf(ignored), library.ignoredPaths)
+            verify(exactly = 0) { libraryRepository.save(any()) }
+            verify(exactly = 0) { ignoredPathRepository.findByPath(any()) }
+            verify(exactly = 0) { libraryCoreService.addGamesToLibrary(any(), any(), any()) }
+        } finally { subscription.dispose() }
     }
 
     @Test

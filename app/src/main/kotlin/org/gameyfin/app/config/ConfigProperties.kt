@@ -109,7 +109,7 @@ sealed class ConfigProperties<T : Serializable>(
                 "Scan concurrency",
                 """Controls how many games are processed simultaneously during a library scan (metadata fetching, image downloading, etc.).
                     |Lower values reduce peak memory usage; higher values speed up large scans.
-                    |Does **not** affect already running scans.""".trimMargin(),
+                    |Changes apply on the next scan trigger. Active tasks finish; waiting tasks use the new shared limit.""".trimMargin(),
                 default = 4,
                 min = 1,
                 max = 16,

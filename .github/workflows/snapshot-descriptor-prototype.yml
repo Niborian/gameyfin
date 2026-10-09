@@ -1,0 +1,29 @@
+name: Snapshot descriptor prototype
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/snapshot-descriptor-prototype.yml'
+      - 'docs/QBITTORRENT-DESCRIPTOR-PROTOTYPE.md'
+      - 'tools/snapshot_descriptor_prototype.py'
+      - 'tools/test_snapshot_descriptor_prototype.py'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/snapshot-descriptor-prototype.yml'
+      - 'docs/QBITTORRENT-DESCRIPTOR-PROTOTYPE.md'
+      - 'tools/snapshot_descriptor_prototype.py'
+      - 'tools/test_snapshot_descriptor_prototype.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-experiment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Exercise synthetic descriptor copy failures
+        run: python3 -m unittest discover -s tools -p test_snapshot_descriptor_prototype.py -v

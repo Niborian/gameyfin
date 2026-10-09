@@ -1,0 +1,31 @@
+name: Snapshot host broker experiment
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/snapshot-host-broker-experiment.yml'
+      - 'docs/QBITTORRENT-HOST-BROKER-EXPERIMENT.md'
+      - 'tools/snapshot_host_broker_experiment.py'
+      - 'tools/test_snapshot_host_broker_experiment.py'
+      - 'tools/snapshot_descriptor_prototype.py'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/snapshot-host-broker-experiment.yml'
+      - 'docs/QBITTORRENT-HOST-BROKER-EXPERIMENT.md'
+      - 'tools/snapshot_host_broker_experiment.py'
+      - 'tools/test_snapshot_host_broker_experiment.py'
+      - 'tools/snapshot_descriptor_prototype.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  private-helper-session:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Exercise host ID to held descriptor session
+        run: python3 -m unittest discover -s tools -p test_snapshot_host_broker_experiment.py -v

@@ -16,6 +16,7 @@ import org.gameyfin.app.libraries.entities.IgnoredPathSourceType
 import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.app.libraries.enums.ScanType
 import org.gameyfin.app.libraries.scan.LibraryGameProcessor
+import org.gameyfin.app.libraries.scan.ResizableScanSemaphore
 import org.gameyfin.app.libraries.scan.invokeBounded
 import org.gameyfin.app.libraries.scan.MatchNewGamesResult
 import org.gameyfin.app.libraries.scan.UpdateExistingGamesResult
@@ -87,20 +88,19 @@ class LibraryScanService(
             latestProgressPerScan.values.removeIf { it.finishedAt?.isBefore(cutoff) == true }
         }
 
-        @Volatile
-        private var scanSemaphore = Semaphore(ConfigProperties.Libraries.Scan.MaxConcurrency.default!!)
+        private val scanSemaphore = ResizableScanSemaphore(ConfigProperties.Libraries.Scan.MaxConcurrency.default!!)
         private val executor: ExecutorService = Executors.newVirtualThreadPerTaskExecutor()
         private val scansInProgress = ConcurrentHashMap<Long, Boolean>()
     }
 
     /**
-     * Re-creates the concurrency semaphore from the current config value.
+     * Resizes the stable shared concurrency semaphore from the current config value.
      * Called once at the start of each scan so that config changes take
      * effect without restarting the application.
      */
     private fun refreshScanSemaphore() {
         val permits = configService.get(ConfigProperties.Libraries.Scan.MaxConcurrency)!!
-        scanSemaphore = Semaphore(permits)
+        scanSemaphore.resize(permits)
     }
 
     /**

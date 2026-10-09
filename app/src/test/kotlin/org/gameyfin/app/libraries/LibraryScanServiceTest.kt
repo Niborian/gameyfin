@@ -143,6 +143,55 @@ class LibraryScanServiceTest {
     }
 
     @Test
+    fun `overlapping library and skipped duplicate triggers retain one shared processing permit`() {
+        val first = createTestLibrary(99201L)
+        val second = createTestLibrary(99202L)
+        val firstGame = createTestGame(99201L, "/synthetic/first")
+        val secondGame = createTestGame(99202L, "/synthetic/second")
+        val firstEntered = CountDownLatch(1)
+        val releaseFirst = CountDownLatch(1)
+        val secondScanned = CountDownLatch(1)
+        val secondEntered = CountDownLatch(1)
+        val completed = CountDownLatch(2)
+        val completedLibraries = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
+        every { configService.get(ConfigProperties.Libraries.Scan.MaxConcurrency) } returns 1
+        every { libraryRepository.findAllById(listOf(99201L)) } returns listOf(first)
+        every { libraryRepository.findAllById(listOf(99202L)) } returns listOf(second)
+        setupQuickScanWithNewGames(first, listOf(Path(firstGame.metadata.path)), firstGame)
+        setupQuickScanWithNewGames(second, listOf(Path(secondGame.metadata.path)), secondGame)
+        every { gameRepository.findAllById(listOf(99201L)) } returns listOf(firstGame)
+        every { gameRepository.findAllById(listOf(99202L)) } returns listOf(secondGame)
+        every { filesystemService.scanLibraryForGamefiles(second) } answers {
+            secondScanned.countDown()
+            FilesystemScanResult(listOf(Path(secondGame.metadata.path)), emptyList(), emptyList())
+        }
+        every { libraryGameProcessor.processNewGame(any(), first) } answers {
+            firstEntered.countDown()
+            check(releaseFirst.await(5, TimeUnit.SECONDS))
+            firstGame
+        }
+        every { libraryGameProcessor.processNewGame(any(), second) } answers { secondEntered.countDown(); secondGame }
+        val subscription = LibraryScanService.subscribeToScanProgressEvents().subscribe { events ->
+            events.filter { it.libraryId in setOf(first.id, second.id) && it.status == LibraryScanStatus.COMPLETED }
+                .forEach { if (completedLibraries.add(it.libraryId)) completed.countDown() }
+        }
+        try {
+            libraryScanService.triggerScan(ScanType.QUICK, listOf(first.id!!))
+            assertTrue(firstEntered.await(3, TimeUnit.SECONDS))
+            libraryScanService.triggerScan(ScanType.QUICK, listOf(second.id!!))
+            assertTrue(secondScanned.await(3, TimeUnit.SECONDS))
+            libraryScanService.triggerScan(ScanType.QUICK, listOf(first.id!!))
+            assertTrue(!secondEntered.await(100, TimeUnit.MILLISECONDS))
+            releaseFirst.countDown()
+            assertTrue(secondEntered.await(3, TimeUnit.SECONDS))
+            assertTrue(completed.await(4, TimeUnit.SECONDS))
+            verify(exactly = 1) { filesystemService.scanLibraryForGamefiles(first) }
+            verify(exactly = 1) { libraryGameProcessor.processNewGame(any(), first) }
+            verify(exactly = 1) { libraryGameProcessor.processNewGame(any(), second) }
+        } finally { releaseFirst.countDown(); subscription.dispose() }
+    }
+
+    @Test
     fun `triggerScan should handle quick scan type`() {
         val library = createTestLibrary(1L)
 

@@ -178,6 +178,10 @@ class TorrentMetadataValidatorTest {
         assertEquals(digest(bytes).joinToString("") { "%02x".format(it) }, result.metadataSha256)
         assertEquals("Owned_snapshot", result.rootName)
         assertEquals(digest(encode(info()), "SHA-1").joinToString("") { "%02x".format(it) }, result.infoHash)
+        val anotherArtifact = encode(mapOf("announce" to tracker, "comment" to "distinct approved metadata", "info" to info()))
+        val anotherResult = validator().validate(ByteArrayInputStream(anotherArtifact), manifest()) { ByteArrayInputStream(payload.getValue(it)) }
+        assertEquals(result.infoHash, anotherResult.infoHash)
+        assertNotEquals(result.metadataSha256, anotherResult.metadataSha256, "Same info-hash must not substitute a different metadata artifact")
         val input = Tracked(bytes)
         assertFails { validator().validate(input, manifest()) { ByteArrayInputStream(byteArrayOf(99)) } }
         assertTrue(input.closed)

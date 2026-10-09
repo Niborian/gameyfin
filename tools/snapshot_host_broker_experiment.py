@@ -84,6 +84,7 @@ def _helper(connection, parent_connection, configured_roots, configured_cache):
             if request == {"command": "close"}:
                 send_frame(connection, {"closed": True})
                 break
+            copying = False
             try:
                 if not isinstance(request, dict) or set(request) != {"command", "root", "members", "request"} or request["command"] != "copy":
                     raise ValueError("invalid command")
@@ -107,9 +108,14 @@ def _helper(connection, parent_connection, configured_roots, configured_cache):
                     finally:
                         os.close(descriptor)
                     members.append((relative, "member-%04d.bin" % index, captured))
+                copying = True
                 operation, manifest = copy_members(source, cache, members, 4 * 1024 * 1024, 64)
                 send_frame(connection, {"request": request_id, "operation": operation, "manifest": manifest})
             except (OSError, ValueError, RuntimeError) as error:
+                if copying:
+                    # Once mutation of the private cache begins, even an ordinary
+                    # exception may hide incomplete cleanup. Never reuse this session.
+                    break
                 # No source names, paths or traceback in protocol responses.
                 send_frame(connection, {"request": request.get("request") if isinstance(request, dict) else None,
                                         "refused": type(error).__name__})
@@ -133,6 +139,8 @@ class HostCatalogBroker:
         self.catalog = {variant: (root, {content: tuple(names) for content, names in members.items()},
                                   frozenset(required)) for variant, (root, members, required) in catalog.items()}
         def bind_configured(path):
+            if "\x00" in str(path) or not str(path).startswith("/") or not str(path).strip("/"):
+                raise ValueError("invalid trusted configured root")
             value = os.stat(path, follow_symlinks=False)
             if not stat.S_ISDIR(value.st_mode) or "\x00" in str(path) or not str(path).startswith("/"):
                 raise ValueError("invalid trusted configured root")

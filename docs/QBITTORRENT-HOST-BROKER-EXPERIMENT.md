@@ -10,7 +10,8 @@ catalog at construction. Constructor configuration is administrator/host authori
 request data. It binds root device/inode identities before starting the helper. The helper
 opens configured roots with `openat2` (no symlinks/magic links), verifies opened identities,
 and keeps those descriptors for the entire session. Configured root mount points are
-allowed, but selected members cannot cross mounts below a held root.
+allowed, but selected members cannot cross mounts below a held root. Broad `/` source or
+cache configuration is rejected before helper startup.
 
 Each helper session creates random opaque root tokens. Selection callers provide only
 variant/content IDs; the fixture host checks membership and automatically includes required
@@ -35,12 +36,19 @@ termination; no retry, adoption, recursive cleanup or seeding follows. The two-s
 does not prove termination of kernel-uninterruptible I/O. Successful operation directories
 remain private synthetic artifacts until test temporary cleanup. A crash after copying can
 leave an uncertain artifact; this experiment has no persistent recovery journal.
+Any exception once descriptor-copy execution begins closes the helper channel, including
+cleanup permission errors and identity uncertainty. Only pre-copy validation refusals keep
+the channel reusable; successful copying followed by response failure is also uncertain.
 
 Fifteen integration tests use a real helper process and invented temporary files: required
 and optional membership/bytes, unknown IDs, held-root path replacement, wrong root tokens,
 symlink escape, root identity substitution, oversized frames, dead-helper refusal, send
 budget, serialized concurrent callers/request identity, descriptor/socket cleanup faults,
 malformed command refusal without channel poisoning, and host ID count/type refusal.
+Three subsequent review-regression tests exercise real-helper operation-name substitution,
+copy failure with cleanup `PermissionError`, and broad-root configuration refusal. Fixtures
+explicitly close dead process handles before replacement/teardown so descriptor leak checks
+cannot be obscured by delayed garbage collection.
 Run on Linux with the reviewed
 descriptor-copy module available:
 
@@ -53,6 +61,8 @@ harness on authorized Linux staging: 15 tests passed in 0.075 seconds. Tests ass
 processes were dead during teardown and used normal temporary-directory cleanup. No
 persistent server payload was installed. This is synthetic integration evidence only;
 exact-head Ubuntu CI and final independent review are required before merge.
+The reviewer reran the updated eighteen-test suite through the same in-memory Linux harness:
+18 passed in 0.100 seconds, with helper teardown and exact descriptor-count guards intact.
 
 ## Activation blockers
 

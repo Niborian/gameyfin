@@ -8,6 +8,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
+from snapshot_descriptor_prototype import copy_members
 from snapshot_host_broker_experiment import HostCatalogBroker, MAX_FRAME, _open_configured_root, receive_frame, send_frame
 
 
@@ -28,6 +29,7 @@ class HostBrokerTest(unittest.TestCase):
     def tearDown(self):
         self.broker.close()
         self.assertFalse(self.broker.process.is_alive())
+        self.broker.process.close()
         self.temporary.cleanup()
 
     def test_required_selection_excludes_optional_in_real_helper_process(self):
@@ -146,6 +148,47 @@ class HostBrokerTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.broker.acquire_selection(22, members)
         self.assertEqual(list(self.cache.iterdir()), [])
+
+    def assert_discarded(self, broker):
+        with self.assertRaisesRegex(RuntimeError, "session discarded"):
+            broker.acquire_selection(22, [])
+        self.assertTrue(broker.closed)
+        self.assertFalse(broker.process.is_alive())
+        with self.assertRaisesRegex(ValueError, "session unavailable"):
+            broker.acquire_selection(22, [])
+
+    def test_real_copy_identity_uncertainty_discards_helper_session(self):
+        self.broker.close()
+        self.assertFalse(self.broker.process.is_alive())
+        self.broker.process.close()
+        def adversarial_copy(*args):
+            def substitute_operation():
+                operation = next(self.cache.iterdir())
+                operation.rename(self.cache / "held-original")
+                operation.mkdir(mode=0o700)
+                (operation / "foreign").write_bytes(b"preserve")
+            return copy_members(*args, after_chunk=substitute_operation)
+        with patch("snapshot_host_broker_experiment.copy_members", side_effect=adversarial_copy):
+            self.broker = HostCatalogBroker([self.source], self.cache, {22: (0, {1: ["required"]}, {1})})
+            self.assert_discarded(self.broker)
+        self.assertEqual(next(self.cache.glob("copy-*/foreign")).read_bytes(), b"preserve")
+
+    def test_real_copy_cleanup_permission_error_discards_helper_session(self):
+        self.broker.close()
+        self.assertFalse(self.broker.process.is_alive())
+        self.broker.process.close()
+        with patch("snapshot_descriptor_prototype.os.fsync", side_effect=OSError("synthetic sync failure")), \
+                patch("snapshot_descriptor_prototype.os.unlink", side_effect=PermissionError("synthetic cleanup failure")):
+            self.broker = HostCatalogBroker([self.source], self.cache, {22: (0, {1: ["required"]}, {1})})
+            self.assert_discarded(self.broker)
+        self.assertTrue(list(self.cache.iterdir()))  # Uncertain residue is not silently adopted or retried.
+
+    def test_broad_root_configuration_rejected_before_process_start(self):
+        with patch("multiprocessing.process.BaseProcess.start") as start:
+            for roots, cache in [(["/"], self.cache), ([self.source], "/")]:
+                with self.assertRaisesRegex(ValueError, "configured root"):
+                    HostCatalogBroker(roots, cache, {})
+            start.assert_not_called()
 
 
 if __name__ == "__main__":

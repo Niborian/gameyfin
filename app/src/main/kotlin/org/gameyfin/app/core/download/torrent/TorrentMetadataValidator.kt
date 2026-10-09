@@ -19,6 +19,7 @@ internal class TorrentMetadataValidator(private val maxSourceBytes: Long = 64L *
     init { require(maxSourceBytes in 1..(1024L * 1024 * 1024 * 1024)) }
 
     fun validate(metadata: InputStream, expected: List<SnapshotMember>, reader: OwnedSnapshotReader): ValidatedTorrentMetadata = metadata.use { input ->
+        check(!Thread.currentThread().isInterrupted) { "Validation interrupted" }
         require(expected.size in 1..4096) { "Invalid member count" }
         var expectedBytes = 0L
         val manifest = expected.associateBy {
@@ -67,7 +68,9 @@ internal class TorrentMetadataValidator(private val maxSourceBytes: Long = 64L *
             piece = MessageDigest.getInstance("SHA-1")
             withinPiece = 0
         }
-        for (member in ordered) reader.openMember(member.generatedName).use { source ->
+        for (member in ordered) {
+            check(!Thread.currentThread().isInterrupted) { "Validation interrupted" }
+            reader.openMember(member.generatedName).use { source ->
             val memberDigest = MessageDigest.getInstance("SHA-256")
             var remaining = member.bytes
             while (remaining > 0) {
@@ -82,7 +85,9 @@ internal class TorrentMetadataValidator(private val maxSourceBytes: Long = 64L *
             }
             require(source.read() == -1) { "Member exceeds manifest size" }
             require(memberDigest.digest().hex() == member.sha256) { "Member digest mismatch" }
+            }
         }
+        check(!Thread.currentThread().isInterrupted) { "Validation interrupted" }
         if (withinPiece > 0) finishPiece()
         require(pieceIndex.toLong() == pieceCount) { "Incomplete pieces" }
         val span = requireNotNull(parser.infoSpan)

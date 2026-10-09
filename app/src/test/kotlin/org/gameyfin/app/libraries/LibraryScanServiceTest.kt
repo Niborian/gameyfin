@@ -43,6 +43,53 @@ import kotlin.io.path.Path
 
 class LibraryScanServiceTest {
 
+    @Test
+    fun `failed scan retains ownership while interruption ignoring worker remains alive`() {
+        val library = createTestLibrary(99119L)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        every { configService.get(ConfigProperties.Libraries.Scan.MaxConcurrency) } returns 2
+        every { libraryRepository.findAllById(listOf(99119L)) } returns listOf(library)
+        setupSuccessfulQuickScan(library)
+        every { filesystemService.scanLibraryForGamefiles(library) } returns FilesystemScanResult(
+            newPaths = listOf(Path("held"), Path("failure")), removedGamePaths = emptyList(), removedIgnoredPaths = emptyList()
+        )
+        every { libraryGameProcessor.processNewGame(Path("held"), library) } answers {
+            entered.countDown()
+            while (true) {
+                try { release.await(); break } catch (_: InterruptedException) { }
+            }
+            null
+        }
+        every { libraryGameProcessor.processNewGame(Path("failure"), library) } answers {
+            check(entered.await(2, TimeUnit.SECONDS))
+            throw SQLException("synthetic worker failure")
+        }
+        try {
+            libraryScanService.triggerScan(ScanType.QUICK, listOf(99119L))
+            assertTrue(entered.await(2, TimeUnit.SECONDS))
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
+            while (meterRegistry.get("gameyfin.scans.draining").gauge().value() == 0.0 && System.nanoTime() < deadline) Thread.sleep(10)
+            assertEquals(1.0, meterRegistry.get("gameyfin.scans.draining").gauge().value())
+            // Exercise both immediate drain and retained/quarantined ownership after its deadline.
+            libraryScanService.triggerScan(ScanType.QUICK, listOf(99119L))
+            Thread.sleep(5200)
+            libraryScanService.triggerScan(ScanType.QUICK, listOf(99119L))
+            verify(exactly = 1) { filesystemService.scanLibraryForGamefiles(library) }
+            assertEquals(1.0, meterRegistry.get("gameyfin.scans.draining").gauge().value())
+            assertEquals(0.0, meterRegistry.get("gameyfin.scans.active").gauge().value())
+            release.countDown()
+            val exitDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
+            while (meterRegistry.get("gameyfin.scans.draining").gauge().value() != 0.0 && System.nanoTime() < exitDeadline) Thread.sleep(10)
+            assertEquals(0.0, meterRegistry.get("gameyfin.scans.draining").gauge().value())
+            setupSuccessfulQuickScan(library)
+            libraryScanService.triggerScan(ScanType.QUICK, listOf(99119L))
+            verify(timeout = 2000, exactly = 2) { filesystemService.scanLibraryForGamefiles(library) }
+        } finally {
+            release.countDown()
+        }
+    }
+
     private lateinit var libraryRepository: LibraryRepository
     private lateinit var filesystemService: FilesystemService
     private lateinit var libraryCoreService: LibraryCoreService

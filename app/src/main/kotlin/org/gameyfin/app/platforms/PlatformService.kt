@@ -51,6 +51,8 @@ class PlatformService(
     private var _availablePlatforms: Set<Platform> = emptySet()
     private var _platformsInUseByGames: Set<Platform> = emptySet()
     private var _platformsInUseByLibraries: Set<Platform> = emptySet()
+    @Volatile
+    private var initialized = false
 
     val availablePlatforms: Set<Platform>
         get() = _availablePlatforms
@@ -67,11 +69,15 @@ class PlatformService(
         calculateAvailablePlatforms()
         calculatePlatformsInUseByGames()
         calculatePlatformsInUseByLibraries()
+        initialized = true
     }
 
     @Async
     @EventListener(classes = [PluginStateEvent::class])
     fun onPluginStateChange(event: PluginStateEvent) {
+        // Startup events may run asynchronously before the registry is complete.
+        // initialize() computes the final snapshot once ordered loading finishes.
+        if (!initialized) return
         if (!pluginManager.supportsExtensionType(event.plugin.pluginId, GameMetadataProvider::class)) return
 
         log.debug { "GameMetadataProvider plugin state changed, recalculating available platforms" }
@@ -108,11 +114,12 @@ class PlatformService(
          * Filter platforms by plugin support
          * Plugins that do not specify any supported platforms are considered to support all platforms
          */
-        _availablePlatforms = if (metadataPlugins.any { it.supportedPlatforms.isEmpty() }) {
+        val providers = metadataPlugins
+        _availablePlatforms = if (providers.any { it.supportedPlatforms.isEmpty() }) {
             log.debug { "At least one metadata plugin supports all platforms" }
             Platform.entries.toSet()
         } else {
-            metadataPlugins.flatMap { it.supportedPlatforms }.toSet()
+            providers.flatMap { it.supportedPlatforms }.toSet()
         }
 
         emit(PlatformStatsDto(available = _availablePlatforms))

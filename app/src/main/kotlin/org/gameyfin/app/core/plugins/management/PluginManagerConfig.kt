@@ -4,7 +4,8 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.annotation.Configuration
 import org.springframework.context.event.EventListener
-import org.springframework.scheduling.annotation.Async
+import org.springframework.core.Ordered
+import org.springframework.core.annotation.Order
 
 @Configuration
 class PluginManagerConfig(
@@ -13,7 +14,8 @@ class PluginManagerConfig(
 ) {
     private val log = KotlinLogging.logger {}
 
-    @Async
+    // PF4J's registry is not safe to enumerate while startup loading mutates it.
+    @Order(Ordered.HIGHEST_PRECEDENCE)
     @EventListener(ApplicationReadyEvent::class)
     fun loadPlugins() {
         pluginManager.loadPlugins()

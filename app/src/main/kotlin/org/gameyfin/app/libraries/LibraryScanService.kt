@@ -190,6 +190,7 @@ class LibraryScanService(
                 unmatchedPaths = newUnmatchedPaths.size
             )
         } catch (e: Exception) {
+            preserveScanInterruption(e)
             scanMetrics.recordScanFailed(
                 ScanType.QUICK,
                 System.currentTimeMillis() - scanStartTime,
@@ -263,6 +264,7 @@ class LibraryScanService(
                 updatedGames = updatedGames.size
             )
         } catch (e: Exception) {
+            preserveScanInterruption(e)
             scanMetrics.recordScanFailed(
                 scanType,
                 System.currentTimeMillis() - scanStartTime,
@@ -347,6 +349,18 @@ class LibraryScanService(
         emit(progress)
     }
 
+    private fun preserveScanInterruption(error: Throwable): Boolean {
+        val interrupted = Thread.currentThread().isInterrupted ||
+            generateSequence(error) { it.cause }.take(8).any { it is InterruptedException }
+        if (interrupted) Thread.currentThread().interrupt()
+        return interrupted
+    }
+
+    private fun acquireScanPermit() {
+        try { scanSemaphore.acquire() }
+        catch (e: InterruptedException) { Thread.currentThread().interrupt(); throw e }
+    }
+
     private fun autoGroupExactMatches(library: Library) {
         val grouped = gameVariantGroupingService.autoGroupExactMatches(library)
         if (grouped > 0) {
@@ -364,9 +378,10 @@ class LibraryScanService(
 
         val tasks = gamePaths.asSequence().map { path ->
             Callable<Game?> {
-                scanSemaphore.acquire()
+                acquireScanPermit()
                 try {
                     val persisted = libraryGameProcessor.processNewGame(path, library)
+                    if (Thread.currentThread().isInterrupted) throw InterruptedException("Scan processing interrupted")
 
                     if (persisted == null) {
                         // Not identified, mark as unmatched by all current metadata providers
@@ -382,6 +397,7 @@ class LibraryScanService(
 
                     return@Callable persisted
                 } catch (e: Exception) {
+                    if (preserveScanInterruption(e)) throw e
                     // A database failure invalidates the scan as a whole. Do not silently
                     // count the affected source as merely unmatched.
                     if (ScanMetrics.FailureKind.from(e) == ScanMetrics.FailureKind.DATABASE) throw e
@@ -471,11 +487,13 @@ class LibraryScanService(
 
         val updateTasks = games.asSequence().map { game ->
             Callable<Game?> {
-                scanSemaphore.acquire()
+                acquireScanPermit()
                 try {
                     val updated = libraryGameProcessor.processExistingGame(game)
+                    if (Thread.currentThread().isInterrupted) throw InterruptedException("Scan processing interrupted")
                     return@Callable updated
                 } catch (e: Exception) {
+                    if (preserveScanInterruption(e)) throw e
                     if (ScanMetrics.FailureKind.from(e) == ScanMetrics.FailureKind.DATABASE) throw e
                     log.error { "Error updating game ${game.id} (${e.javaClass.simpleName})" }
                     log.debug(e) {}

@@ -9,14 +9,18 @@ import org.pf4j.PluginStateEvent
 import org.pf4j.PluginStateListener
 import org.pf4j.PluginWrapper
 import org.pf4j.SingletonExtensionFactory
+import org.pf4j.DefaultPluginManager
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.TimeoutException
 import kotlin.test.*
 
 class GameyfinSingletonExtensionFactoryTest {
     class Extension
+    class OtherExtension
+    class EventManager : DefaultPluginManager() {
+        fun publish(event: PluginStateEvent) = firePluginStateEvent(event)
+    }
     class BlockingExtension {
         init {
             entered.countDown()
@@ -25,6 +29,18 @@ class GameyfinSingletonExtensionFactoryTest {
         companion object {
             var entered = CountDownLatch(1)
             var release = CountDownLatch(1)
+        }
+    }
+    class ManagerCallingExtension {
+        init {
+            entered.countDown()
+            check(callManager.await(5, TimeUnit.SECONDS))
+            synchronized(managerMonitor) { }
+        }
+        companion object {
+            var entered = CountDownLatch(1)
+            var callManager = CountDownLatch(1)
+            var managerMonitor: Any = Any()
         }
     }
 
@@ -64,6 +80,9 @@ class GameyfinSingletonExtensionFactoryTest {
         val factory = GameyfinSingletonExtensionFactory(manager)
         val first = factory.create(Extension::class.java)
         assertSame(first, factory.create(Extension::class.java))
+        val other = factory.create(OtherExtension::class.java)
+        assertSame(other, factory.create(OtherExtension::class.java))
+        assertNotSame<Any>(first, other)
         listener.pluginStateChanged(event(manager, PluginState.STARTED))
         assertSame(first, factory.create(Extension::class.java))
         val unrelated = mockk<PluginWrapper>()
@@ -94,7 +113,7 @@ class GameyfinSingletonExtensionFactoryTest {
     }
 
     @Test
-    fun `lifecycle eviction waits for in flight construction then creates fresh singleton`() {
+    fun `lifecycle eviction detaches in flight cache without waiting and next lookup is fresh`() {
         val manager = mockk<PluginManager>()
         lateinit var listener: PluginStateListener
         every { manager.addPluginStateListener(any()) } answers { listener = firstArg() }
@@ -102,7 +121,7 @@ class GameyfinSingletonExtensionFactoryTest {
         BlockingExtension.entered = CountDownLatch(1)
         BlockingExtension.release = CountDownLatch(1)
         val invalidating = CountDownLatch(1)
-        val pool = Executors.newFixedThreadPool(2)
+        val pool = Executors.newFixedThreadPool(2) { task -> Thread(task).apply { isDaemon = true } }
         try {
             val lookup = pool.submit<BlockingExtension> { factory.create(BlockingExtension::class.java) }
             assertTrue(BlockingExtension.entered.await(5, TimeUnit.SECONDS))
@@ -111,13 +130,42 @@ class GameyfinSingletonExtensionFactoryTest {
                 listener.pluginStateChanged(event(manager, PluginState.STOPPED))
             }
             assertTrue(invalidating.await(5, TimeUnit.SECONDS))
-            assertFailsWith<TimeoutException> { change.get(100, TimeUnit.MILLISECONDS) }
+            change.get(5, TimeUnit.SECONDS)
             BlockingExtension.release.countDown()
             val first = lookup.get(5, TimeUnit.SECONDS)
             change.get(5, TimeUnit.SECONDS)
             assertNotSame(first, factory.create(BlockingExtension::class.java))
         } finally {
             BlockingExtension.release.countDown()
+            pool.shutdownNow()
+            assertTrue(pool.awaitTermination(5, TimeUnit.SECONDS))
+        }
+    }
+
+    @Test
+    fun `manager locked lifecycle event does not deadlock constructor calling manager`() {
+        // Exercise PF4J's real synchronized event dispatcher, not a mocked callback.
+        val manager = EventManager()
+        val factory = GameyfinSingletonExtensionFactory(manager)
+        ManagerCallingExtension.entered = CountDownLatch(1)
+        ManagerCallingExtension.callManager = CountDownLatch(1)
+        ManagerCallingExtension.managerMonitor = manager
+        // A regressed monitor deadlock must fail the bounded test, not pin the test JVM.
+        val pool = Executors.newFixedThreadPool(2) { task -> Thread(task).apply { isDaemon = true } }
+        try {
+            val lookup = pool.submit<ManagerCallingExtension> { factory.create(ManagerCallingExtension::class.java) }
+            assertTrue(ManagerCallingExtension.entered.await(5, TimeUnit.SECONDS))
+            val change = pool.submit {
+                synchronized(manager) {
+                    ManagerCallingExtension.callManager.countDown()
+                    manager.publish(event(manager, PluginState.STOPPED))
+                }
+            }
+            change.get(5, TimeUnit.SECONDS)
+            val old = lookup.get(5, TimeUnit.SECONDS)
+            assertNotSame(old, factory.create(ManagerCallingExtension::class.java))
+        } finally {
+            ManagerCallingExtension.callManager.countDown()
             pool.shutdownNow()
             assertTrue(pool.awaitTermination(5, TimeUnit.SECONDS))
         }

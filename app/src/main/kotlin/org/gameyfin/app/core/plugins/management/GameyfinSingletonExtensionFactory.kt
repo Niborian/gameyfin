@@ -3,31 +3,39 @@ package org.gameyfin.app.core.plugins.management
 import org.pf4j.DefaultExtensionFactory
 import org.pf4j.PluginManager
 import org.pf4j.PluginStateEvent
+import java.util.concurrent.ConcurrentHashMap
 
-/** Singleton creation and lifecycle invalidation share a monitor, unlike PF4J's
- * SingletonExtensionFactory, whose containsKey/get/remove sequence can race.
- * Only discovery is serialized; calls to provider methods are not locked.
+/** A lookup captures one stable loader cache, avoiding PF4J's check/get race.
+ * Lifecycle invalidation detaches that cache without waiting for constructors:
+ * PF4J invokes listeners while holding its manager monitor, so waiting here
+ * could deadlock a constructor that calls back into the manager.
+ * An already-running lookup may finish with the old instance; subsequent
+ * lookups use a fresh cache. Provider method calls are never locked.
  */
 class GameyfinSingletonExtensionFactory(pluginManager: PluginManager) : DefaultExtensionFactory() {
-    private val instances = mutableMapOf<Class<*>, Any>()
+    private class LoaderCache {
+        val instances = mutableMapOf<Class<*>, Any>()
+    }
+    private val bootstrapLoader = Any()
+    private val caches = ConcurrentHashMap<Any, LoaderCache>()
 
     init {
         pluginManager.addPluginStateListener(::invalidate)
     }
 
-    @Synchronized
     override fun <T : Any?> create(extensionClass: Class<T>): T {
-        val instance = instances[extensionClass] ?: super.create(extensionClass).also {
-            instances[extensionClass] = requireNotNull(it)
+        val cache = caches.computeIfAbsent(extensionClass.classLoader ?: bootstrapLoader) { LoaderCache() }
+        synchronized(cache) {
+            val instance = cache.instances[extensionClass] ?: super.create(extensionClass).also {
+                cache.instances[extensionClass] = requireNotNull(it)
+            }
+            return extensionClass.cast(instance)
         }
-        return extensionClass.cast(instance)
     }
 
-    @Synchronized
     private fun invalidate(event: PluginStateEvent) {
         if (!event.pluginState.isStarted) {
-            val loader = event.plugin.pluginClassLoader
-            instances.keys.removeIf { it.classLoader === loader }
+            caches.remove(event.plugin.pluginClassLoader ?: bootstrapLoader)
         }
     }
 }

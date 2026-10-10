@@ -87,7 +87,7 @@ class GameyfinPluginManager(
     }
 
     override fun createExtensionFactory(): ExtensionFactory {
-        return SingletonExtensionFactory(this)
+        return GameyfinSingletonExtensionFactory(this)
     }
 
     override fun createExtensionFinder(): ExtensionFinder? {

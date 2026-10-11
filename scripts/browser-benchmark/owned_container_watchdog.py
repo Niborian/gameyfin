@@ -9,9 +9,10 @@ import os
 import re
 import subprocess
 import time
+from cap_policy import caps_match
 
 
-def validate(inspect, container_id, owner, image_id):
+def validate_cleanup_scope(inspect, container_id, owner, image_id):
     if not re.fullmatch(r"[a-f0-9]{64}", container_id):
         raise ValueError("Container identity boundary")
     if not re.fullmatch(r"[a-f0-9]{16}", owner):
@@ -29,13 +30,21 @@ def validate(inspect, container_id, owner, image_id):
         raise ValueError("Network boundary")
     if host.get("Privileged") or host.get('PidMode','')!='' or host.get('IpcMode','') not in ('','private') or host.get('UTSMode','')!='' or host.get('CgroupnsMode')!='private' or host.get('Init') is not True or not host.get("ReadonlyRootfs"):
         raise ValueError("Namespace boundary")
-    if host.get('NanoCpus')!=1000000000 or host.get('Memory')!=768*1024*1024 or host.get('MemorySwap')!=768*1024*1024 or host.get('PidsLimit')!=128 or set(host.get('CapDrop') or [])!={'ALL'} or set(host.get('CapAdd') or [])!={'SYS_ADMIN'} or host.get('PortBindings') or host.get('PublishAllPorts'):
-        raise ValueError('Browser resource/capability boundary')
+    if host.get('PortBindings') or host.get('PublishAllPorts'):
+        raise ValueError('Browser exposure boundary')
     if inspect.get('Config',{}).get('User')!='10042:10042' or set(inspect.get('NetworkSettings',{}).get('Networks',{}))!={mode}:
         raise ValueError('Browser exclusive network/nonroot boundary')
     if any(m.get('Type')!='tmpfs' or m.get('Destination')!='/tmp' for m in inspect.get('Mounts',[])):
         raise ValueError('Browser mount boundary')
     return container_id
+
+
+def validate(inspect,container_id,owner,image_id):
+    identity=validate_cleanup_scope(inspect,container_id,owner,image_id)
+    host=inspect['HostConfig']
+    if host.get('NanoCpus')!=1000000000 or host.get('Memory')!=768*1024*1024 or host.get('MemorySwap')!=768*1024*1024 or host.get('PidsLimit')!=128 or not caps_match(host.get('CapDrop'),['ALL']) or not caps_match(host.get('CapAdd'),['SYS_ADMIN']):
+        raise ValueError('Browser resource/capability boundary')
+    return identity
 
 
 def docker(*args):
@@ -47,7 +56,11 @@ def cleanup(container_id, owner, image_id, command=docker):
     rows = json.loads(command("inspect", container_id))
     if len(rows) != 1:
         raise ValueError("Inspection cardinality")
-    exact = validate(rows[0], container_id, owner, image_id)
+    # Runtime configuration is a separate acceptance gate. Removing the exact
+    # owned isolated container does not grant extra resources/capabilities and
+    # must remain possible after a configuration mismatch. Namespace/image/
+    # immutable identity/nonroot/readonly/mount/exposure scope stays mandatory.
+    exact = validate_cleanup_scope(rows[0], container_id, owner, image_id)
     command("rm", "--force", exact)
 
 

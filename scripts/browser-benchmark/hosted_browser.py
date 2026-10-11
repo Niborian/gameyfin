@@ -14,6 +14,9 @@ import subprocess
 import sys
 import time
 from owned_container_watchdog import cleanup
+from cap_policy import caps_match
+from owned_container_watchdog import validate as validate_browser_contract
+from container_diagnostics import capture
 
 BROWSER_BUDGET = {'cpuLimit': 1, 'memoryMiB': 768, 'scope': 'separate browser container; excluded from application resource savings'}
 CREATION_PLAN = {'user':'10042:10042','capDrop':['ALL'],'capAdd':['SYS_ADMIN'],
@@ -100,7 +103,7 @@ def validate_app_contract(row,root,owner,image,container_id,network,*,waiting=Fa
     host=row.get('HostConfig',{})
     if host.get('NetworkMode')!=network or host.get('Privileged') or host.get('PidMode','')!='' or host.get('IpcMode','') not in ('','private') or host.get('UTSMode','')!='' or host.get('CgroupnsMode')!='private' or host.get('PortBindings') or host.get('PublishAllPorts'):
         raise ValueError('Application network/namespace boundary')
-    if host.get('NanoCpus')!=500000000 or host.get('Memory')!=1024*1024*1024 or host.get('MemorySwap')!=1024*1024*1024 or host.get('PidsLimit')!=256 or set(host.get('CapDrop') or [])!={'ALL'} or host.get('CapAdd'):
+    if host.get('NanoCpus')!=500000000 or host.get('Memory')!=1024*1024*1024 or host.get('MemorySwap')!=1024*1024*1024 or host.get('PidsLimit')!=256 or not caps_match(host.get('CapDrop'),['ALL']) or not caps_match(host.get('CapAdd'),[]):
         raise ValueError('Application resource/capability boundary')
     if set(row.get('NetworkSettings',{}).get('Networks',{}))!={network} or row.get('Config',{}).get('User')!='1337:1337':
         raise ValueError('Application exclusive network/nonroot boundary')
@@ -203,7 +206,7 @@ def creation_args(owner,image,network,app_ip,cover_id,cover_sha):
 
 
 class HostedBrowser:
-    def __init__(self,owner,image,network,app_ip,cover_id,cover_sha,*,app_id,app_image,fixture_root,waiting=False):
+    def __init__(self,owner,image,network,app_ip,cover_id,cover_sha,*,app_id,app_image,fixture_root,waiting=False,diagnostic_output=None):
         if os.name!='posix' or os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('RUNNER_ENVIRONMENT')!='github-hosted':
             raise ValueError('Hosted Linux CI only')
         row=json.loads(command('network','inspect',network))[0]
@@ -217,12 +220,16 @@ class HostedBrowser:
         validate_app_contract(app_rows[0],fixture_root,owner,app_image,app_id,network,waiting=waiting)
         image_rows=json.loads(command('image','inspect',image))
         if len(image_rows)!=1 or image_rows[0].get('Id')!=image:raise ValueError('Actual browser image mismatch')
-        self.owner=owner;self.image=image;self.id=None;self.process=None;self.watchdog=None
+        self.owner=owner;self.image=image;self.id=None;self.process=None;self.watchdog=None;self.diagnostic_output=diagnostic_output
         try:
             record_creation_intent(fixture_root,owner,image)
             self.id=command(*creation_args(owner,image,network,app_ip,cover_id,cover_sha)).strip()
             if not re.fullmatch('[a-f0-9]{64}',self.id): raise ValueError('Created ID boundary')
             record_browser(fixture_root,owner,self.id,image)
+            created=json.loads(command('inspect',self.id))
+            if len(created)!=1:raise ValueError('Browser inspection cardinality')
+            if diagnostic_output:capture(diagnostic_output,created[0],owner,'browser',image)
+            validate_browser_contract(created[0],self.id,owner,image)
             current=json.loads(command('network','inspect',network))
             if len(current)!=1 or current[0].get('Name')!=network or current[0].get('Internal') is not True:
                 raise ValueError('Private network changed before browser start')
@@ -251,10 +258,23 @@ class HostedBrowser:
                 if chunk==b'\n':
                     value=json.loads(raw)
                     if not isinstance(value,dict): raise ValueError('Browser receipt schema')
+                    if value.get('browserFailed') is True:
+                        if set(value)!={'browserFailed','phase'} or value['phase'] not in ('arguments','input','bridge','profile','chrome-launch','sandbox','authentication','navigation','cleanup'):
+                            raise ValueError('Browser failure receipt schema')
+                        self.record_driver_failure(value)
+                        raise ValueError('Private browser phase failed; sanitized receipt retained')
                     return value
                 raw.extend(chunk)
                 if len(raw)>8192: raise ValueError('Browser receipt bound')
         raise TimeoutError('Browser receipt deadline')
+
+    def record_driver_failure(self,value):
+        if not self.diagnostic_output:return
+        path=Path(self.diagnostic_output);observed=read_state(path,8192)
+        observed['browserDriverFailure']=value
+        pending=path.with_suffix('.driver-failure.pending')
+        with pending.open('x') as output:output.write(json.dumps(observed,indent=2))
+        pending.chmod(0o600);pending.replace(path)
 
     def authenticate(self,username,password):
         if not isinstance(username,str) or not isinstance(password,str) or not 1<=len(username)<=128 or not 16<=len(password)<=256 or re.search(r'[\x00-\x1f\x7f]',username+password):

@@ -44,5 +44,22 @@ class WatchdogTests(unittest.TestCase):
         with self.assertRaises(ValueError): cleanup(ID, OWNER, IMAGE, command)
         self.assertEqual(calls, [("inspect", ID)])
 
+    def test_canonical_docker28_cap_does_not_change_accepted_grant(self):
+        row=fixture();row['HostConfig']['CapAdd']=['CAP_SYS_ADMIN']
+        self.assertEqual(validate(row,ID,OWNER,IMAGE),ID)
+        for caps in [['CAP_SYS_ADMIN','CAP_NET_ADMIN'],['ALL'],['SYS_ADMIN','CAP_SYS_ADMIN']]:
+            row=fixture();row['HostConfig']['CapAdd']=caps
+            with self.assertRaises(ValueError):validate(row,ID,OWNER,IMAGE)
+
+    def test_owned_scope_cleanup_survives_numeric_acceptance_failure(self):
+        row=fixture();row['HostConfig']['Memory']=2*1024**3
+        with self.assertRaises(ValueError):validate(row,ID,OWNER,IMAGE)
+        calls=[]
+        def command(*args):
+            calls.append(args)
+            return json.dumps([row]) if args[0]=='inspect' else ''
+        cleanup(ID,OWNER,IMAGE,command)
+        self.assertEqual(calls,[('inspect',ID),('rm','--force',ID)])
+
 
 if __name__ == "__main__": unittest.main()

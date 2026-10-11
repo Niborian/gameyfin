@@ -92,6 +92,21 @@ class LibraryBrowseProjectionTest @Autowired constructor(val em:EntityManager,va
         }finally{GameLoadStatementInspector.perThread.remove()}
     }
 
+    @Test fun `historical null library game is excluded like the original library mapper`() {
+        val library=Library(name="Historical")
+        em.persist(library)
+        val game=Game(library=library,metadata=GameMetadata(path="/fixture/historical"))
+        game.title="Historical synthetic game"
+        em.persist(game);em.flush()
+        // The original migrated GAME.LIBRARY_ID permits null historical rows.
+        em.createNativeQuery("UPDATE GAME SET LIBRARY_ID=NULL WHERE ID=:id")
+            .setParameter("id",game.id).executeUpdate()
+        em.clear()
+        val expected=json(repository.findAll().toDtos())
+        em.clear()
+        assertEquals(expected,json(LibraryService(repository,mockk(),mockk(),mockk()).getAll()))
+    }
+
     @Test fun `actual library service graph versus scalar DTO fields with 132 games`() {
         listOf(104,27,1,0).forEachIndexed {libraryIndex,count->
             val library=Library(name="Fixture $libraryIndex",platforms=mutableListOf(Platform.PC_MICROSOFT_WINDOWS),

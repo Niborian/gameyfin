@@ -28,6 +28,9 @@ The empty catalogue uses one SELECT and loads no collections.
 Hibernate statistics additionally assert zero entity hydration for both
 non-empty browse roles. Ordinary-user reads run none of the administrator
 source queries.
+An actual native-H2 historical `GAME.LIBRARY_ID=NULL` regression confirms
+the explicit inner library join excludes orphan games just as the original
+library collection does; no nullable foreign-key constructor failure occurs.
 
 Local focused command (JDK 25, frontend tasks omitted):
 
@@ -37,7 +40,7 @@ Local focused command (JDK 25, frontend tasks omitted):
   --tests '*GameServiceTest' -x :app:vaadinPrepareFrontend -x :app:vaadinBuildFrontend
 ```
 
-Result: 221 tests in 21 suites passed locally. The 132-game browse read used
+Result: 222 tests in 21 suites passed locally. The 132-game browse read used
 exactly two USER / seven ADMIN SELECTs and hydrated zero entities; the legacy
 mapper comparison used 2,657 SELECTs for either role.
 

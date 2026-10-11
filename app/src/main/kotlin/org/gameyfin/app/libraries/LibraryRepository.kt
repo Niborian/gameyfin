@@ -9,7 +9,7 @@ interface LibraryRepository : JpaRepository<Library, Long> {
     @Query("SELECT new org.gameyfin.app.libraries.LibraryBrowseRow(l.id,l.name,l.createdAt,l.storageMode,l.metadata.displayOnHomepage,l.metadata.displayOrder) FROM Library l ORDER BY l.id")
     fun findBrowseLibraries(): List<LibraryBrowseRow>
 
-    @Query("SELECT new org.gameyfin.app.libraries.LibraryGameBrowseRow(g.library.id,g.id,g.metadata.downloadCount) FROM Game g ORDER BY g.id")
+    @Query("SELECT new org.gameyfin.app.libraries.LibraryGameBrowseRow(l.id,g.id,g.metadata.downloadCount) FROM Game g JOIN g.library l ORDER BY g.id")
     fun findBrowseGames(): List<LibraryGameBrowseRow>
 
     @Query("SELECT new org.gameyfin.app.libraries.LibraryDirectoryBrowseRow(l.id,d.internalPath,d.externalPath) FROM Library l JOIN l.directories d ORDER BY d.id")

@@ -10,8 +10,9 @@ unproven acceptance; no production deployment or tag promotion is authorized her
   while the authenticated application UI reports `2.4.0`; do not assume these labels
   identify a clean upstream release or the current fork source revision.
 - Four administrator-visible libraries contain 104, 27, 1, and 0 games, respectively.
-  The unfiltered search renders 132 distinct game entries. Total variant/content and
-  ignored-path counts have not yet been established.
+  The unfiltered search renders 132 distinct game entries. Variant/content and
+  ignored-path counts were not established in this October 7 UI observation; a later
+  cold capture established historical counts below, not current live counts.
 - Scan concurrency is four. File watchers, empty-directory scanning, and daily metadata
   refresh are enabled. These settings were inspected, not changed.
 - A representative game deep link renders correctly after loading, with one Normal
@@ -27,7 +28,32 @@ unproven acceptance; no production deployment or tag promotion is authorized her
   and inspected recent logs had no ERROR/OOM/H2-closed matches. This proves idle health,
   not successful controlled full scans or a safe scan budget.
 
-## Isolated paired comparison
+## Completed backup gate and later evidence
+
+The approved October 9 consistent cold capture and same-image isolated restore
+completed [#26](https://github.com/Niborian/gameyfin/issues/26). The captured database
+contained four libraries, 132 games, 137 variants, 144 contents and 15 ignored-path
+entries. Pre/postboot restore counts matched; the isolated application reported
+health UP and login HTTP 200. Production configuration was unchanged, disposable
+restore resources were removed, and the exact rollback archive was retained.
+These are counts of that dated capture, not a fresh count of the running database.
+Successful login-page delivery is not authenticated browser acceptance. Future
+cutover still needs a suitable current backup and candidate-specific rollback proof.
+
+Later bounded experiments are recorded in [#27](https://github.com/Niborian/gameyfin/issues/27).
+They include isolated synthetic cold/repeat/interrupted-recovery scans, exact selected
+downloads and opt-in JVM reclamation profiles. Completed synthetic cases preserved
+source hashes and one default variant per fork fixture game, while the baseline
+fixture retained two. These results do not establish a representative real-library
+memory budget or validate the records affected by the original interrupted scan.
+
+The preliminary October 10 browsing/recovery comparison observed lower tester
+container memory than live, but caches, versions and JVM budgets differed. It is not
+a matched language/runtime performance result. Heavier sequential scan/metadata
+measurements and post-task CPU/memory recovery remain to be validated; do not infer
+cutover readiness or a shipping-default tuning recommendation from these observations.
+
+## Historical isolated paired comparison
 
 The authorized baseline clone uses the exact local image ID, fresh synthetic data,
 separate credentials/key, no network or published ports, two CPUs, and a 1536 MiB memory
@@ -73,9 +99,16 @@ not the later bounded-scheduler or retirement changes. It is not a published rel
 
 - Same-fixture candidate comparison and representative workload, including exact/grouped
   downloads, scan reliability, resource use, and unchanged source hashes/hardlinks.
-- Complete production baseline counts and source integrity evidence.
-- Consistent production backup and isolated restoration, plus rollback proof.
-- Reviewed production exposure/torrent behavior; staging alone cannot prove live bindings.
+- Refresh current production baseline counts and source integrity evidence. Historical
+  cold-capture counts above are not current live-database verification.
+- The October 9 backup/restore gate is complete under #26; confirm backup suitability
+  for the eventual cutover and prove candidate-specific rollback before switching.
+- Reviewed production exposure/torrent behavior, including browser WebSocket/reconnect,
+  relevant firewall/router inventory and chosen direct-admin/client allowlists. The
+  October 7 inventory found wildcard direct ports and no inspected source allowlist;
+  router/Internet forwarding remains unknown. No production binding/firewall change
+  is approved. Preserve the existing hostname/authentication and independent qBittorrent
+  policy; staging alone cannot prove live restrictions.
 - Published version and latest resolving to one reviewed digest, UI/image version parity,
   satisfactory provenance/SBOM and CodeQL. The last inspected published `2.4.3` and
   `latest` digests differ and do not establish readiness for the current PR changes.

@@ -394,7 +394,7 @@ class GameService(
             "genres",
             game.genres,
             updatedGame.genres,
-            { game.genres = it ?: emptyList() },
+            { game.genres = it?.toMutableList() ?: mutableListOf() },
             updatedGame.metadata.fields["genres"]
         )
 
@@ -403,7 +403,7 @@ class GameService(
             "themes",
             game.themes,
             updatedGame.themes,
-            { game.themes = it ?: emptyList() },
+            { game.themes = it?.toMutableList() ?: mutableListOf() },
             updatedGame.metadata.fields["themes"]
         )
 
@@ -412,7 +412,7 @@ class GameService(
             "keywords",
             game.keywords,
             updatedGame.keywords,
-            { game.keywords = it ?: emptyList() },
+            { game.keywords = it?.toMutableList() ?: mutableListOf() },
             updatedGame.metadata.fields["keywords"]
         )
 
@@ -421,7 +421,7 @@ class GameService(
             "features",
             game.features,
             updatedGame.features,
-            { game.features = it ?: emptyList() },
+            { game.features = it?.toMutableList() ?: mutableListOf() },
             updatedGame.metadata.fields["features"]
         )
 
@@ -430,7 +430,7 @@ class GameService(
             "perspectives",
             game.perspectives,
             updatedGame.perspectives,
-            { game.perspectives = it ?: emptyList() },
+            { game.perspectives = it?.toMutableList() ?: mutableListOf() },
             updatedGame.metadata.fields["perspectives"]
         )
 
@@ -448,7 +448,7 @@ class GameService(
             "videoUrls",
             game.videoUrls,
             updatedGame.videoUrls,
-            { game.videoUrls = it ?: emptyList() },
+            { game.videoUrls = it?.toMutableList() ?: mutableListOf() },
             updatedGame.metadata.fields["videoUrls"]
         )
 

@@ -1,0 +1,48 @@
+import copy
+import json
+import unittest
+from owned_container_watchdog import cleanup, validate
+
+ID = "a" * 64
+OWNER = "b" * 16
+IMAGE = "sha256:" + "c" * 64
+
+
+def fixture():
+    return {"Id": ID, "Name": "/gameyfin-browser-" + OWNER, "Image": IMAGE,
+            "Config": {"Labels": {"gameyfin.browser.owner": OWNER},'User':'10042:10042'},
+            'NetworkSettings':{'Networks':{'gameyfin-browser-net-'+OWNER:{}}},'Mounts':[],
+            "HostConfig": {"NetworkMode": "gameyfin-browser-net-" + OWNER,
+                           "Privileged": False, "ReadonlyRootfs": True,'CgroupnsMode':'private','Init':True,'PidsLimit':128,'NanoCpus':1000000000,'Memory':768*1024*1024,'MemorySwap':768*1024*1024,'CapDrop':['ALL'],'CapAdd':['SYS_ADMIN']}}
+
+
+class WatchdogTests(unittest.TestCase):
+    def test_exact_cleanup(self):
+        calls = []
+        def command(*args):
+            calls.append(args)
+            return json.dumps([fixture()]) if args[0] == "inspect" else ""
+        cleanup(ID, OWNER, IMAGE, command)
+        self.assertEqual(calls, [("inspect", ID), ("rm", "--force", ID)])
+
+    def test_reject_reused_name_or_labels(self):
+        for key, value in [("Id", "d" * 64), ("Name", "/other"), ("Image", "sha256:" + "e" * 64)]:
+            row = fixture(); row[key] = value
+            with self.assertRaises(ValueError): validate(row, ID, OWNER, IMAGE)
+
+    def test_reject_namespace_sharing(self):
+        for mode in ["host", "bridge", "container:" + ID]:
+            row = fixture(); row["HostConfig"]["NetworkMode"] = mode
+            with self.assertRaises(ValueError): validate(row, ID, OWNER, IMAGE)
+
+    def test_failure_never_removes(self):
+        calls = []
+        def command(*args):
+            calls.append(args)
+            row = fixture(); row["Id"] = "f" * 64
+            return json.dumps([row])
+        with self.assertRaises(ValueError): cleanup(ID, OWNER, IMAGE, command)
+        self.assertEqual(calls, [("inspect", ID)])
+
+
+if __name__ == "__main__": unittest.main()

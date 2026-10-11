@@ -69,10 +69,11 @@ def execute(args):
         data=json.dumps(summary,indent=2)
         if len(data.encode())>4*1024*1024:raise ValueError('Sanitized report byte bound')
         pending=output.with_suffix('.pending');pending.write_text(data);pending.replace(output)
-    def browser(app):
+    def browser(app,phase):
         cover_id=int(app.cover_path.rsplit('/',1)[1])
         value=HostedBrowser(app.owner,args.browser_image,app.network,app.ip,cover_id,app.fixture['image']['sha256'],
-            app_id=app.id,app_image=app.image,fixture_root=app.root,waiting=app.waiting_root is not None)
+            app_id=app.id,app_image=app.image,fixture_root=app.root,waiting=app.waiting_root is not None,
+            diagnostic_output=output.with_name('browser-'+app.owner+'-'+phase+'.json'))
         try:value.authenticate('fixture-admin',app.password);return value
         except Exception:value.close();raise
     def arm(arm,pair,position):
@@ -80,9 +81,10 @@ def execute(args):
         row={'pair':pair,'position':position,'arm':arm,'source':CONTROL if arm=='control' else CANDIDATE,'image':image}
         reports.append(row);persist()
         try:
-            with OwnedApp(image,args.direct_plugin,args.metadata_plugin,expected_jar_sha=receipt[arm+'JarSha256']) as app:
+            with OwnedApp(image,args.direct_plugin,args.metadata_plugin,expected_jar_sha=receipt[arm+'JarSha256'],
+                diagnostic_output=output.with_name(f'application-{pair}-{position}-{arm}.json')) as app:
                 row['fixtureManifestSha256']=app.fixture['manifestSha256']
-                row['report']=run_case(app.client,app.fixture,app.cover_path,lambda phase:browser(app),app.resources,
+                row['report']=run_case(app.client,app.fixture,app.cover_path,lambda phase:browser(app,phase),app.resources,
                     lambda:verify_sources(app.root/'fixture',app.fixture['manifest']))
                 row['finalGate']=app.final_gate()
             row['exactOwnedCleanupPassed']=True;persist()
@@ -95,10 +97,10 @@ def execute(args):
         sys.path.insert(0,str(Path(__file__).with_name('overlap')))
         from original_app_waiting_case import run_case as held_case
         with OwnedApp(args.candidate_image,args.direct_plugin,args.waiting_plugin,
-            expected_jar_sha=receipt['candidateJarSha256'],waiting=True) as app:
+            expected_jar_sha=receipt['candidateJarSha256'],waiting=True,diagnostic_output=output.with_name('application-waiting.json')) as app:
             before=metrics(app.client)
             if before['active'] or before['draining']:raise ValueError('Held fixture starts nonidle')
-            with browser(app) as held_browser:
+            with browser(app,'waiting') as held_browser:
                 prerequisites={'syntheticFixtureOnly':True,'normalAdminAuthenticated':True,'browserAlreadyAuthenticated':True,
                     'originalGameyfinUi':True,'boundedBrowserOperationSeconds':15,'publishedPorts':False,'cpuLimit':.5,
                     'memoryMiB':1024,'heapMiB':320,'waitingProviderOptIn':True,'scanLibraryId':27003,'gameId':33000}

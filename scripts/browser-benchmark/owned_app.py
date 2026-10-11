@@ -6,6 +6,7 @@ Parent finally + independent per-case watchdog + workflow always cleanup.
 import argparse,base64,json,os,re,secrets,shutil,stat,subprocess,sys,time
 from pathlib import Path
 from fixture_case import FixtureClient,generate_fixture
+from cap_policy import caps_match
 
 JVM='-Xms32m -Xmx320m -XX:+UseG1GC -XX:G1HeapRegionSize=1m -XX:+UseStringDeduplication -XX:+UseCompactObjectHeaders -XX:G1PeriodicGCInterval=0 -XX:MinHeapFreeRatio=40 -XX:MaxHeapFreeRatio=70 -XX:MaxMetaspaceSize=256m -XX:MaxDirectMemorySize=64m -Xss512k -XX:+ExitOnOutOfMemoryError'
 
@@ -73,7 +74,7 @@ def validate_intent(row,root,owner,intent):
         raise ValueError('Creation intent user/command contract')
     if host.get('NetworkMode')!=intent['network'] or host.get('NanoCpus')!=intent['nanoCpus'] or host.get('Memory')!=intent['memoryBytes'] or host.get('MemorySwap')!=intent['memoryBytes'] or host.get('PidsLimit')!=intent['pids']:
         raise ValueError('Creation intent resource/network contract')
-    if set(host.get('CapDrop') or [])!={'ALL'} or sorted(host.get('CapAdd') or [])!=intent['capAdd'] or host.get('CgroupnsMode')!='private' or host.get('PidMode','')!='' or host.get('IpcMode','') not in ('','private') or host.get('UTSMode','')!='' or host.get('PublishAllPorts'):
+    if not caps_match(host.get('CapDrop'),['ALL']) or not caps_match(host.get('CapAdd'),intent['capAdd']) or host.get('CgroupnsMode')!='private' or host.get('PidMode','')!='' or host.get('IpcMode','') not in ('','private') or host.get('UTSMode','')!='' or host.get('PublishAllPorts'):
         raise ValueError('Creation intent capabilities/namespaces')
     actual=sorted([{'source':m.get('Source'),'target':m.get('Destination'),'rw':m.get('RW')} for m in row.get('Mounts',[])],key=lambda x:x['target'])
     if actual!=intent['mounts']:raise ValueError('Creation intent mount contract')
@@ -97,20 +98,29 @@ def recover_intents(root,owner,ledger):
 def cleanup(root,owner,*,remove_root=False):
     root=exact_root(Path(root),owner);ledger=json.loads(read_regular(root/'ledger.json',65536))
     from hosted_browser import cleanup_known_browser
-    cleanup_known_browser(root,owner)
     if ledger.get('owner')!=owner:raise ValueError('Ledger owner mismatch')
-    ledger=recover_intents(root,owner,ledger)
+    errors=[]
+    try:cleanup_known_browser(root,owner)
+    except Exception as error:errors.append({'scope':'browser','class':type(error).__name__})
+    try:ledger=recover_intents(root,owner,ledger)
+    except Exception as error:errors.append({'scope':'creation-intent','class':type(error).__name__})
     for resource in reversed(ledger['containers']):
-        ids=command('ps','-aq','--no-trunc').split()
-        if resource['id'] not in ids:continue
-        row=json.loads(command('inspect',resource['id']))[0]
-        command('rm','--force',validate_owned(row,root,owner,resource['image'],resource['id']))
+        try:
+            ids=command('ps','-aq','--no-trunc').split()
+            if resource['id'] not in ids:continue
+            row=json.loads(command('inspect',resource['id']))[0]
+            command('rm','--force',validate_owned(row,root,owner,resource['image'],resource['id']))
+        except Exception as error:errors.append({'scope':'recorded-resource','class':type(error).__name__})
     network=ledger['network']
     if network in command('network','ls','--format','{{.Name}}').splitlines():
         rows=json.loads(command('network','inspect',network))
         if len(rows)!=1 or rows[0].get('Name')!='gameyfin-browser-net-'+owner or rows[0].get('Labels',{}).get('gameyfin.fixture.owner')!='benchmark-27-'+owner or rows[0].get('Containers'):
-            raise ValueError('Network cleanup scope or still-attached browser')
-        command('network','rm',rows[0]['Id'])
+            errors.append({'scope':'network-retained','class':'ValueError'})
+        else:command('network','rm',rows[0]['Id'])
+    if errors:
+        pending=root/'cleanup-diagnostic.pending';pending.write_text(json.dumps({'scope':'Cleanup incomplete; mismatched resources retained','failures':errors}))
+        pending.replace(root/'cleanup-diagnostic.json')
+        raise RuntimeError('Cleanup incomplete; known resources attempted and uncertainty retained')
     if remove_root:
         ids=command('ps','-aq','--no-trunc').split()
         rows=json.loads(command('inspect',*ids)) if ids else []
@@ -149,11 +159,12 @@ def cleanup(root,owner,*,remove_root=False):
         shutil.rmtree(root)
 
 class OwnedApp:
-    def __init__(self,image,direct_plugin,metadata_plugin,*,expected_jar_sha,waiting=False):
+    def __init__(self,image,direct_plugin,metadata_plugin,*,expected_jar_sha,waiting=False,diagnostic_output=None):
         hosted_only()
         if not re.fullmatch('sha256:[a-f0-9]{64}',image):raise ValueError('Immutable local image ID required')
         if not re.fullmatch('[a-f0-9]{64}',expected_jar_sha):raise ValueError('Built exact application JAR SHA required')
         self.image=image;self.owner=secrets.token_hex(8);self.network='gameyfin-browser-net-'+self.owner
+        self.diagnostic_output=diagnostic_output;self.diagnostic_captured=False
         parent=Path(os.environ['RUNNER_TEMP']).resolve()
         if any(p.is_symlink() for p in [parent,*parent.parents]):raise ValueError('Private runner temp root')
         from ownership_index import index_path,planned,created
@@ -243,6 +254,9 @@ class OwnedApp:
         raise TimeoutError('Actual application startup deadline')
     def inspect(self):
         row=json.loads(command('inspect',self.id))[0]
+        if self.diagnostic_output and not self.diagnostic_captured:
+            from container_diagnostics import capture
+            capture(self.diagnostic_output,row,self.owner,'application',self.image);self.diagnostic_captured=True
         validate_owned(row,self.root,self.owner,self.image,self.id);return row
     def resources(self):
         row=self.inspect();pid=row['State']['Pid']

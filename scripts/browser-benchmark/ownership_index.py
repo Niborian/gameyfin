@@ -41,7 +41,6 @@ def created(path,root,owner):
 
 def cleanup_current():
     from owned_app import cleanup,command
-    from hosted_browser import cleanup_known_browser
     path=index_path()
     if not path.exists():return
     value=read(path)
@@ -51,7 +50,7 @@ def cleanup_current():
         if not root.exists():continue
         observed=root.stat(follow_symlinks=False)
         if root.is_symlink() or root.resolve()!=root or row.get('state')!='created' or (observed.st_dev,observed.st_ino)!=(row.get('device'),row.get('inode')):raise ValueError('Unknown or replaced root retained')
-        if (root/'ledger.json').exists():cleanup_known_browser(root,owner);cleanup(root,owner,remove_root=True)
+        if (root/'ledger.json').exists():cleanup(root,owner,remove_root=True)
         else:
             ids=command('ps','-aq','--no-trunc').split();containers=json.loads(command('inspect',*ids)) if ids else []
             if any(Path(m.get('Source','/')).resolve()==root or Path(m.get('Source','/')).resolve().is_relative_to(root) for d in containers for m in d.get('Mounts',[])):raise ValueError('Initial fixture unexpectedly referenced; retain')

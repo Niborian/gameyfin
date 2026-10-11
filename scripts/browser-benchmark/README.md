@@ -73,6 +73,19 @@ must fail the report. Actual Linux sandbox/browser/original-app execution remain
 unverified until the reviewed CI run passes; source and guard tests are not a
 substitute.
 
+The first reviewed CI run [38182465997](https://github.com/Niborian/gameyfin/actions/runs/38182465997)
+passed both original-UI source builds and strict parity (473 resource/dependency
+entries), but failed in the first control case before scan measurements. Its
+cleanup guard also failed; exact cleanup was not proven. No performance result
+is inferred from that run. Docker 28 canonicalizes capability names to `CAP_`
+spellings ([Moby change](https://github.com/moby/moby/pull/48551)); guards now
+compare exact semantic sets, rejecting extras and duplicate aliases, without
+changing any grant or limit. Sanitized pre-guard receipts retain numeric limits,
+known capability/security categories and bounded browser failure phases only.
+Exact immutable ownership, mount and namespace cleanup authority remains strict;
+a numeric performance-contract mismatch does not prevent removing a proven
+owned isolated container. Unknown scope is retained and reported as failure.
+
 Primary references: [official Puppeteer Docker sandbox](https://pptr.dev/guides/docker),
 [Chromium proxy semantics](https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md),
 [Spring Boot build-info properties](https://docs.spring.io/spring-boot/gradle-plugin/integrating-with-actuator.html).

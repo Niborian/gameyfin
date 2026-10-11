@@ -1,7 +1,7 @@
 import json,os,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
-from owned_app import exact_root,read_regular,validate_owned,hosted_only,JVM,intent_contract,recover_intents,persist_ledger
+from owned_app import exact_root,read_regular,validate_owned,hosted_only,JVM,intent_contract,recover_intents,persist_ledger,cleanup
 from ownership_index import create,planned,created,read,index_path
 from run_benchmark import validate_receipt,CONTROL,CANDIDATE
 
@@ -65,12 +65,31 @@ class OwnedAppTest(unittest.TestCase):
                 recovered=recover_intents(root,owner,json.loads((root/'ledger.json').read_text()))
                 self.assertEqual(recovered['containers'],[{'id':identity,'image':image}])
                 self.assertEqual(json.loads((root/'ledger.json').read_text())['containers'],recovered['containers'])
+                row['HostConfig']['CapAdd']=['CAP_CHOWN']
+                self.assertEqual(recover_intents(root,owner,recovered)['containers'],recovered['containers'])
                 row['HostConfig']['Memory']=512*1024*1024
                 with self.assertRaises(ValueError):recover_intents(root,owner,recovered)
     def test_no_local_or_server_docker_entry(self):
         with patch.dict(os.environ,{},clear=True):
             with self.assertRaises(ValueError):hosted_only()
         self.assertIn('-XX:+UseCompactObjectHeaders',JVM);self.assertIn('-XX:G1PeriodicGCInterval=0',JVM)
+    def test_other_exact_resources_still_removed_when_browser_guard_refuses(self):
+        with tempfile.TemporaryDirectory() as parent:
+            owner='a'*16;root=self.root(parent,owner);identity='b'*64;image='sha256:'+'c'*64;network='gameyfin-browser-net-'+owner
+            ledger={'owner':owner,'network':network,'containers':[{'id':identity,'image':image}],'intents':[]};persist_ledger(root,ledger)
+            row={'Id':identity,'Image':image,'Name':'/gameyfin-benchmark-app-'+owner,'Config':{'Labels':{'gameyfin.fixture.owner':'benchmark-27-'+owner}},'HostConfig':{},'Mounts':[]}
+            ids=[identity];removed=[]
+            def command(*args):
+                if args[0]=='ps':return '\n'.join(ids)
+                if args[0]=='inspect':return json.dumps([row])
+                if args[:2]==('rm','--force'):removed.append(args[2]);ids.remove(args[2]);return ''
+                if args[:2]==('network','ls'):return network+'\n'
+                if args[:2]==('network','inspect'):return json.dumps([{'Name':network,'Labels':{'gameyfin.fixture.owner':'benchmark-27-'+owner},'Containers':{'unknown-browser':{}}}])
+                raise AssertionError('Unexpected command')
+            with patch('owned_app.command',command),patch('hosted_browser.cleanup_known_browser',side_effect=ValueError('guard')):
+                with self.assertRaises(RuntimeError):cleanup(root,owner,remove_root=True)
+            self.assertEqual(removed,[identity]);self.assertTrue(root.exists())
+            self.assertEqual(json.loads((root/'cleanup-diagnostic.json').read_text())['scope'],'Cleanup incomplete; mismatched resources retained')
     @unittest.skipUnless(os.name=='posix','Actual FIFO requires Linux')
     def test_fifo_marker_rejects_without_blocking(self):
         import time

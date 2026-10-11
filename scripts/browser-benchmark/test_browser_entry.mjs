@@ -1,5 +1,9 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {validateArguments,renderingConfiguration,browserResources} from './browser_entry.mjs';
+import {validateArguments,renderingConfiguration,browserResources,failureReceipt} from './browser_entry.mjs';
+test('failure evidence is an enum, never raw exception/credential text',()=>{
+  assert.deepEqual(failureReceipt('sandbox'),{browserFailed:true,phase:'sandbox'});
+  assert.throws(()=>failureReceipt('password or URL from exception'));
+});
 test('browser cgroup resource counters are separate and strictly numeric',async()=>{
   assert.deepEqual(await browserResources(async p=>p.endsWith('cpu.stat')?'usage_usec 42\n':p.endsWith('memory.peak')?'64':'32'),{cpuUsageUsec:42,memoryCurrentBytes:32,memoryPeakBytes:64});
   await assert.rejects(browserResources(async()=> 'invalid'));

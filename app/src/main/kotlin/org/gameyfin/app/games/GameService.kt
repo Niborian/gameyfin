@@ -376,7 +376,7 @@ class GameService(
             "publishers",
             game.publishers,
             updatedGame.publishers,
-            { game.publishers = it ?: mutableListOf() },
+            { game.publishers = it?.map { company -> companyService.createOrGet(company) }?.toMutableList() ?: mutableListOf() },
             updatedGame.metadata.fields["publishers"]
         )
 
@@ -385,7 +385,7 @@ class GameService(
             "developers",
             game.developers,
             updatedGame.developers,
-            { game.developers = it ?: mutableListOf() },
+            { game.developers = it?.map { company -> companyService.createOrGet(company) }?.toMutableList() ?: mutableListOf() },
             updatedGame.metadata.fields["developers"]
         )
 

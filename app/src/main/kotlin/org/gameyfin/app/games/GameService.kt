@@ -23,6 +23,9 @@ import org.gameyfin.app.games.entities.*
 import org.gameyfin.app.games.extensions.toDtos
 import org.gameyfin.app.games.repositories.GameRepository
 import org.gameyfin.app.libraries.entities.Library
+import org.gameyfin.app.libraries.LibraryRepository
+import org.hibernate.Hibernate
+import jakarta.persistence.EntityNotFoundException
 import org.gameyfin.app.media.Image
 import org.gameyfin.app.media.ImageService
 import org.gameyfin.app.media.ImageType
@@ -54,7 +57,8 @@ class GameService(
     private val companyService: CompanyService,
     private val userService: UserService,
     private val imageService: ImageService,
-    private val filesystemService: FilesystemService
+    private val filesystemService: FilesystemService,
+    private val libraryRepository: LibraryRepository
 ) {
     companion object {
         private val log = KotlinLogging.logger {}
@@ -624,7 +628,7 @@ class GameService(
         val mergedGame = mergeResults(validResults, path, library)
 
         // Step 4: Filter platforms to only those supported by the library
-        mergedGame.platforms = library.platforms.intersect(mergedGame.platforms.toSet()).toMutableList()
+        mergedGame.platforms = matchingLibraryPlatforms(library).intersect(mergedGame.platforms.toSet()).toMutableList()
 
         // Step 5: If a replaceGameId is provided, set it (overwriting the existing entity)
         if (replaceGameId != null) {
@@ -645,6 +649,18 @@ class GameService(
 
         // Step 6: Save the game
         return if (persist) create(mergedGame) else mergedGame
+    }
+
+    private fun matchingLibraryPlatforms(library: Library): List<Platform> {
+        // Initializing a Library proxy also loads its eager game graph. Project only
+        // the filter values; already-loaded/transient entities retain in-memory edits.
+        if (Hibernate.isInitialized(library) || library.id == null) return library.platforms
+        val id = library.id!!
+        val platforms = libraryRepository.findPlatformsByLibraryId(id)
+        if (platforms.isEmpty() && !libraryRepository.existsById(id)) {
+            throw EntityNotFoundException("Library $id does not exist")
+        }
+        return platforms
     }
 
     fun matchFromFile(path: Path, library: Library): Game? {

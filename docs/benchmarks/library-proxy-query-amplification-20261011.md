@@ -57,3 +57,26 @@ initializing the library proxy and its unchanged eager game graph. The offline
 synthetic scan returns before that access. A real-H2, in-process positive-provider
 fixture must quantify this remaining path before claiming representative metadata
 refresh scalability. Individual game-read improvements do not establish that claim.
+
+## Positive-provider follow-up (#27)
+
+An isolated local follow-up used the real GameService and H2 repository with a
+persisted provider original ID and a fixed in-process provider. Unrelated dependencies
+were strict mocks, preventing accidental network, file or image operations. A null
+result used 19 SELECTs and left the library uninitialized. A valid title result used
+2,083 SELECTs and initialized its graph. A direct read followed by `library.platforms`
+independently reproduced the same 19-to-2,083 amplification.
+
+The narrow follow-up projects platform enum values only for a persisted uninitialized
+library proxy. Initialized entities continue using their current in-memory platforms,
+including unflushed edits; transient libraries retain existing behavior. Empty platform
+lists still filter to an empty result, exactly as before. An existence check on an
+empty projection preserves failure for missing library references. No association or
+fetch annotation changes. Positive refresh then used 21 SELECTs without initializing
+the library; null refresh remained 19. Counts are single-refresh local diagnostics,
+not a claim about concurrent successful provider workloads or server budgets.
+
+Tests cover empty/single/multiple platform filters, current managed platform edits,
+transient and missing-library cases, actual updated title/platform fields, preserved
+provider original IDs and variants, and detached admin/user DTO conversion. The exact
+artifact still requires bounded server validation before production acceptance.

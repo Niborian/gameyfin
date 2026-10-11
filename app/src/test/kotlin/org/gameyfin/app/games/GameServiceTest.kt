@@ -77,7 +77,8 @@ class GameServiceTest {
             companyService,
             userService,
             imageService,
-            filesystemService
+            filesystemService,
+            mockk()
         )
 
         library = mockk(relaxed = true) {

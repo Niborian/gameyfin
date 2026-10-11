@@ -69,16 +69,19 @@ class PositiveRealFilesystemDiagnosticTest @Autowired constructor(
         val game=Game(library=library,metadata=org.gameyfin.app.games.entities.GameMetadata(root.toString(),originalIds=mapOf(entry to "fixture-33000")))
         game.title="Synthetic game 33000"
         game.variants.add(GameVariant(game=game,name="Normal",version="1.0",path=root.resolve("Normal 1.0").toString(),isDefault=true,defaultLocked=true,scanManaged=false))
-        em.persist(game);em.flush();val id=game.id!!;em.clear()
+        em.persist(game);em.flush();val id=game.id!!
+        val pinnedDefaultId=game.variants.single().id!!;em.clear()
         try {
             for(size in listOf(1,2,0)) {
                 collectionSize=size
-                repeat(2) {processor.processExistingGame(games.findById(id).orElseThrow());em.flush()}
+                repeat(2) {processor.processExistingGame(games.findById(id).orElseThrow());em.flush();em.clear()}
                 val current=games.findById(id).orElseThrow()
                 val expected=if(size==0)2 else size // Existing policy ignores empty provider values.
                 assertEquals(expected,current.genres.size);assertEquals(expected,current.themes.size)
                 assertEquals(expected,current.keywords.size);assertEquals(expected,current.features.size)
                 assertEquals(expected,current.perspectives.size);assertEquals(expected,current.videoUrls.size)
+                assertEquals(pinnedDefaultId,current.variants.single{it.isDefault}.id)
+                assertEquals(setOf("1.0","1.3"),current.variants.map{it.version}.toSet())
             }
         } catch(error:Exception) {
             generateSequence(error as Throwable){it.cause}.take(8).forEach {cause->
@@ -87,10 +90,14 @@ class PositiveRealFilesystemDiagnosticTest @Autowired constructor(
             }
             throw error
         }
+        em.flush();em.clear()
         val result=games.findById(id).orElseThrow()
         assertEquals("Enriched fixture game 33000",result.title)
         assertEquals(setOf("1.0","1.3"),result.variants.map{it.version}.toSet())
         assertEquals("1.0",result.variants.single{it.isDefault}.version)
+        assertEquals(pinnedDefaultId,result.variants.single{it.isDefault}.id)
+        val afterPaths=Files.walk(root).use{paths->paths.filter{Files.isRegularFile(it)}.toList().toSet()}
+        assertEquals(sourceBytes.keys,afterPaths)
         sourceBytes.forEach{(path,bytes)->assertEquals(bytes,Files.readAllBytes(path).toList())}
         verify {images wasNot Called;mirror wasNot Called}
     }

@@ -17,6 +17,12 @@ export function validateArguments(argv){
   return {appIp:argv[0],coverId:Number(argv[1]),coverSha256:argv[2]};
 }
 export const renderingConfiguration=Object.freeze({width:1280,height:800,locale:'en-US',timezone:'UTC'});
+export function launchEnvironment(profile,environment=process.env){
+  if(!/^\/tmp\/gameyfin-browser-[A-Za-z0-9]{6}$/.test(profile))throw new Error('Owned launch profile boundary');
+  // Keep HOME/Puppeteer executable resolution unchanged. Chrome startup writes
+  // XDG config/cache to this existing private tmpfs profile, not readonly HOME.
+  return {...environment,XDG_CONFIG_HOME:profile+'/xdg-config',XDG_CACHE_HOME:profile+'/xdg-cache'};
+}
 export async function browserResources(read=fs.readFile){
   const cpu=await read('/sys/fs/cgroup/cpu.stat','utf8');
   const usage=/^usage_usec (\d+)$/m.exec(cpu);
@@ -47,9 +53,10 @@ export async function main(argv){
     const origin='http://127.0.0.1:55201';proxy=new LoopbackProxy(origin);await proxy.listen(55202);
     currentPhase='profile';
     profile=await fs.mkdtemp('/tmp/gameyfin-browser-');
+    await fs.mkdir(profile+'/xdg-config',{mode:0o700});await fs.mkdir(profile+'/xdg-cache',{mode:0o700});
     await fs.mkdir(profile+'/Default');await fs.writeFile(profile+'/Default/Preferences',JSON.stringify({webrtc:{ip_handling_policy:'disable_non_proxied_udp'}}),{mode:0o600});
     currentPhase='chrome-launch';
-    browser=await puppeteer.launch({headless:true,userDataDir:profile,dumpio:false,timeout:10000,defaultViewport:{width:1280,height:800},args:[...chromeProxyFlags(55202),'--lang=en-US','--disable-background-networking','--disable-component-update','--disable-sync','--no-first-run']});
+    browser=await puppeteer.launch({headless:true,userDataDir:profile,env:launchEnvironment(profile),dumpio:false,timeout:10000,defaultViewport:{width:1280,height:800},args:[...chromeProxyFlags(55202),'--lang=en-US','--disable-background-networking','--disable-component-update','--disable-sync','--no-first-run']});
     currentPhase='sandbox';
     const page=await browser.newPage();await page.emulateTimezone('UTC');await page.setExtraHTTPHeaders({'Accept-Language':'en-US'});await page.goto('chrome://sandbox',{timeout:10000});
     const sandbox=await page.$eval('#evaluation',e=>e.textContent.trim()==='You are adequately sandboxed.');

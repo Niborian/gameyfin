@@ -50,3 +50,10 @@ The exact rebuilt artifact still needs the same bounded sequential server scan,
 metrics responsiveness, CPU/memory/recovery and correctness comparison. Shared
 server CPU pressure remains a caveat. Issues #19, #27 and #61 are not satisfied by
 this local experiment, and no release/readiness claim follows from it.
+
+Successful provider refresh remains outside the measured improvement: after a
+valid `fetchById` result, `GameService.matchManually` reads `library.platforms`,
+initializing the library proxy and its unchanged eager game graph. The offline
+synthetic scan returns before that access. A real-H2, in-process positive-provider
+fixture must quantify this remaining path before claiming representative metadata
+refresh scalability. Individual game-read improvements do not establish that claim.

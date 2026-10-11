@@ -1,5 +1,11 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {validateArguments,renderingConfiguration,browserResources,failureReceipt} from './browser_entry.mjs';
+import {validateArguments,renderingConfiguration,browserResources,failureReceipt,launchEnvironment} from './browser_entry.mjs';
+test('readonly-root launch writes XDG only into owned tmpfs profile without changing HOME or executable cache',()=>{
+  const original={HOME:'/home/pptruser',PUPPETEER_CACHE_DIR:'/home/pptruser/.cache/puppeteer'};
+  assert.deepEqual(launchEnvironment('/tmp/gameyfin-browser-aB1234',original),{...original,XDG_CONFIG_HOME:'/tmp/gameyfin-browser-aB1234/xdg-config',XDG_CACHE_HOME:'/tmp/gameyfin-browser-aB1234/xdg-cache'});
+  assert.deepEqual(original,{HOME:'/home/pptruser',PUPPETEER_CACHE_DIR:'/home/pptruser/.cache/puppeteer'});
+  for(const path of ['/home/pptruser','/tmp/other-abcdef','/tmp/gameyfin-browser-abcdef/../outside'])assert.throws(()=>launchEnvironment(path,original));
+});
 test('failure evidence is an enum, never raw exception/credential text',()=>{
   assert.deepEqual(failureReceipt('sandbox'),{browserFailed:true,phase:'sandbox'});
   assert.throws(()=>failureReceipt('password or URL from exception'));

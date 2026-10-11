@@ -86,6 +86,16 @@ Exact immutable ownership, mount and namespace cleanup authority remains strict;
 a numeric performance-contract mismatch does not prevent removing a proven
 owned isolated container. Unknown scope is retained and reported as failure.
 
+Run [38185335275](https://github.com/Niborian/gameyfin/actions/runs/38185335275)
+completed application fixture initialization, then failed at Chrome launch;
+final cleanup succeeded. Its receipt confirms canonical `CAP_SYS_ADMIN` and the
+unchanged browser limits. No scans or performance results were obtained. Chrome's
+XDG configuration/cache directories now reside in the same private `/tmp`
+profile as its user data, following [official read-only-container guidance](https://pptr.dev/next/troubleshooting#running-in-read-only-containers).
+HOME and Puppeteer's installed executable/cache resolution remain unchanged.
+This addresses a source-backed startup requirement, not a proven unique cause
+of that run's generic launch failure; actual sandbox/UI acceptance is pending.
+
 Primary references: [official Puppeteer Docker sandbox](https://pptr.dev/guides/docker),
 [Chromium proxy semantics](https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md),
 [Spring Boot build-info properties](https://docs.spring.io/spring-boot/gradle-plugin/integrating-with-actuator.html).

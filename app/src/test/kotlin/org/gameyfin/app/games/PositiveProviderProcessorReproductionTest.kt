@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest
 import org.springframework.context.annotation.Import
+import org.springframework.test.annotation.DirtiesContext
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.annotation.*
 import org.springframework.transaction.support.TransactionTemplate
@@ -24,10 +25,12 @@ import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.*
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /** Local diagnostic only: real H2/GameService/processor/Company services, no external I/O. */
 @DataJpaTest(properties=["spring.jpa.show-sql=false"])
 @Import(CompanyService::class,CompanyInsertService::class)
+@DirtiesContext(classMode=DirtiesContext.ClassMode.AFTER_CLASS)
 class PositiveProviderProcessorReproductionTest @Autowired constructor(
     val em:EntityManager,val games:GameRepository,val libraries:LibraryRepository,
     val transactions:PlatformTransactionManager,val companies:CompanyService
@@ -85,7 +88,10 @@ class PositiveProviderProcessorReproductionTest @Autowired constructor(
         if(concurrent) {
             val pool=Executors.newFixedThreadPool(4)
             try {ids.map {id->pool.submit(Callable {refresh(id)})}.forEach{it.get(30,TimeUnit.SECONDS)}}
-            finally {pool.shutdownNow()}
+            finally {
+                pool.shutdownNow()
+                assertTrue(pool.awaitTermination(10,TimeUnit.SECONDS), "All worker bodies must finish before test context cleanup")
+            }
         } else ids.forEach(::refresh)
         // Repeated successful matching must be harmless even when no fields change.
         ids.forEach(::refresh)

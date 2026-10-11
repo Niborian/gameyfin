@@ -21,8 +21,12 @@ concurrent updates. Only image/filesystem/discovery/variant synchronization seam
 are strict test substitutes; no network, external images or production paths.
 
 Local targeted Gradle run passed `PositiveProviderProcessorReproductionTest`,
-`CompanyServiceConcurrencyTest` and `GameServiceTest` with JDK25, cached/offline
+`PositiveRefreshOwnedCompaniesTest`, `CompanyServiceConcurrencyTest` and `GameServiceTest` with JDK25, cached/offline
 dependencies, two build workers and frontend generation excluded.
+The updated run contains70 passing tests. The real-H2 test context is discarded
+after its class, and concurrent workers must finish before context teardown.
+Changed user-owned developer/publisher fields retain their values without calling
+company canonicalization.
 
 This is not proof that the earlier server failure had only this cause, nor a
 memory/CPU improvement or production/cutover acceptance claim. Keep #143 open

@@ -13,7 +13,6 @@ import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.app.libraries.entities.LibraryStorageMode
 import org.gameyfin.app.libraries.enums.ScanType
 import org.gameyfin.app.libraries.extensions.toDto
-import org.gameyfin.app.libraries.extensions.toDtos
 import org.gameyfin.app.users.UserService
 import org.gameyfin.app.users.entities.User
 import org.gameyfin.pluginapi.gamemetadata.Platform
@@ -58,32 +57,35 @@ class LibraryServiceTest {
         val library1 = createTestLibrary(1L, "Library 1")
         val library2 = createTestLibrary(2L, "Library 2")
         val libraries = listOf(library1, library2)
-        val libraryDtos = listOf(
-            createAdminDto(1L, "Library 1"),
-            createAdminDto(2L, "Library 2")
-        )
-
-        every { libraryRepository.findAll() } returns libraries
-        every { libraries.toDtos() } returns libraryDtos
+        every { libraryRepository.findBrowseLibraries() } returns libraries.map {
+            LibraryBrowseRow(it.id!!,it.name,it.createdAt,it.storageMode,it.metadata.displayOnHomepage,it.metadata.displayOrder)
+        }
+        every { libraryRepository.findBrowseGames() } returns emptyList()
+        every { libraryRepository.findBrowseDirectories() } returns emptyList()
+        every { libraryRepository.findBrowsePlatforms() } returns emptyList()
+        every { libraryRepository.findBrowseIgnoredPaths() } returns emptyList()
+        every { libraryRepository.findBrowseIgnoredUsers() } returns emptyList()
+        every { libraryRepository.findBrowseIgnoredPlugins() } returns emptyList()
+        mockkStatic("org.gameyfin.app.core.security.SecurityUtilsKt")
+        every { org.gameyfin.app.core.security.isCurrentUserAdmin() } returns true
 
         val result = libraryService.getAll()
 
         assertEquals(2, result.size)
-        assertEquals(libraryDtos, result)
-        verify(exactly = 1) { libraryRepository.findAll() }
+        assertEquals(listOf("Library 1","Library 2"), result.map { it.name })
+        verify(exactly = 0) { libraryRepository.findAll() }
     }
 
     @Test
     fun `getAll should return empty list when no libraries exist`() {
         val emptyList = emptyList<Library>()
 
-        every { libraryRepository.findAll() } returns emptyList
-        every { emptyList.toDtos() } returns emptyList()
+        every { libraryRepository.findBrowseLibraries() } returns emptyList()
 
         val result = libraryService.getAll()
 
         assertTrue(result.isEmpty())
-        verify(exactly = 1) { libraryRepository.findAll() }
+        verify(exactly = 1) { libraryRepository.findBrowseLibraries() }
     }
 
     @Test

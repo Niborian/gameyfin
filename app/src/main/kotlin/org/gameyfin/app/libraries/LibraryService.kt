@@ -3,12 +3,15 @@ package org.gameyfin.app.libraries
 import com.vaadin.hilla.exception.EndpointException
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.gameyfin.app.core.security.getCurrentAuth
+import org.gameyfin.app.core.security.isCurrentUserAdmin
+import org.gameyfin.app.libraries.entities.IgnoredPathGroupedVariantSource
+import org.gameyfin.app.libraries.entities.IgnoredPathPluginSource
+import org.gameyfin.app.libraries.entities.IgnoredPathUserSource
 import org.gameyfin.app.libraries.dto.*
 import org.gameyfin.app.libraries.entities.DirectoryMapping
 import org.gameyfin.app.libraries.entities.IgnoredPathSourceType
 import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.app.libraries.enums.ScanType
-import org.gameyfin.app.libraries.extensions.toDtos
 import org.gameyfin.app.libraries.extensions.toEntity
 import org.gameyfin.app.users.UserService
 import org.springframework.data.repository.findByIdOrNull
@@ -70,11 +73,43 @@ class LibraryService(
 
 
     /**
-     * Retrieves all libraries from the repository.
+     * Retrieves the browse DTOs without loading each library's eager game graph.
+     * Admin-only paths and source details are not queried for ordinary users.
      */
+    @Transactional(readOnly = true)
     fun getAll(): List<LibraryDto> {
-        val entities = libraryRepository.findAll().toList()
-        return entities.toDtos()
+        val libraries = libraryRepository.findBrowseLibraries()
+        if (libraries.isEmpty()) return emptyList()
+        val games = libraryRepository.findBrowseGames().groupBy { it.libraryId }
+        if (!isCurrentUserAdmin()) return libraries.map { library ->
+            LibraryUserDto(library.id, library.name, library.createdAt!!,
+                games[library.id].orEmpty().map { it.gameId },
+                LibraryMetadataDto(library.displayOnHomepage, library.displayOrder))
+        }
+
+        val directories = libraryRepository.findBrowseDirectories().groupBy { it.libraryId }
+        val platforms = libraryRepository.findBrowsePlatforms().groupBy { it.libraryId }
+        val ignored = libraryRepository.findBrowseIgnoredPaths().groupBy { it.libraryId }
+        val users = libraryRepository.findBrowseIgnoredUsers().associate { it.sourceId to it.userId }
+        val plugins = libraryRepository.findBrowseIgnoredPlugins().groupBy { it.sourceId }
+        return libraries.map { library ->
+            val libraryGames = games[library.id].orEmpty()
+            LibraryAdminDto(library.id, library.name, library.createdAt!!,
+                directories[library.id].orEmpty().map { DirectoryMappingDto(it.internalPath, it.externalPath) },
+                platforms[library.id].orEmpty().map { it.platform }, library.storageMode,
+                libraryGames.map { it.gameId },
+                LibraryStatsDto(libraryGames.size, libraryGames.sumOf { it.downloadCount }),
+                ignored[library.id].orEmpty().map { path ->
+                    val (type, source) = when (path.sourceType) {
+                        IgnoredPathUserSource::class.java -> IgnoredPathSourceTypeDto.USER to users.getValue(path.sourceId).toString()
+                        IgnoredPathPluginSource::class.java -> IgnoredPathSourceTypeDto.PLUGIN to
+                            plugins[path.sourceId].orEmpty().joinToString("\", \"", "[\"", "\"]") { it.pluginId }
+                        IgnoredPathGroupedVariantSource::class.java -> IgnoredPathSourceTypeDto.GROUPED_VARIANT to ""
+                        else -> error("Unknown IgnoredPathSource type")
+                    }
+                    IgnoredPathDto(path.id, path.path, type, source)
+                }, LibraryMetadataDto(library.displayOnHomepage, library.displayOrder))
+        }
     }
 
     /**

@@ -16,6 +16,7 @@ import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
+import org.springframework.test.annotation.DirtiesContext
 import java.lang.management.ManagementFactory
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
@@ -28,6 +29,7 @@ import kotlin.test.assertTrue
     "spring.jpa.show-sql=false",
     "spring.jpa.properties.hibernate.session_factory.statement_inspector=org.gameyfin.app.games.GameLoadStatementInspector"
 ])
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class GameSeedLoadInvestigationTest @Autowired constructor(
     private val entityManager: EntityManager,
     private val repository: GameRepository,
@@ -126,6 +128,20 @@ class GameSeedLoadInvestigationTest @Autowired constructor(
         } finally {
             executor.shutdownNow()
             executor.awaitTermination(10, TimeUnit.SECONDS)
+        }
+        TransactionTemplate(transactions).execute {
+            val library = entityManager.find(Library::class.java, libraryId)
+            val removed = library.games.single { it.id == ids.first() }
+            val variantId = removed.variants.single().id!!
+            val contentIds = removed.variants.single().contents.map { it.id!! }
+            assertTrue(library.games.removeIf { it.id == ids.first() })
+            entityManager.flush()
+            entityManager.clear()
+            assertFalse(repository.existsById(ids.first()))
+            assertEquals(null, entityManager.find(GameVariant::class.java, variantId))
+            contentIds.forEach { assertEquals(null, entityManager.find(VariantContent::class.java, it)) }
+            assertTrue(repository.existsById(ids[1]))
+            assertEquals(103, entityManager.find(Library::class.java, libraryId).games.size)
         }
     }
 }

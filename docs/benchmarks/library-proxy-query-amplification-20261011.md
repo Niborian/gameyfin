@@ -40,7 +40,11 @@ ratios as a production speedup prediction. JPQL was investigated but not adopted
 Regression coverage requires detached game admin/user DTO conversion without
 initializing the library proxy, detached explicitly loaded library DTOs retaining
 all game IDs, pinned variant/content/path integrity, managed proxy identity and
-updates, and a bounded SELECT count for the 132-game fixture. Timing is not asserted.
+updates, scoped game orphan removal with variant/content children and a retained
+neighbor, and a bounded SELECT count for the 132-game fixture. Timing is not asserted.
+The committed concurrency fixture dirties its test context after the class so it
+cannot pollute a cached H2 context used by later tests. Lifecycle callbacks execute
+during persistence/update/removal, but event delivery is not asserted by this slice.
 
 The exact rebuilt artifact still needs the same bounded sequential server scan,
 metrics responsiveness, CPU/memory/recovery and correctness comparison. Shared

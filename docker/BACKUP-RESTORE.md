@@ -1,6 +1,14 @@
 # H2 backup and restore rehearsal
 
-This is a checklist for [production-operations issue #26](https://github.com/Niborian/gameyfin/issues/26), **not evidence that a backup has been tested**. Do not change the live image or run a full-library scan until an operator has recorded a successful isolated restore.
+This is a reusable checklist, not acceptance evidence by itself. The approved
+October 9, 2026 consistent cold capture and same-image isolated restore completed
+[production-operations issue #26](https://github.com/Niborian/gameyfin/issues/26);
+the dated results and limitations are recorded in [the cutover evidence status](../docs/CUTOVER-EVIDENCE.md#completed-backup-gate-and-later-evidence).
+That completed rehearsal does not establish that its backup is suitable for a later
+cutover or that a different candidate can safely roll back. Before a live image change
+or full-library scan, confirm a suitable current backup, successful isolated restore,
+and the applicable candidate-specific rollback evidence. This checklist authorizes
+no production change.
 
 ## Before the maintenance window
 
@@ -28,4 +36,7 @@ This is a checklist for [production-operations issue #26](https://github.com/Nib
 
 Before a runtime change, retain both the verified pre-change backup and the exact prior image digest. If the new image fails, stop it before restoring the **verified** database/data/plugin-data set and prior image in a controlled maintenance window. Do not run the older image against a database already migrated by the newer image. Recheck counts, login/proxy behavior, scans, and source-file hashes before reopening access.
 
-Issue #26 remains open until an actual dated capture and isolated restore meet its acceptance criteria. This document alone does not authorize or perform a server change.
+Issue #26 was completed by the dated October 9 capture and isolated restore, not by
+this checklist. For each future runtime change, retain a suitable verified backup
+and prove rollback for that candidate; the historical completion does not waive
+those gates. This document alone does not authorize or perform a server change.

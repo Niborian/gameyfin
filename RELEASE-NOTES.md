@@ -11,4 +11,14 @@ Changes since the last published `2.4.2` build:
 - Scan health metrics and a concurrent company-metadata collision fix ([#52](https://github.com/Niborian/gameyfin/pull/52), [#64](https://github.com/Niborian/gameyfin/pull/64)).
 - GitHub-hosted provenance without registry attestation tags ([#58](https://github.com/Niborian/gameyfin/pull/58)); the separate candidate/promotion gate is tracked in [#67](https://github.com/Niborian/gameyfin/issues/67).
 
-Still required before claiming this is better than the running instance or moving `latest`: a consistent H2 backup restored in isolation ([#26](https://github.com/Niborian/gameyfin/issues/26)), a representative memory/scan comparison ([#27](https://github.com/Niborian/gameyfin/issues/27)), direct-port and proxy/authentication verification ([#29](https://github.com/Niborian/gameyfin/issues/29)), and the full side-by-side cutover evidence in [#61](https://github.com/Niborian/gameyfin/issues/61). No TrueNAS deployment is part of this candidate.
+The approved October 9, 2026 consistent H2 cold capture and same-image isolated
+restore completed [#26](https://github.com/Niborian/gameyfin/issues/26). This is a
+dated backup gate, not proof that the candidate is better or ready for cutover;
+see [the evidence and its limitations](docs/CUTOVER-EVIDENCE.md#completed-backup-gate-and-later-evidence).
+
+Still required before claiming this is better than the running instance or moving
+`latest`: confirm a suitable current verified backup and candidate-specific rollback,
+complete a representative memory/scan comparison ([#27](https://github.com/Niborian/gameyfin/issues/27)),
+verify direct-port and proxy/authentication behavior ([#29](https://github.com/Niborian/gameyfin/issues/29)),
+and satisfy the full side-by-side cutover gates in [#61](https://github.com/Niborian/gameyfin/issues/61).
+No TrueNAS deployment is part of this candidate.

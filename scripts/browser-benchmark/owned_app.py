@@ -10,6 +10,21 @@ from cap_policy import caps_match
 
 JVM='-Xms32m -Xmx320m -XX:+UseG1GC -XX:G1HeapRegionSize=1m -XX:+UseStringDeduplication -XX:+UseCompactObjectHeaders -XX:G1PeriodicGCInterval=0 -XX:MinHeapFreeRatio=40 -XX:MaxHeapFreeRatio=70 -XX:MaxMetaspaceSize=256m -XX:MaxDirectMemorySize=64m -Xss512k -XX:+ExitOnOutOfMemoryError'
 
+def lifecycle_failure(phase,error,elapsed):
+    phases={'fixture-preparation','fixture-ownership','application-start','setup-readiness',
+        'admin-plugin-bootstrap','stop-before-seed','stopped-h2-seed','seeded-restart',
+        'login-readiness','seeded-login','seeded-plugin-gate','cover-ingestion','cover-validation'}
+    classes={'RuntimeError','ValueError','TimeoutError','CalledProcessError','TimeoutExpired','OSError','URLError'}
+    routes={'setup','login','register-admin','enable-plugin','plugin-gate','cover-ingestion','game-list','other'}
+    status=getattr(error,'fixture_http_status',None)
+    route=getattr(error,'fixture_route_category','other')
+    return {'phase':phase if phase in phases else 'unknown',
+        'failureClass':type(error).__name__ if type(error).__name__ in classes else 'other',
+        'elapsedSeconds':max(0,round(elapsed,3)),
+        'httpStatus':status if type(status) is int and 100<=status<=599 else None,
+        'routeCategory':route if route in routes else 'other',
+        'scope':'Fixed lifecycle categories only; no error messages, request bodies or credentials'}
+
 def hosted_only():
     if os.name!='posix' or os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('RUNNER_ENVIRONMENT')!='github-hosted':
         raise ValueError('Disposable GitHub-hosted Linux only; not local/server Docker')
@@ -165,6 +180,7 @@ class OwnedApp:
         if not re.fullmatch('[a-f0-9]{64}',expected_jar_sha):raise ValueError('Built exact application JAR SHA required')
         self.image=image;self.owner=secrets.token_hex(8);self.network='gameyfin-browser-net-'+self.owner
         self.diagnostic_output=diagnostic_output;self.diagnostic_captured=False
+        self.lifecycle_phase='fixture-preparation';self.lifecycle_started=time.monotonic()
         parent=Path(os.environ['RUNNER_TEMP']).resolve()
         if any(p.is_symlink() for p in [parent,*parent.parents]):raise ValueError('Private runner temp root')
         from ownership_index import index_path,planned,created
@@ -193,6 +209,7 @@ class OwnedApp:
             command('network','create','--internal','--label','gameyfin.fixture.owner=benchmark-27-'+self.owner,self.network)
             self.watchdog=subprocess.Popen([sys.executable,str(Path(__file__)),'--watchdog','--root',str(self.root),'--owner',self.owner],
                 stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+            self.lifecycle_phase='fixture-ownership'
             self.helper('chown',['-R','1337:1337',*('/owned/'+x for x in ('db','data','logs','plugins','plugindata')),
                 *(['/owned/waiting'] if waiting else [])],caps=['CHOWN'],
                 mounts=[(self.root/x,'/owned/'+x,False) for x in ('db','data','logs','plugins','plugindata',*(['waiting'] if waiting else []))])
@@ -214,20 +231,52 @@ class OwnedApp:
                 '--network',self.network,'--cgroupns','private','--user','1337:1337','--cap-drop','ALL','--security-opt','no-new-privileges',
                 '--cpus','.5','--memory','1024m','--memory-swap','1024m','--pids-limit','256','--restart','no',
                 '--env-file',env,*mounts,'--entrypoint','java',image,*app_args).strip()
+            self.lifecycle_phase='application-start'
             self.record(self.id,image);command('start',self.id)
             digest=command('exec','--user','1337:1337',self.id,'sha256sum','/opt/gameyfin/application.jar').split()
             if digest!=[expected_jar_sha,'/opt/gameyfin/application.jar']:raise ValueError('Actual running app JAR differs from source receipt')
             row=self.inspect();self.ip=row['NetworkSettings']['Networks'][self.network]['IPAddress'];self.client=FixtureClient(self.ip)
-            self.ready('/setup');self.password=self.client.bootstrap()
+            self.lifecycle_phase='setup-readiness';self.ready('/setup')
+            self.lifecycle_phase='admin-plugin-bootstrap';self.password=self.client.bootstrap()
+            self.lifecycle_phase='stop-before-seed'
             command('stop','--time','20',self.id)
             if self.inspect()['State']['Running']:raise ValueError('No live H2 import')
+            self.lifecycle_phase='stopped-h2-seed'
             self.helper('java',['-Xmx128m','-cp','/opt/gameyfin/h2.jar','org.h2.tools.RunScript',
                 '-url','jdbc:h2:/db/gameyfin_db;IFEXISTS=TRUE','-user','gfadmin','-password','gameyfin','-script','/seed/seed.sql'],user='1337:1337',
                 mounts=[(self.root/'db','/db',False),(self.root/'fixture','/seed',True)])
-            command('start',self.id);self.ready('/login');self.client.login(self.password);self.client.plugin_gate()
-            self.cover_path=self.client.ingest_cover();self.client.image_gate(self.cover_path)
-        except Exception:
-            self.close();raise
+            self.lifecycle_phase='seeded-restart';command('start',self.id)
+            self.lifecycle_phase='login-readiness';self.ready('/login')
+            self.lifecycle_phase='seeded-login';self.client.login(self.password)
+            self.lifecycle_phase='seeded-plugin-gate';self.client.plugin_gate()
+            self.lifecycle_phase='cover-ingestion';self.cover_path=self.client.ingest_cover()
+            self.lifecycle_phase='cover-validation';self.client.image_gate(self.cover_path)
+        except Exception as error:
+            self.cleanup_initialization_failure(error)
+            raise
+    def cleanup_initialization_failure(self,error):
+        # Diagnostics must never prevent cleanup or replace the original cause.
+        try:
+            try:self.capture_lifecycle_failure(error)
+            except Exception:pass
+        finally:self.close()
+    def capture_lifecycle_failure(self,error):
+        if not self.diagnostic_output:return
+        path=Path(self.diagnostic_output)
+        receipt=lifecycle_failure(self.lifecycle_phase,error,time.monotonic()-self.lifecycle_started)
+        output=path.with_name(path.stem+'-lifecycle.json')
+        if output.suffix!='.json' or output.is_symlink() or output.parent.is_symlink():
+            raise ValueError('Regular lifecycle JSON destination')
+        data=json.dumps(receipt,sort_keys=True)
+        if len(data.encode())>2048:raise ValueError('Lifecycle diagnostic byte bound')
+        output.parent.mkdir(parents=True,exist_ok=True)
+        pending=output.with_suffix('.lifecycle-pending')
+        fd=os.open(pending,os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,'O_NOFOLLOW',0),0o600)
+        try:
+            with os.fdopen(fd,'w') as stream:stream.write(data)
+            pending.replace(output)
+        finally:
+            if pending.exists():pending.unlink()
     def write_ledger(self):
         pending=self.root/'ledger.pending';pending.write_text(json.dumps(self.ledger));pending.replace(self.root/'ledger.json')
     def record(self,identity,image):

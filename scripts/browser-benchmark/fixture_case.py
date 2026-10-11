@@ -44,7 +44,11 @@ class FixtureClient:
         request=urllib.request.Request((self.metrics_base if management else self.base)+path,body,headers or {})
         try:response=self.opener.open(request,timeout=10)
         except urllib.error.HTTPError as error:
-            if error.code!=304:raise RuntimeError('Fixture HTTP request failed') from None
+            if error.code!=304:
+                failure=RuntimeError('Fixture HTTP request failed')
+                failure.fixture_http_status=error.code
+                failure.fixture_route_category=route_category(path)
+                raise failure from None
             response=error
         with response:
             data=response.read(2*1024*1024+1)
@@ -121,6 +125,16 @@ class FixtureClient:
                 if actual!=expected or int(estimate)!=sum(e.file_size for e in entries):raise ValueError('Exact selection bytes/estimate changed')
             results.append({'optionalSelected':optional,'selectedBytesMatch':True,'estimateBytes':int(estimate)})
         return results
+
+def route_category(path):
+    """Fixed route categories only; never persist arbitrary paths or bodies."""
+    known={'/setup':'setup','/login':'login',
+        '/connect/SetupEndpoint/registerSuperAdmin':'register-admin',
+        '/connect/PluginEndpoint/enablePlugin':'enable-plugin',
+        '/connect/PluginEndpoint/getAll':'plugin-gate',
+        '/connect/GameEndpoint/updateGame':'cover-ingestion',
+        '/connect/GameEndpoint/getAll':'game-list'}
+    return known.get(path,'other')
 
 def verify_sources(output,manifest):
     sources=Path(output)/'sources'

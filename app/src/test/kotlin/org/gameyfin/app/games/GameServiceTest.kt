@@ -1,6 +1,9 @@
 package org.gameyfin.app.games
 
 import io.mockk.*
+import jakarta.persistence.EntityManager
+import org.hibernate.Session
+import org.springframework.test.util.ReflectionTestUtils
 import org.gameyfin.app.config.ConfigProperties
 import org.gameyfin.app.config.ConfigService
 import org.gameyfin.app.core.filesystem.FilesystemService
@@ -52,6 +55,7 @@ class GameServiceTest {
     private lateinit var imageService: ImageService
     private lateinit var filesystemService: FilesystemService
     private lateinit var gameService: GameService
+    private lateinit var browseSession: Session
 
     private lateinit var library: Library
     private lateinit var mockUser: User
@@ -80,6 +84,12 @@ class GameServiceTest {
             filesystemService,
             mockk()
         )
+        val entityManager=mockk<EntityManager>()
+        browseSession=mockk()
+        every { entityManager.unwrap(Session::class.java) } returns browseSession
+        every { browseSession.fetchBatchSize } returns 17
+        every { browseSession.setFetchBatchSize(any()) } just Runs
+        ReflectionTestUtils.setField(gameService,"entityManager",entityManager)
 
         library = mockk(relaxed = true) {
             every { id } returns 1L
@@ -119,6 +129,7 @@ class GameServiceTest {
 
         assertEquals(gameDtos, result)
         verify(exactly = 1) { gameRepository.findAll() }
+        verifyOrder { browseSession.setFetchBatchSize(64); gameRepository.findAll(); browseSession.setFetchBatchSize(17) }
     }
 
     @Test
@@ -133,6 +144,30 @@ class GameServiceTest {
 
         assertEquals(emptyList(), result)
         verify(exactly = 1) { gameRepository.findAll() }
+        verifyOrder { browseSession.setFetchBatchSize(64); gameRepository.findAll(); browseSession.setFetchBatchSize(17) }
+    }
+
+    @Test fun `getAll restores session policy when repository fails`() {
+        every { gameRepository.findAll() } throws IllegalStateException("synthetic repository failure")
+        assertThrows(IllegalStateException::class.java){gameService.getAll()}
+        verifyOrder { browseSession.setFetchBatchSize(64); gameRepository.findAll(); browseSession.setFetchBatchSize(17) }
+        verify(exactly=0){browseSession.setSubselectFetchingEnabled(any())}
+    }
+
+    @Test fun `getAll restores session policy when DTO conversion fails`() {
+        val games=listOf(createTestGame(1L))
+        every { gameRepository.findAll() } returns games
+        every { games.toDtos() } throws IllegalArgumentException("synthetic DTO failure")
+        assertThrows(IllegalArgumentException::class.java){gameService.getAll()}
+        verifyOrder { browseSession.setFetchBatchSize(64); games.toDtos(); browseSession.setFetchBatchSize(17) }
+        verify(exactly=0){browseSession.setSubselectFetchingEnabled(any())}
+    }
+
+    @Test fun `getAll restores session policy even when temporary setting fails`() {
+        every { browseSession.setFetchBatchSize(64) } throws IllegalStateException("synthetic setting failure")
+        assertThrows(IllegalStateException::class.java){gameService.getAll()}
+        verifyOrder { browseSession.setFetchBatchSize(64); browseSession.setFetchBatchSize(17) }
+        verify(exactly=0){gameRepository.findAll()}
     }
 
     @Test

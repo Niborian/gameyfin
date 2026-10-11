@@ -26,6 +26,9 @@ import org.gameyfin.app.libraries.entities.Library
 import org.gameyfin.app.libraries.LibraryRepository
 import org.hibernate.Hibernate
 import jakarta.persistence.EntityNotFoundException
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
+import org.hibernate.Session
 import org.gameyfin.app.media.Image
 import org.gameyfin.app.media.ImageService
 import org.gameyfin.app.media.ImageType
@@ -60,6 +63,8 @@ class GameService(
     private val filesystemService: FilesystemService,
     private val libraryRepository: LibraryRepository
 ) {
+    @PersistenceContext
+    private lateinit var entityManager: EntityManager
     companion object {
         private val log = KotlinLogging.logger {}
 
@@ -106,9 +111,19 @@ class GameService(
         get() = pluginManager.getExtensions(GameMetadataProvider::class.java)
 
 
+    @Transactional(readOnly = true)
     fun getAll(): List<GameDto> {
-        val entities = gameRepository.findAll().toList()
-        return entities.toDtos()
+        // Bound collection SELECTs only for this browse request. Do not change
+        // global fetch mappings, scan sessions or the caller's session policy.
+        val session = entityManager.unwrap(Session::class.java)
+        val previousBatchSize = session.fetchBatchSize
+        try {
+            session.fetchBatchSize = 64
+            val entities = gameRepository.findAll().toList()
+            return entities.toDtos()
+        } finally {
+            session.fetchBatchSize = previousBatchSize
+        }
     }
 
     private fun create(game: Game): Game {

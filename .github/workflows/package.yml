@@ -64,6 +64,7 @@ jobs:
         run: |
           python3 -B scripts/test-proxy-download-smoke.py
           python3 -B scripts/test-proxy-fixture-hook.py
+          python3 -B scripts/test-junit-report-policy.py
           pwsh -NoProfile -File scripts/test-exposure-fixture-bindings.ps1
 
       - name: Require Linux hardlink and variant scan fixture evidence
@@ -88,7 +89,9 @@ jobs:
         uses: mikepenz/action-junit-report@v6
         with:
           report_paths: "**/build/test-results/test/TEST-*.xml"
-          check_run: false
+          # Fork PR tokens are read-only: annotations and the job summary need no check creation.
+          annotate_only: true
+          job_summary: true
 
   package:
     name: Publish AMD64 candidate

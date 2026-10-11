@@ -1,0 +1,70 @@
+import unittest,tempfile,json,subprocess
+from pathlib import Path
+from unittest.mock import Mock,patch
+import hosted_browser
+from hosted_browser import creation_args,validate_sample,cleanup_known_browser,record_creation_intent,HostedBrowser
+
+class CreationTests(unittest.TestCase):
+    def test_sandbox_and_resource_boundary(self):
+        args=creation_args('a'*16,'sha256:'+'b'*64,'gameyfin-browser-net-'+'a'*16,'172.22.0.2',1,'c'*64)
+        for value in ['--read-only','--init','--interactive','no-new-privileges','10042:10042','SYS_ADMIN','768m','128']:
+            self.assertIn(value,args)
+        for value in ['--privileged','--publish','--network=host','--no-sandbox','/var/run/docker.sock']:
+            self.assertNotIn(value,args)
+
+    def test_external_or_mutable_targets_rejected(self):
+        values=['a'*16,'sha256:'+'b'*64,'gameyfin-browser-net-'+'a'*16,'172.22.0.2',1,'c'*64]
+        for index,invalid in [(0,'other'),(1,'latest'),(2,'bridge'),(3,'10.0.0.200'),(3,'172.22.999.2'),(4,0),(5,'incorrect')]:
+            case=values.copy();case[index]=invalid
+            with self.assertRaises(ValueError):creation_args(*case)
+
+    def test_strict_sample_schema(self):
+        row={'domContentLoadedMs':1,'loadMs':2,'routeContentReadyMs':3,'coverDecodedMs':4,'coverNaturalWidth':320,'coverNaturalHeight':480,'coverResponseStatus':200,'coverSha256Matches':True,'fromDiskCache':False,'fromServiceWorker':False}
+        snapshot={'cpuUsageUsec':1,'memoryCurrentBytes':1,'memoryPeakBytes':1}
+        receipt={'originalUiContentReady':True,'coverDecoded':True,'coverSha256Matches':True,'navigations':[row]*3,'browserResources':{'before':snapshot,'after':snapshot}}
+        self.assertEqual(validate_sample(receipt),receipt)
+        for key,value in [('url','secret'),('loadMs',float('nan')),('loadMs',-1),('loadMs',True),('coverSha256Matches',1)]:
+            bad=row.copy();bad[key]=value
+            with self.assertRaises(ValueError):validate_sample({**receipt,'navigations':[bad]*3})
+
+    def test_cleanup_failure_keeps_watchdog_but_reaps_owned_attach(self):
+        value=HostedBrowser.__new__(HostedBrowser)
+        value.id='a'*64;value.owner='b'*16;value.image='sha256:'+'c'*64
+        value.process=Mock();value.watchdog=Mock()
+        with patch.object(hosted_browser,'cleanup',side_effect=ValueError('scope')):
+            with self.assertRaises(ValueError):value.close()
+        value.process.communicate.assert_called_once_with(timeout=2)
+        value.watchdog.terminate.assert_not_called()
+
+    def test_hung_attach_does_not_prevent_watchdog_reap_after_removal(self):
+        value=HostedBrowser.__new__(HostedBrowser)
+        value.id='a'*64;value.owner='b'*16;value.image='sha256:'+'c'*64
+        value.process=Mock();value.watchdog=Mock()
+        value.process.communicate.side_effect=[subprocess.TimeoutExpired('attach',2),subprocess.TimeoutExpired('attach',2),(b'',b'')]
+        with patch.object(hosted_browser,'cleanup'):value.close()
+        value.process.terminate.assert_called_once();value.process.kill.assert_called_once()
+        value.watchdog.terminate.assert_called_once();value.watchdog.communicate.assert_called_once_with(timeout=2)
+
+    def test_final_cleanup_uses_exact_durable_id_not_name_or_prefix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            owner='b'*16;root=Path(directory)/('gameyfin-browser-fixture-'+owner);root.mkdir();(root/'OWNER').write_text('benchmark-27-'+owner)
+            identity='a'*64;image='sha256:'+'c'*64
+            (root/'browser-ledger.json').write_text(json.dumps({'owner':owner,'id':identity,'image':image}))
+            with patch.object(hosted_browser,'command',side_effect=[identity+'\n','']),patch.object(hosted_browser,'cleanup') as clean:
+                cleanup_known_browser(root,owner)
+                clean.assert_called_once_with(identity,owner,image,hosted_browser.command)
+            self.assertFalse((root/'browser-ledger.json').exists())
+
+    def test_creation_intent_recovers_cancelled_create_without_returned_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            owner='b'*16;root=Path(directory)/('gameyfin-browser-fixture-'+owner);root.mkdir();(root/'OWNER').write_text('benchmark-27-'+owner)
+            identity='a'*64;image='sha256:'+'c'*64
+            record_creation_intent(root,owner,image)
+            self.assertFalse((root/'browser-ledger.json').exists())
+            inventory=identity+' gameyfin-browser-'+owner+'\n'+'d'*64+' other-browser\n'
+            with patch.object(hosted_browser,'command',side_effect=[inventory,'']),patch.object(hosted_browser,'cleanup') as clean:
+                cleanup_known_browser(root,owner)
+                clean.assert_called_once_with(identity,owner,image,hosted_browser.command)
+            self.assertFalse((root/'browser-intent.json').exists())
+
+if __name__=='__main__':unittest.main()

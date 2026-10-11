@@ -9,38 +9,38 @@ import java.time.Instant
 
 @Entity
 @EntityListeners(LibraryEntityListener::class)
-class Library(
+open class Library(
     @Id
     @GeneratedValue(strategy = GenerationType.AUTO)
-    var id: Long? = null,
+    open var id: Long? = null,
 
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
-    var createdAt: Instant? = null,
+    open var createdAt: Instant? = null,
 
     @UpdateTimestamp
     @Column(nullable = false)
-    var updatedAt: Instant? = null,
+    open var updatedAt: Instant? = null,
 
-    var name: String,
+    open var name: String,
 
     @OneToMany(fetch = FetchType.EAGER, orphanRemoval = true, cascade = [CascadeType.ALL])
-    var directories: MutableList<DirectoryMapping> = ArrayList(),
+    open var directories: MutableList<DirectoryMapping> = ArrayList(),
 
     @ElementCollection(targetClass = Platform::class, fetch = FetchType.EAGER)
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    var platforms: MutableList<Platform> = ArrayList(),
+    open var platforms: MutableList<Platform> = ArrayList(),
 
     @Enumerated(EnumType.STRING)
-    var storageMode: LibraryStorageMode = LibraryStorageMode.DIRECT,
+    open var storageMode: LibraryStorageMode = LibraryStorageMode.DIRECT,
 
     @OneToMany(mappedBy = "library", fetch = FetchType.EAGER, orphanRemoval = true)
-    var games: MutableList<Game> = ArrayList(),
+    open var games: MutableList<Game> = ArrayList(),
 
     @OneToMany(fetch = FetchType.EAGER, orphanRemoval = true, cascade = [CascadeType.ALL])
-    var ignoredPaths: MutableList<IgnoredPath> = ArrayList(),
+    open var ignoredPaths: MutableList<IgnoredPath> = ArrayList(),
 
     @Embedded
-    var metadata: LibraryMetadata = LibraryMetadata()
+    open var metadata: LibraryMetadata = LibraryMetadata()
 )

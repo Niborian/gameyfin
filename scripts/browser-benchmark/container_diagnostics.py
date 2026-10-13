@@ -2,7 +2,7 @@
 import json,re
 from pathlib import Path
 
-CAPS={'ALL','SYS_ADMIN','CAP_SYS_ADMIN','CHOWN','CAP_CHOWN','DAC_READ_SEARCH','CAP_DAC_READ_SEARCH'}
+CAPS={'ALL','SYS_ADMIN','CAP_SYS_ADMIN','SYS_CHROOT','CAP_SYS_CHROOT','CHOWN','CAP_CHOWN','DAC_READ_SEARCH','CAP_DAC_READ_SEARCH'}
 
 def diagnostic(row,owner,kind,image):
     if kind not in ('application','browser','helper'):raise ValueError('Diagnostic kind')

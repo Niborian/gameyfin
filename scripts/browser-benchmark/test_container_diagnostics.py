@@ -6,11 +6,11 @@ class ContainerDiagnosticTest(unittest.TestCase):
     def test_exact_scalar_caps_canonical_spellings_and_no_private_fields(self):
         row={'Id':'a'*64,'Image':'sha256:'+'b'*64,'Config':{'User':'10042:10042','Env':['PASSWORD=private-secret'],
             'Labels':{'gameyfin.browser.owner':'c'*16}},'HostConfig':{'NanoCpus':1000000000,'Memory':805306368,
-                'CapAdd':['CAP_SYS_ADMIN'],'CapDrop':['ALL'],'NetworkMode':'gameyfin-browser-net-'+'c'*16,
+                'CapAdd':['CAP_SYS_ADMIN','CAP_SYS_CHROOT'],'CapDrop':['ALL'],'NetworkMode':'gameyfin-browser-net-'+'c'*16,
                 'SecurityOpt':['no-new-privileges:true','apparmor=private-secret-profile']},
             'Mounts':[{'Type':'tmpfs','Source':'private-secret-path','Destination':'/tmp'}]}
         value=diagnostic(row,'c'*16,'browser','sha256:'+'b'*64)
-        self.assertEqual(value['capAdd']['values'],['CAP_SYS_ADMIN'])
+        self.assertEqual(value['capAdd']['values'],['CAP_SYS_ADMIN','CAP_SYS_CHROOT'])
         self.assertEqual(value['securityOptions']['categories'],['no-new-privileges','unexpected'])
         self.assertEqual(value['namespaces']['NetworkMode'],'exact-owned-network')
         self.assertNotIn('private-secret',json.dumps(value))

@@ -36,8 +36,9 @@ The browser is a **separate** container with 1 CPU and 768 MiB ceiling/PID128;
 browser resource counters are reported separately, never attributed to app
 memory savings. It uses the digest-pinned official Puppeteer image, UID10042,
 read-only root filesystem and ephemeral tmpfs profile. Official sandboxing
-requires SYS_ADMIN: only this ephemeral hosted browser drops all capabilities
-then adds that one. No privileged mode, Docker socket, host PID/network/IPC,
+requires SYS_ADMIN; Chrome's sandbox chroot also requires SYS_CHROOT, normally
+retained by Docker but removed by drop-all. Only this ephemeral hosted browser
+drops all capabilities then restores exactly those two. No privileged mode, Docker socket, host PID/network/IPC,
 host files, `--no-sandbox`, or server/local-Docker equivalent is permitted.
 An actual `chrome://sandbox` adequate-sandbox gate is mandatory, not inferred
 from flags. Rendering is fixed1280×800, en-US, UTC.
@@ -111,6 +112,16 @@ Only this app-free, authentication-free smoke may retain a redacted fatal excerp
 whitelist; credential-like lines are rejected, and URLs, paths, addresses and
 long identifiers are removed. The normal authenticated benchmark still retains
 only structured error categories, never error text.
+
+The reviewed smoke [38471659367](https://github.com/Niborian/gameyfin/actions/runs/38471659367)
+finally identified `sys_chroot` failure before cleanup (SIGABRT, no deadline or
+PID/OOM events). [Pinned Chromium 155.0.8059.39 credentials.cc](https://raw.githubusercontent.com/chromium/chromium/155.0.8059.39/sandbox/linux/services/credentials.cc)
+uses this call to enter its safe empty sandbox root; [Docker's documented default capabilities](https://docs.docker.com/engine/containers/run/)
+include SYS_CHROOT. Explicit review approved restoring only SYS_CHROOT beside
+existing SYS_ADMIN in hosted-CI browser/smoke containers, with exact-set guards.
+Nonroot, no-new-privileges, readonly root, private networking, no host mounts,
+limits and the actual sandbox gate remain unchanged. This is CI fixture startup
+repair, not a production change or proof of successful startup/performance.
 
 Primary references: [official Puppeteer Docker sandbox](https://pptr.dev/guides/docker),
 [Chromium proxy semantics](https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md),

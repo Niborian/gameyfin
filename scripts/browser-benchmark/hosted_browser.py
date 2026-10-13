@@ -208,13 +208,22 @@ def creation_args(owner,image,network,app_ip,cover_id,cover_sha):
 def validate_failure_receipt(value):
     base={'browserFailed','phase'}
     categories={'crashpad-database','readonly-filesystem','sandbox-unavailable','namespace-permission','missing-shared-library','missing-executable','launch-timeout','other'}
-    if (not isinstance(value,dict) or value.get('browserFailed') is not True or set(value) not in (base,base|{'launchFailureCategory'}) or
+    if (not isinstance(value,dict) or value.get('browserFailed') is not True or set(value) not in (base,base|{'launchFailureCategory'},base|{'launchFailureCategory','launchDiagnostics'}) or
         value.get('phase') not in ('arguments','input','bridge','profile','chrome-launch','sandbox','authentication','navigation','cleanup')):
         raise ValueError('Browser failure receipt schema')
     if 'launchFailureCategory' in value:
         category=value['launchFailureCategory']
         if value['phase']!='chrome-launch' or not isinstance(category,str) or category not in categories:
             raise ValueError('Browser failure receipt schema')
+    if 'launchDiagnostics' in value:
+        data=value['launchDiagnostics']
+        booleans={'messageTruncated','launchCallable','processExitHeader','launchNotFunction','setuidNotRoot','crashpadPermission','devtoolsEndpoint','protocolTimeout'}
+        nullable={'executableRegular','executableAccessible'}
+        if (value['phase']!='chrome-launch' or not isinstance(data,dict) or set(data)!=booleans|nullable|{'errorName','errno','exitCode'} or
+            any(type(data[k]) is not bool for k in booleans) or any(data[k] is not None and type(data[k]) is not bool for k in nullable) or
+            data['errorName'] not in ('Error','TimeoutError','TypeError','SyntaxError','other') or data['errno'] not in ('ENOENT','EACCES','EPERM','other') or
+            (data['exitCode'] is not None and (type(data['exitCode']) is not int or not 0<=data['exitCode']<=255))):
+            raise ValueError('Bounded launch diagnostics schema')
     return value
 
 class HostedBrowser:

@@ -5,7 +5,24 @@ import {createRequire} from 'node:module';
 import {LoopbackProxy} from './frontend_loopback_proxy.mjs';
 import {chromeProxyFlags} from './frontend_proxy_policy.mjs';
 import {FixtureUiDriver} from './frontend_ui_driver.mjs';
-let currentPhase='arguments',failurePhase=null,failureEmitted=false,launchFailureCategory=null;
+let currentPhase='arguments',failurePhase=null,failureEmitted=false,launchFailureCategory=null,launchDiagnostics=null;
+export function launchFailureDiagnostics(error,preflight={}){
+  const message=typeof error?.message==='string'?error.message:'';
+  const text=message.slice(0,8192)+(message.length>8192?message.slice(-8192):'');
+  const match=/^Failed to launch the browser process:\s*Code:\s*(\d{1,3})\b/.exec(text);
+  const code=match?Number(match[1]):null;
+  return {errorName:['Error','TimeoutError','TypeError','SyntaxError'].includes(error?.name)?error.name:'other',
+    errno:['ENOENT','EACCES','EPERM'].includes(error?.code)?error.code:'other',
+    exitCode:code!==null&&code<=255?code:null,messageTruncated:message.length>16384,
+    launchCallable:preflight.launchCallable===true,
+    executableRegular:typeof preflight.executableRegular==='boolean'?preflight.executableRegular:null,
+    executableAccessible:typeof preflight.executableAccessible==='boolean'?preflight.executableAccessible:null,
+    processExitHeader:!!match,launchNotFunction:/puppeteer\.launch is not a function/.test(text),
+    setuidNotRoot:/The setuid sandbox is not running as root/.test(text),
+    crashpadPermission:/crashpad.*(?:Permission denied|Operation not permitted)/i.test(text),
+    devtoolsEndpoint:/waiting for the WS endpoint URL/.test(text),
+    protocolTimeout:/timed out\. Increase the ['"]?protocolTimeout['"]? setting/.test(text)};
+}
 export const launchFailureCategories=Object.freeze(['crashpad-database','readonly-filesystem','sandbox-unavailable','namespace-permission','missing-shared-library','missing-executable','launch-timeout','other']);
 export function classifyLaunchFailure(error){
   // Inspect only a bounded in-memory message; never return/store the message.
@@ -19,12 +36,13 @@ export function classifyLaunchFailure(error){
   if(/Timed out after .*waiting for the WS endpoint URL|Timeout of .* exceeded/.test(text))return 'launch-timeout';
   return 'other';
 }
-export function failureReceipt(phase,category=null){
+export function failureReceipt(phase,category=null,diagnostics=null){
   if(!['arguments','input','bridge','profile','chrome-launch','sandbox','authentication','navigation','cleanup'].includes(phase))throw new Error('Failure phase enum boundary');
   if(category!==null&&(phase!=='chrome-launch'||!launchFailureCategories.includes(category)))throw new Error('Launch failure category boundary');
-  return {browserFailed:true,phase,...(category===null?{}:{launchFailureCategory:category})};
+  if(diagnostics!==null&&phase!=='chrome-launch')throw new Error('Launch diagnostics phase boundary');
+  return {browserFailed:true,phase,...(category===null?{}:{launchFailureCategory:category}),...(diagnostics===null?{}:{launchDiagnostics:diagnostics})};
 }
-function emitFailure(phase){if(!failureEmitted){failureEmitted=true;process.stdout.write(JSON.stringify(failureReceipt(phase,launchFailureCategory))+'\n');}}
+function emitFailure(phase){if(!failureEmitted){failureEmitted=true;process.stdout.write(JSON.stringify(failureReceipt(phase,launchFailureCategory,launchDiagnostics))+'\n');}}
 
 export function validateArguments(argv){
   if(argv.length!==3||!/^172\.(1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3}$/.test(argv[0])||argv[0].split('.').some(x=>Number(x)>255)||!/^\d{1,10}$/.test(argv[1])||Number(argv[1])<1||! /^[a-f0-9]{64}$/.test(argv[2]))throw new Error('Fixture identity boundary');
@@ -51,7 +69,7 @@ export async function main(argv){
   if(process.getuid?.()===0||process.env.GAMEYFIN_HOSTED_BROWSER!=='reviewed-fixture-only')throw new Error('Hosted nonroot boundary');
   const require=createRequire('/home/pptruser/package.json');
   const puppeteer=require('puppeteer');
-  const sockets=new Set();let browser,proxy,bridge,profile;
+  const sockets=new Set();let browser,proxy,bridge,profile;const preflight={launchCallable:typeof puppeteer.launch==='function'};
   let timedOut=false;const timer=setTimeout(()=>{timedOut=true;browser?.close().catch(()=>{});proxy?.close();for(const s of sockets)s.destroy();},90000);
   const lines=[];let pending,buffer='',bytes=0,inputEnded=false;
   process.stdin.setEncoding('utf8');process.stdin.on('data',chunk=>{
@@ -70,6 +88,8 @@ export async function main(argv){
     await fs.mkdir(profile+'/xdg-config',{mode:0o700});await fs.mkdir(profile+'/xdg-cache',{mode:0o700});
     await fs.mkdir(profile+'/Default');await fs.writeFile(profile+'/Default/Preferences',JSON.stringify({webrtc:{ip_handling_policy:'disable_non_proxied_udp'}}),{mode:0o600});
     currentPhase='chrome-launch';
+    // Observational only: failure to inspect must not alter the actual launch.
+    try{const executable=puppeteer.executablePath();preflight.executableRegular=(await fs.stat(executable)).isFile();await fs.access(executable,1);preflight.executableAccessible=true;}catch{preflight.executableAccessible=false;}
     browser=await puppeteer.launch({headless:true,userDataDir:profile,env:launchEnvironment(profile),dumpio:false,timeout:10000,defaultViewport:{width:1280,height:800},args:[...chromeProxyFlags(55202),'--lang=en-US','--disable-background-networking','--disable-component-update','--disable-sync','--no-first-run']});
     currentPhase='sandbox';
     const page=await browser.newPage();await page.emulateTimezone('UTC');await page.setExtraHTTPHeaders({'Accept-Language':'en-US'});await page.goto('chrome://sandbox',{timeout:10000});
@@ -92,7 +112,7 @@ export async function main(argv){
     if(timedOut)throw new Error('Controller deadline');
     const after=await browserResources();
     process.stdout.write(JSON.stringify({originalUiContentReady:true,coverDecoded:true,coverSha256Matches:true,navigations:results,browserResources:{before,after}})+'\n');
-  }catch(error){failurePhase=currentPhase;if(failurePhase==='chrome-launch')launchFailureCategory=classifyLaunchFailure(error);emitFailure(failurePhase);throw new Error('Hosted browser operation failed');}finally{
+  }catch(error){failurePhase=currentPhase;if(failurePhase==='chrome-launch'){launchFailureCategory=classifyLaunchFailure(error);launchDiagnostics=launchFailureDiagnostics(error,preflight);}emitFailure(failurePhase);throw new Error('Hosted browser operation failed');}finally{
     currentPhase='cleanup';
     clearTimeout(timer);process.stdin.destroy();proxy?.close();for(const s of sockets)s.destroy();bridge?.close();
     // Container removal is the independent descendant fence. Never claim the

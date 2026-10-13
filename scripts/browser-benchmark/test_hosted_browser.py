@@ -10,6 +10,13 @@ class CreationTests(unittest.TestCase):
         self.assertEqual(hosted_browser.validate_failure_receipt(row),row)
         for mutation in ({'launchFailureCategory':'secret password'},{'launchFailureCategory':[]},{'phase':'navigation'},{'rawMessage':'secret'},{'browserFailed':1}):
             with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,**mutation})
+    def test_launch_diagnostics_strict_no_extra_or_string_evidence(self):
+        data={key:False for key in ('messageTruncated','launchCallable','processExitHeader','launchNotFunction','setuidNotRoot','crashpadPermission','devtoolsEndpoint','protocolTimeout')}
+        data.update(errorName='Error',errno='other',exitCode=1,executableRegular=True,executableAccessible=True)
+        row={'browserFailed':True,'phase':'chrome-launch','launchFailureCategory':'other','launchDiagnostics':data}
+        self.assertEqual(hosted_browser.validate_failure_receipt(row),row)
+        for mutation in ({'rawMessage':'secret'},{'exitCode':True},{'exitCode':256},{'errorName':'secret'},{'executableRegular':'/private/path'}):
+            with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,'launchDiagnostics':{**data,**mutation}})
     def test_sandbox_and_resource_boundary(self):
         args=creation_args('a'*16,'sha256:'+'b'*64,'gameyfin-browser-net-'+'a'*16,'172.22.0.2',1,'c'*64)
         for value in ['--read-only','--init','--interactive','no-new-privileges','10042:10042','SYS_ADMIN','768m','128']:

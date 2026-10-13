@@ -75,16 +75,17 @@ def run(image,output):
             except subprocess.TimeoutExpired:watchdog.kill();watchdog.wait(timeout=2)
 
 def validate_receipt(row):
-    required={'scope','started','sandboxVerified','exitCode','signal','signalScope','deadlineTriggered','exitObservedBeforeCleanup','failurePhase','fatalFlags','zygoteChecks','before','after'}
+    required={'scope','chromeCacheVersion','started','sandboxVerified','exitCode','signal','signalScope','deadlineTriggered','exitObservedBeforeCleanup','failurePhase','fatalFlags','zygoteChecks','before','after'}
     if not isinstance(row,dict) or set(row) not in (required,required|{'failure'}):raise ValueError('Smoke schema')
     if row['scope']!='Chrome-only startup diagnostic; not app performance' or row['signalScope']!='Includes diagnostic shutdown; not automatic crash attribution' or any(type(row[k]) is not bool for k in ('started','sandboxVerified','deadlineTriggered','exitObservedBeforeCleanup')):raise ValueError('Smoke flags')
     if row['failurePhase'] not in (None,'launch','endpoint','connect','sandbox'):raise ValueError('Failure phase')
+    if row['chromeCacheVersion'] is not None and (not isinstance(row['chromeCacheVersion'],str) or not re.fullmatch(r'\d{1,5}\.\d{1,5}\.\d{1,5}\.\d{1,5}',row['chromeCacheVersion'])):raise ValueError('Chrome cache version boundary')
     if row['signal'] not in ('none','other','SIGABRT','SIGTRAP','SIGSYS','SIGSEGV','SIGKILL','SIGTERM'):raise ValueError('Signal enum')
     if row['exitCode'] is not None and (type(row['exitCode']) is not int or not 0<=row['exitCode']<=255):raise ValueError('Exit code')
     flags={'pthreadCreate','resourceUnavailable','checkFailed','seccomp','ptrace','credentialsSource','zygoteSource'}
     if not isinstance(row['fatalFlags'],dict) or set(row['fatalFlags'])!=flags or any(type(x) is not bool for x in row['fatalFlags'].values()):raise ValueError('Fatal hints')
     checks=row['zygoteChecks'];names={'processValid','socketpair','receiveProcessId','bootPid','realPid'}
-    if not isinstance(checks,dict) or set(checks)!=names|{'errno'} or any(type(checks[x]) is not bool for x in names) or (checks['errno'] is not None and (type(checks['errno']) is not int or checks['errno'] not in (1,11,13,28,38,95))):raise ValueError('Known zygote predicate hints')
+    if not isinstance(checks,dict) or set(checks)!=names|{'errno','sourceLine'} or any(type(checks[x]) is not bool for x in names) or (checks['errno'] is not None and (type(checks['errno']) is not int or checks['errno'] not in (1,11,13,28,38,95))) or (checks['sourceLine'] is not None and (type(checks['sourceLine']) is not int or not 0<=checks['sourceLine']<=100000)):raise ValueError('Known zygote predicate hints')
     keys={'pids.events.max','memory.events.max','memory.events.oom','memory.events.oom_kill'}
     for part in ('before','after'):
         data=row[part]

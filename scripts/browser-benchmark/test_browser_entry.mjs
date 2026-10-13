@@ -1,5 +1,15 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {validateArguments,renderingConfiguration,browserResources,failureReceipt,launchEnvironment,classifyLaunchFailure} from './browser_entry.mjs';
+import {validateArguments,renderingConfiguration,browserResources,failureReceipt,launchEnvironment,classifyLaunchFailure,launchFailureDiagnostics} from './browser_entry.mjs';
+test('launch diagnostics expose only numeric/enums/booleans from bounded head and tail',()=>{
+  const error=new Error('Failed to launch the browser process: Code: 1\nstderr: password=private '+ 'x'.repeat(20000)+'The setuid sandbox is not running as root');
+  const row=launchFailureDiagnostics(error,{launchCallable:true,executableRegular:true,executableAccessible:true});
+  assert.equal(row.exitCode,1);assert.equal(row.setuidNotRoot,true);assert.equal(row.messageTruncated,true);
+  assert.equal(JSON.stringify(row).includes('private'),false);assert.equal(JSON.stringify(row).includes('/home'),false);
+  const arbitrary=launchFailureDiagnostics({name:'secret',code:'secret',message:'secret Code: 42'});
+  assert.equal(arbitrary.errorName,'other');assert.equal(arbitrary.errno,'other');assert.equal(arbitrary.exitCode,null);
+  assert.equal(launchFailureDiagnostics(new TypeError('puppeteer.launch is not a function')).launchNotFunction,true);
+  assert.equal(launchFailureDiagnostics(new Error('Target.setAutoAttach timed out. Increase the protocolTimeout setting')).protocolTimeout,true);
+});
 test('bounded launch classification retains only fixed categories, never exception text',()=>{
   const cases=[['chrome_crashpad_handler: --database is required','crashpad-database'],['Read-only file system','readonly-filesystem'],['No usable sandbox','sandbox-unavailable'],['Failed to move to new namespace: Operation not permitted','namespace-permission'],['error while loading shared libraries: private.so','missing-shared-library'],['Could not find Chrome','missing-executable'],['Timed out after 10000 ms while waiting for the WS endpoint URL','launch-timeout']];
   for(const [message,expected] of cases){const category=classifyLaunchFailure(new Error(message+' password=secret https://private/'));assert.equal(category,expected);assert.equal(JSON.stringify(failureReceipt('chrome-launch',category)).includes('secret'),false);}

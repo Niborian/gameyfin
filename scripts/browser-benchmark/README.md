@@ -96,6 +96,16 @@ HOME and Puppeteer's installed executable/cache resolution remain unchanged.
 This addresses a source-backed startup requirement, not a proven unique cause
 of that run's generic launch failure; actual sandbox/UI acceptance is pending.
 
+The workflow now runs a separate Chrome-only startup diagnostic before expensive
+application builds. It uses the same pinned browser image, permissions, readonly
+root/tmpfs and CPU/RAM/PID budget on an isolated internal network with no app,
+authentication, host mounts or published ports. A durable creation intent and an
+independent 30-second cleanup fence survive controller cancellation. Supported
+Puppeteer browser-process launch exposes exit code/signal; only fixed fatal
+booleans and numeric cgroup PID/OOM counters are retained. Signals may include
+diagnostic shutdown and are not automatically classified as application crashes.
+The smoke is not a performance comparison; normal benchmark launch is unchanged.
+
 Primary references: [official Puppeteer Docker sandbox](https://pptr.dev/guides/docker),
 [Chromium proxy semantics](https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md),
 [Spring Boot build-info properties](https://docs.spring.io/spring-boot/gradle-plugin/integrating-with-actuator.html).

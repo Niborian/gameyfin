@@ -59,6 +59,13 @@ jobs:
           python3 -B -m unittest discover -s scripts/browser-benchmark -p 'test_*.py'
           python3 -B -m unittest discover -s scripts/browser-benchmark/overlap -p 'test_*.py'
           timeout --signal=TERM --kill-after=2s 20s sudo python3 -B scripts/browser-benchmark/test_uid_permissions.py
+      - name: Bounded Chrome startup smoke before application builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .benchmark/reports
+          docker build --file scripts/browser-benchmark/Dockerfile --iidfile .benchmark/browser-image.id scripts/browser-benchmark
+          timeout --signal=TERM --kill-after=5s 40s python3 -B scripts/browser-benchmark/chrome_smoke.py --image "$(cat .benchmark/browser-image.id)" --output .benchmark/reports/chrome-smoke.json
       - name: Build both exact original-UI sources sequentially
         shell: bash
         run: |
@@ -85,7 +92,6 @@ jobs:
           set -euo pipefail
           docker build --file scripts/browser-benchmark/Dockerfile.app --build-arg SOURCE_REVISION="$CONTROL_SOURCE" --iidfile .benchmark/control-image.id .benchmark/artifacts/control
           docker build --file scripts/browser-benchmark/Dockerfile.app --build-arg SOURCE_REVISION="$CANDIDATE_SOURCE" --iidfile .benchmark/candidate-image.id .benchmark/artifacts/candidate
-          docker build --file scripts/browser-benchmark/Dockerfile --iidfile .benchmark/browser-image.id scripts/browser-benchmark
           python3 -B scripts/browser-benchmark/bind_built_images.py --receipt .benchmark/reports/source-pair.json --control "$(cat .benchmark/control-image.id)" --candidate "$(cat .benchmark/candidate-image.id)"
           for provider in build_fixture build_waiting_fixture; do
             python3 -B "scripts/browser-benchmark/$provider.py" --javac "$JAVA_HOME/bin/javac" --java "$JAVA_HOME/bin/java" --plugin-api .benchmark/artifacts/candidate/plugin-api.jar --pf4j .benchmark/artifacts/candidate/pf4j.jar --kotlin-stdlib .benchmark/artifacts/candidate/kotlin-stdlib.jar --output ".benchmark/$provider.jar"
@@ -101,6 +107,9 @@ jobs:
             --metadata-plugin .benchmark/build_fixture.jar --waiting-plugin .benchmark/build_waiting_fixture.jar \
             --direct-plugin .benchmark/sources/candidate/plugins/directdownload/build/libs/directdownload-1.0.2.jar \
             --receipt .benchmark/reports/source-pair.json --output .benchmark/reports/benchmark.json
+      - name: Exact owned Chrome smoke cleanup
+        if: always()
+        run: python3 -B scripts/browser-benchmark/chrome_smoke.py --cleanup-only
       - name: Exact owned final cleanup; no global prune
         if: always()
         run: python3 -B scripts/browser-benchmark/run_benchmark.py --cleanup-only

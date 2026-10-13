@@ -5,7 +5,16 @@ import {createRequire} from 'node:module';
 import {LoopbackProxy} from './frontend_loopback_proxy.mjs';
 import {chromeProxyFlags} from './frontend_proxy_policy.mjs';
 import {FixtureUiDriver} from './frontend_ui_driver.mjs';
-let currentPhase='arguments',failurePhase=null,failureEmitted=false,launchFailureCategory=null,launchDiagnostics=null;
+let currentPhase='arguments',failurePhase=null,failureEmitted=false,launchFailureCategory=null,launchDiagnostics=null,authStage=null,failureCounters=null;
+export const authStages=Object.freeze(['interception','login-navigation','login-form','submit','redirect','complete']);
+export async function browserFailureCounters(read=fs.readFile){
+  const result={};
+  for(const [file,keys] of [['pids.events',['max']],['memory.events',['max','oom','oom_kill']]]){
+    let text='';try{text=(await read('/sys/fs/cgroup/'+file,'utf8')).slice(0,2048);}catch{}
+    for(const key of keys){const match=new RegExp('^'+key+' (\\d+)$','m').exec(text),value=match?Number(match[1]):null;result[file+'.'+key]=Number.isSafeInteger(value)&&value>=0?value:null;}
+  }
+  return result;
+}
 export async function observeExecutable(puppeteer,io=fs){
   const observed={launchCallable:typeof puppeteer.launch==='function',executableRegular:null,executableAccessible:null,preflightPhase:'resolve',preflightErrno:'other'};
   try{
@@ -51,13 +60,14 @@ export function classifyLaunchFailure(error){
   if(/Timed out after .*waiting for the WS endpoint URL|Timeout of .* exceeded/.test(text))return 'launch-timeout';
   return 'other';
 }
-export function failureReceipt(phase,category=null,diagnostics=null){
+export function failureReceipt(phase,category=null,diagnostics=null,stage=null,counters=null){
   if(!['arguments','input','bridge','profile','chrome-launch','sandbox','authentication','navigation','cleanup'].includes(phase))throw new Error('Failure phase enum boundary');
   if(category!==null&&(phase!=='chrome-launch'||!launchFailureCategories.includes(category)))throw new Error('Launch failure category boundary');
   if(diagnostics!==null&&phase!=='chrome-launch')throw new Error('Launch diagnostics phase boundary');
-  return {browserFailed:true,phase,...(category===null?{}:{launchFailureCategory:category}),...(diagnostics===null?{}:{launchDiagnostics:diagnostics})};
+  if(stage!==null&&(phase!=='authentication'||!authStages.includes(stage)))throw new Error('Authentication stage boundary');
+  return {browserFailed:true,phase,...(category===null?{}:{launchFailureCategory:category}),...(diagnostics===null?{}:{launchDiagnostics:diagnostics}),...(stage===null?{}:{authStage:stage}),...(counters===null?{}:{failureCounters:counters})};
 }
-function emitFailure(phase){if(!failureEmitted){failureEmitted=true;process.stdout.write(JSON.stringify(failureReceipt(phase,launchFailureCategory,launchDiagnostics))+'\n');}}
+function emitFailure(phase){if(!failureEmitted){failureEmitted=true;process.stdout.write(JSON.stringify(failureReceipt(phase,launchFailureCategory,launchDiagnostics,authStage,failureCounters))+'\n');}}
 
 export function validateArguments(argv){
   if(argv.length!==3||!/^172\.(1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3}$/.test(argv[0])||argv[0].split('.').some(x=>Number(x)>255)||!/^\d{1,10}$/.test(argv[1])||Number(argv[1])<1||! /^[a-f0-9]{64}$/.test(argv[2]))throw new Error('Fixture identity boundary');
@@ -84,7 +94,7 @@ export async function main(argv){
   if(process.getuid?.()===0||process.env.GAMEYFIN_HOSTED_BROWSER!=='reviewed-fixture-only')throw new Error('Hosted nonroot boundary');
   const require=createRequire('/home/pptruser/package.json');
   const puppeteer=require('puppeteer');
-  const sockets=new Set();let browser,proxy,bridge,profile,preflight={launchCallable:typeof puppeteer.launch==='function'};
+  const sockets=new Set();let browser,proxy,bridge,profile,driver,preflight={launchCallable:typeof puppeteer.launch==='function'};
   let timedOut=false;const timer=setTimeout(()=>{timedOut=true;browser?.close().catch(()=>{});proxy?.close();for(const s of sockets)s.destroy();},90000);
   const lines=[];let pending,buffer='',bytes=0,inputEnded=false;
   process.stdin.setEncoding('utf8');process.stdin.on('data',chunk=>{
@@ -115,7 +125,7 @@ export async function main(argv){
       session.send(m,p).then(value=>{clearTimeout(deadline);resolve(value);},()=>{clearTimeout(deadline);reject(new Error('Private CDP operation failed'));});
     })};
     for(const name of ['Fetch.requestPaused','Network.responseReceived','Network.loadingFinished'])session.on(name,p=>cdp.onEvent?.(name,p));
-    const driver=new FixtureUiDriver(cdp,{origin,...identity});
+    driver=new FixtureUiDriver(cdp,{origin,...identity});
     currentPhase='input';let username=await readLine(),password=await readLine();
     if(username.length<1||username.length>128||password.length<16||password.length>256||/[\x00-\x1f\x7f]/.test(username+password))throw new Error('Private credentials boundary');
     currentPhase='authentication';await driver.authenticate(username,password);username='';password='';
@@ -127,7 +137,7 @@ export async function main(argv){
     if(timedOut)throw new Error('Controller deadline');
     const after=await browserResources();
     process.stdout.write(JSON.stringify({originalUiContentReady:true,coverDecoded:true,coverSha256Matches:true,navigations:results,browserResources:{before,after}})+'\n');
-  }catch(error){failurePhase=currentPhase;if(failurePhase==='chrome-launch'){launchFailureCategory=classifyLaunchFailure(error);launchDiagnostics=launchFailureDiagnostics(error,preflight);}emitFailure(failurePhase);throw new Error('Hosted browser operation failed');}finally{
+  }catch(error){failurePhase=currentPhase;failureCounters=await browserFailureCounters();if(failurePhase==='authentication'&&authStages.includes(driver?.authStage))authStage=driver.authStage;if(failurePhase==='chrome-launch'){launchFailureCategory=classifyLaunchFailure(error);launchDiagnostics=launchFailureDiagnostics(error,preflight);}emitFailure(failurePhase);throw new Error('Hosted browser operation failed');}finally{
     currentPhase='cleanup';
     clearTimeout(timer);process.stdin.destroy();proxy?.close();for(const s of sockets)s.destroy();bridge?.close();
     // Container removal is the independent descendant fence. Never claim the

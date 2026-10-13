@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {BoundedCdp,allowRequest,loginExpression,routeExpression,sanitizeMetrics,coverHashMatches,launchRuntime,RUNTIME_ENABLED} from './frontend_cdp_measurement.mjs';
+import {BoundedCdp,allowRequest,validateLoginCredentials,loginFocusExpression,routeExpression,sanitizeMetrics,coverHashMatches,launchRuntime,RUNTIME_ENABLED} from './frontend_cdp_measurement.mjs';
 test('runtime disabled; external origins and production destinations denied',()=>{
   assert.equal(RUNTIME_ENABLED,false);assert.throws(launchRuntime);
   const origin='http://127.0.0.1:53123';
@@ -9,8 +9,10 @@ test('runtime disabled; external origins and production destinations denied',()=
   assert.throws(()=>allowRequest(origin,'http://0.0.0.0:53123'));
 });
 test('normal UI login expression stays private; exact fixture DOM and cover checks',()=>{
-  const expression=loginExpression('fixture-user','private-random-secret-12345');
-  assert.match(expression,/input\[name=/);assert.match(expression,/\.click\(\)/);
+  validateLoginCredentials('fixture-user','private-random-secret-12345');
+  const expression=loginFocusExpression('username');
+  assert.match(expression,/input\[name=/);assert.match(expression,/\.focus\(\)/);assert(!expression.includes('.click()'));
+  assert.throws(()=>loginFocusExpression('arbitrary'));assert.throws(()=>validateLoginCredentials('bad\nname','private-random-secret-12345'));
   assert.throws(()=>routeExpression('/game/2055',1));
   assert.match(routeExpression('/game/33000',7),/image\.decode\(\)/);
   assert.match(routeExpression('/library/27003',7),/\/images\/cover\/7/);

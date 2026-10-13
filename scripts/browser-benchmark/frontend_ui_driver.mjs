@@ -1,5 +1,5 @@
 // Injectable/mock-tested original-UI adapter only; no SSH/browser/transport creation.
-import {allowRequest,loginExpression,routeExpression,sanitizeMetrics,coverHashMatches,RUNTIME_ENABLED} from './frontend_cdp_measurement.mjs';
+import {allowRequest,validateLoginCredentials,loginFocusExpression,routeExpression,sanitizeMetrics,coverHashMatches,RUNTIME_ENABLED} from './frontend_cdp_measurement.mjs';
 export class FixtureUiDriver {
   constructor(cdp,{origin,coverId,coverSha256}){
     if(!allowRequest(origin,origin)||!Number.isSafeInteger(coverId)||coverId<1||!/^[a-f0-9]{64}$/.test(coverSha256))throw new Error('Fixture identity boundary');
@@ -51,11 +51,22 @@ export class FixtureUiDriver {
     throw new Error('DOM readiness deadline');
   }
   async authenticate(username,password){
-    await this.enableBeforeAuth();await this.request('Page.navigate',{url:this.origin+'/login'});
+    validateLoginCredentials(username,password);
+    this.authStage='interception';await this.enableBeforeAuth();this.authStage='login-navigation';await this.request('Page.navigate',{url:this.origin+'/login'});
+    this.authStage='login-form';
     await this.poll(`(()=>({ready:location.pathname==='/login'&&!!document.querySelector('input[name="username"]')&&!!document.querySelector('input[name="password"]')}))()`);
-    if(await this.evaluate(loginExpression(username,password))!==true)throw new Error('Normal UI login unavailable');
+    this.authStage='submit';
+    // LoginView uses React/Formik controlled fields. Real browser input events
+    // and separate render turns prevent submitting stale Formik state from one
+    // synchronous setter+click expression. Credentials stay private CDP payloads.
+    for(const [field,text] of [['username',username],['password',password]]){
+      if(await this.evaluate(loginFocusExpression(field))!==true)throw new Error('Normal UI login unavailable');
+      await this.request('Input.insertText',{text});
+      await this.evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))`);
+    }
+    if(await this.evaluate(`(()=>{const u=document.querySelector('input[name="username"]');const b=u?.closest('form')?.querySelector('button[type="submit"]');if(location.pathname!=='/login'||!b||b.disabled)return false;b.click();return true;})()`)!==true)throw new Error('Normal UI login unavailable');
     // Normal Hilla login redirects; a protected target then proves fixture route content.
-    await this.poll(`(()=>({ready:location.origin===${JSON.stringify(this.origin)}&&location.pathname!=='/login'}))()`);
+    this.authStage='redirect';await this.poll(`(()=>({ready:location.origin===${JSON.stringify(this.origin)}&&location.pathname!=='/login'}))()`);this.authStage='complete';
   }
   async navigate(path){
     if(!['/library/27003','/game/33000'].includes(path)||++this.navigations>3)throw new Error('Navigation bound');

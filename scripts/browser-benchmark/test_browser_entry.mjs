@@ -1,5 +1,13 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {validateArguments,renderingConfiguration,browserResources,failureReceipt,launchEnvironment,classifyLaunchFailure,launchFailureDiagnostics,observeExecutable} from './browser_entry.mjs';
+import {validateArguments,renderingConfiguration,browserResources,failureReceipt,launchEnvironment,classifyLaunchFailure,launchFailureDiagnostics,observeExecutable,browserFailureCounters} from './browser_entry.mjs';
+test('authentication failure stage and cgroup evidence are fixed enum and numeric only',async()=>{
+ const counts=await browserFailureCounters(async p=>p.endsWith('pids.events')?'max 29':'max 0\noom 0\noom_kill 0');
+ assert.equal(counts['pids.events.max'],29);
+ assert.deepEqual(failureReceipt('authentication',null,null,'submit',counts),{browserFailed:true,phase:'authentication',authStage:'submit',failureCounters:counts});
+ assert.throws(()=>failureReceipt('authentication',null,null,'private password'));
+ assert.throws(()=>failureReceipt('navigation',null,null,'submit'));
+ assert.deepEqual(Object.values(await browserFailureCounters(async()=>{throw new Error('private');})),[null,null,null,null]);
+});
 test('observational preflight awaits asynchronous resolver and never exposes paths or blocks launch',async()=>{
   const fake={launch(){},executablePath:async()=>'/private/chrome'};
   const io={stat:async path=>{assert.equal(path,'/private/chrome');return {isFile:()=>true};},access:async path=>assert.equal(path,'/private/chrome')};

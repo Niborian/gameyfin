@@ -2,7 +2,7 @@
 import {createHash} from 'node:crypto';
 export const RUNTIME_ENABLED=false;
 const METHODS=new Set(['Page.enable','Network.enable','Runtime.enable','Page.navigate','Runtime.evaluate',
-  'Network.getResponseBody','Fetch.enable','Fetch.continueRequest','Fetch.failRequest','Page.addScriptToEvaluateOnNewDocument']);
+  'Network.getResponseBody','Fetch.enable','Fetch.continueRequest','Fetch.failRequest','Page.addScriptToEvaluateOnNewDocument','Input.insertText']);
 export class BoundedCdp {
   constructor(transport,timeoutMs=15000){
     if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>15000)throw new Error('Deadline boundary');
@@ -33,10 +33,12 @@ export function allowRequest(url,origin){
   if(trusted.protocol!=='http:'||trusted.hostname!=='127.0.0.1'||!trusted.port||trusted.username||trusted.password)throw new Error('Origin boundary');
   try{const value=new URL(url);if(value.username||value.password)return false;return value.origin===trusted.origin||value.protocol==='data:'||value.protocol==='blob:'&&value.origin===trusted.origin||value.protocol==='ws:'&&value.host===trusted.host;}catch{return false;}
 }
-export function loginExpression(username,password){
-  if(typeof username!=='string'||typeof password!=='string'||username.length<1||username.length>128||password.length<16||password.length>256)throw new Error('Private credential boundary');
-  // Returned CDP payload stays in process memory. Never serialize it to evidence/logs.
-  return `(()=>{const u=document.querySelector('input[name="username"]');const p=document.querySelector('input[name="password"]');if(!u||!p||location.pathname!=='/login')return false;const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;for(const [e,v] of [[u,${JSON.stringify(username)}],[p,${JSON.stringify(password)}]]){s.call(e,v);e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));}const b=u.closest('form')?.querySelector('button[type="submit"]');if(!b)return false;b.click();return true;})()`;
+export function validateLoginCredentials(username,password){
+  if(typeof username!=='string'||typeof password!=='string'||username.length<1||username.length>128||password.length<16||password.length>256||/[\x00-\x1f\x7f]/.test(username+password))throw new Error('Private credential boundary');
+}
+export function loginFocusExpression(field){
+  if(!['username','password'].includes(field))throw new Error('Login field boundary');
+  return `(()=>{const e=document.querySelector('input[name="${field}"]');if(!e||location.pathname!=='/login'||e.disabled||!e.closest('form'))return false;e.focus();e.select();return document.activeElement===e;})()`;
 }
 export function routeExpression(path,coverId){
   if(!['/library/27003','/game/33000'].includes(path)||!Number.isSafeInteger(coverId)||coverId<1)throw new Error('Fixture route boundary');

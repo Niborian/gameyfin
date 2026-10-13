@@ -13,7 +13,7 @@ def fixture():
             "Config": {"Labels": {"gameyfin.browser.owner": OWNER},'User':'10042:10042'},
             'NetworkSettings':{'Networks':{'gameyfin-browser-net-'+OWNER:{}}},'Mounts':[],
             "HostConfig": {"NetworkMode": "gameyfin-browser-net-" + OWNER,
-                           "Privileged": False, "ReadonlyRootfs": True,'CgroupnsMode':'private','Init':True,'PidsLimit':128,'NanoCpus':1000000000,'Memory':768*1024*1024,'MemorySwap':768*1024*1024,'CapDrop':['ALL'],'CapAdd':['SYS_ADMIN','SYS_CHROOT']}}
+                           "Privileged": False, "ReadonlyRootfs": True,'CgroupnsMode':'private','Init':True,'PidsLimit':256,'NanoCpus':1000000000,'Memory':768*1024*1024,'MemorySwap':768*1024*1024,'CapDrop':['ALL'],'CapAdd':['SYS_ADMIN','SYS_CHROOT']}}
 
 
 class WatchdogTests(unittest.TestCase):
@@ -34,6 +34,10 @@ class WatchdogTests(unittest.TestCase):
         for mode in ["host", "bridge", "container:" + ID]:
             row = fixture(); row["HostConfig"]["NetworkMode"] = mode
             with self.assertRaises(ValueError): validate(row, ID, OWNER, IMAGE)
+    def test_browser_pid_budget_is_exact_not_unbounded(self):
+        for limit in (128,512,-1,None):
+            row=fixture();row['HostConfig']['PidsLimit']=limit
+            with self.assertRaises(ValueError):validate(row,ID,OWNER,IMAGE)
 
     def test_failure_never_removes(self):
         calls = []

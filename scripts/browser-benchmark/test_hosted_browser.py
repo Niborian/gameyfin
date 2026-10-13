@@ -11,8 +11,8 @@ class CreationTests(unittest.TestCase):
         for mutation in ({'launchFailureCategory':'secret password'},{'launchFailureCategory':[]},{'phase':'navigation'},{'rawMessage':'secret'},{'browserFailed':1}):
             with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,**mutation})
     def test_launch_diagnostics_strict_no_extra_or_string_evidence(self):
-        data={key:False for key in ('messageTruncated','launchCallable','processExitHeader','launchNotFunction','setuidNotRoot','crashpadPermission','devtoolsEndpoint','protocolTimeout')}
-        data.update(errorName='Error',errno='other',exitCode=1,executableRegular=True,executableAccessible=True)
+        data={key:False for key in ('messageTruncated','launchCallable','processExitHeader','launchNotFunction','setuidNotRoot','crashpadPermission','devtoolsEndpoint','protocolTimeout','configuredPathMissing','cacheConfiguration')}
+        data.update(errorName='Error',errno='other',exitCode=1,executableRegular=True,executableAccessible=True,preflightPhase='complete',preflightErrno='other')
         row={'browserFailed':True,'phase':'chrome-launch','launchFailureCategory':'other','launchDiagnostics':data}
         self.assertEqual(hosted_browser.validate_failure_receipt(row),row)
         for mutation in ({'rawMessage':'secret'},{'exitCode':True},{'exitCode':256},{'errorName':'secret'},{'executableRegular':'/private/path'}):

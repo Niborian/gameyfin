@@ -6,22 +6,37 @@ import {LoopbackProxy} from './frontend_loopback_proxy.mjs';
 import {chromeProxyFlags} from './frontend_proxy_policy.mjs';
 import {FixtureUiDriver} from './frontend_ui_driver.mjs';
 let currentPhase='arguments',failurePhase=null,failureEmitted=false,launchFailureCategory=null,launchDiagnostics=null;
+export async function observeExecutable(puppeteer,io=fs){
+  const observed={launchCallable:typeof puppeteer.launch==='function',executableRegular:null,executableAccessible:null,preflightPhase:'resolve',preflightErrno:'other'};
+  try{
+    const executable=await puppeteer.executablePath();
+    if(typeof executable!=='string'){observed.preflightPhase='invalid-result';return observed;}
+    observed.preflightPhase='stat';observed.executableRegular=(await io.stat(executable)).isFile();
+    observed.preflightPhase='access';await io.access(executable,1);observed.executableAccessible=true;observed.preflightPhase='complete';
+  }catch(error){observed.preflightErrno=['ENOENT','EACCES','EPERM'].includes(error?.code)?error.code:'other';}
+  return observed;
+}
 export function launchFailureDiagnostics(error,preflight={}){
   const message=typeof error?.message==='string'?error.message:'';
   const text=message.slice(0,8192)+(message.length>8192?message.slice(-8192):'');
   const match=/^Failed to launch the browser process:\s*Code:\s*(\d{1,3})\b/.exec(text);
+  const wrapperErrno=/^Failed to launch the browser process:[^\r\n]*\b(ENOENT|EACCES|EPERM)\b/.exec(text);
   const code=match?Number(match[1]):null;
   return {errorName:['Error','TimeoutError','TypeError','SyntaxError'].includes(error?.name)?error.name:'other',
-    errno:['ENOENT','EACCES','EPERM'].includes(error?.code)?error.code:'other',
+    errno:['ENOENT','EACCES','EPERM'].includes(error?.code)?error.code:wrapperErrno?.[1]||'other',
     exitCode:code!==null&&code<=255?code:null,messageTruncated:message.length>16384,
     launchCallable:preflight.launchCallable===true,
     executableRegular:typeof preflight.executableRegular==='boolean'?preflight.executableRegular:null,
     executableAccessible:typeof preflight.executableAccessible==='boolean'?preflight.executableAccessible:null,
-    processExitHeader:!!match,launchNotFunction:/puppeteer\.launch is not a function/.test(text),
+    preflightPhase:['resolve','invalid-result','stat','access','complete'].includes(preflight.preflightPhase)?preflight.preflightPhase:'resolve',
+    preflightErrno:['ENOENT','EACCES','EPERM'].includes(preflight.preflightErrno)?preflight.preflightErrno:'other',
+    processExitHeader:/^Failed to launch the browser process:/.test(text),launchNotFunction:/puppeteer\.launch is not a function/.test(text),
     setuidNotRoot:/The setuid sandbox is not running as root/.test(text),
     crashpadPermission:/crashpad.*(?:Permission denied|Operation not permitted)/i.test(text),
     devtoolsEndpoint:/waiting for the WS endpoint URL/.test(text),
-    protocolTimeout:/timed out\. Increase the ['"]?protocolTimeout['"]? setting/.test(text)};
+    protocolTimeout:/timed out\. Increase the ['"]?protocolTimeout['"]? setting/.test(text),
+    configuredPathMissing:/Tried to find the browser at the configured path/.test(text),
+    cacheConfiguration:/cache path is incorrectly configured/.test(text)};
 }
 export const launchFailureCategories=Object.freeze(['crashpad-database','readonly-filesystem','sandbox-unavailable','namespace-permission','missing-shared-library','missing-executable','launch-timeout','other']);
 export function classifyLaunchFailure(error){
@@ -69,7 +84,7 @@ export async function main(argv){
   if(process.getuid?.()===0||process.env.GAMEYFIN_HOSTED_BROWSER!=='reviewed-fixture-only')throw new Error('Hosted nonroot boundary');
   const require=createRequire('/home/pptruser/package.json');
   const puppeteer=require('puppeteer');
-  const sockets=new Set();let browser,proxy,bridge,profile;const preflight={launchCallable:typeof puppeteer.launch==='function'};
+  const sockets=new Set();let browser,proxy,bridge,profile,preflight={launchCallable:typeof puppeteer.launch==='function'};
   let timedOut=false;const timer=setTimeout(()=>{timedOut=true;browser?.close().catch(()=>{});proxy?.close();for(const s of sockets)s.destroy();},90000);
   const lines=[];let pending,buffer='',bytes=0,inputEnded=false;
   process.stdin.setEncoding('utf8');process.stdin.on('data',chunk=>{
@@ -89,7 +104,7 @@ export async function main(argv){
     await fs.mkdir(profile+'/Default');await fs.writeFile(profile+'/Default/Preferences',JSON.stringify({webrtc:{ip_handling_policy:'disable_non_proxied_udp'}}),{mode:0o600});
     currentPhase='chrome-launch';
     // Observational only: failure to inspect must not alter the actual launch.
-    try{const executable=puppeteer.executablePath();preflight.executableRegular=(await fs.stat(executable)).isFile();await fs.access(executable,1);preflight.executableAccessible=true;}catch{preflight.executableAccessible=false;}
+    preflight=await observeExecutable(puppeteer);
     browser=await puppeteer.launch({headless:true,userDataDir:profile,env:launchEnvironment(profile),dumpio:false,timeout:10000,defaultViewport:{width:1280,height:800},args:[...chromeProxyFlags(55202),'--lang=en-US','--disable-background-networking','--disable-component-update','--disable-sync','--no-first-run']});
     currentPhase='sandbox';
     const page=await browser.newPage();await page.emulateTimezone('UTC');await page.setExtraHTTPHeaders({'Accept-Language':'en-US'});await page.goto('chrome://sandbox',{timeout:10000});

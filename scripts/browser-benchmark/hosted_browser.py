@@ -217,11 +217,12 @@ def validate_failure_receipt(value):
             raise ValueError('Browser failure receipt schema')
     if 'launchDiagnostics' in value:
         data=value['launchDiagnostics']
-        booleans={'messageTruncated','launchCallable','processExitHeader','launchNotFunction','setuidNotRoot','crashpadPermission','devtoolsEndpoint','protocolTimeout'}
+        booleans={'messageTruncated','launchCallable','processExitHeader','launchNotFunction','setuidNotRoot','crashpadPermission','devtoolsEndpoint','protocolTimeout','configuredPathMissing','cacheConfiguration'}
         nullable={'executableRegular','executableAccessible'}
-        if (value['phase']!='chrome-launch' or not isinstance(data,dict) or set(data)!=booleans|nullable|{'errorName','errno','exitCode'} or
+        if (value['phase']!='chrome-launch' or not isinstance(data,dict) or set(data)!=booleans|nullable|{'errorName','errno','exitCode','preflightPhase','preflightErrno'} or
             any(type(data[k]) is not bool for k in booleans) or any(data[k] is not None and type(data[k]) is not bool for k in nullable) or
             data['errorName'] not in ('Error','TimeoutError','TypeError','SyntaxError','other') or data['errno'] not in ('ENOENT','EACCES','EPERM','other') or
+            data['preflightPhase'] not in ('resolve','invalid-result','stat','access','complete') or data['preflightErrno'] not in ('ENOENT','EACCES','EPERM','other') or
             (data['exitCode'] is not None and (type(data['exitCode']) is not int or not 0<=data['exitCode']<=255))):
             raise ValueError('Bounded launch diagnostics schema')
     return value

@@ -66,6 +66,14 @@ jobs:
           mkdir -p .benchmark/reports
           docker build --file scripts/browser-benchmark/Dockerfile --iidfile .benchmark/browser-image.id scripts/browser-benchmark
           timeout --signal=TERM --kill-after=5s 40s python3 -B scripts/browser-benchmark/chrome_smoke.py --image "$(cat .benchmark/browser-image.id)" --output .benchmark/reports/chrome-smoke.json
+      - name: Retain sanitized startup result before long application tests
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: chrome-startup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .benchmark/reports/chrome-smoke.json
+          retention-days: 7
+          if-no-files-found: warn
       - name: Build both exact original-UI sources sequentially
         shell: bash
         run: |

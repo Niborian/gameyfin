@@ -32,7 +32,7 @@ normal admin setup/login and explicit THIRD_PARTY plugin enable lifecycle.
 Sources and original synthetic cover bytes mount read-only. DB/data/plugin
 scratch lives only in the fresh marked fixture leaf.
 
-The browser is a **separate** container with 1 CPU and 768 MiB ceiling/PID128;
+The browser is a **separate** container with 1 CPU and 768 MiB ceiling/PID256;
 browser resource counters are reported separately, never attributed to app
 memory savings. It uses the digest-pinned official Puppeteer image, UID10042,
 read-only root filesystem and ephemeral tmpfs profile. Official sandboxing
@@ -122,6 +122,14 @@ existing SYS_ADMIN in hosted-CI browser/smoke containers, with exact-set guards.
 Nonroot, no-new-privileges, readonly root, private networking, no host mounts,
 limits and the actual sandbox gate remain unchanged. This is CI fixture startup
 repair, not a production change or proof of successful startup/performance.
+
+The subsequent smoke passed actual startup/sandbox checks but recorded 29 PID
+limit denials at PID128. Review raised only the separate browser/smoke cap to
+PID256 (CPU1/RAM768 MiB unchanged; application cap unchanged). Normal browser
+failures now retain fixed authentication-stage and numeric PID/OOM counters,
+never credentials or page/error text, to distinguish authentication from resource
+pressure. Neither startup success nor this fixture budget change proves an app
+performance improvement.
 
 Primary references: [official Puppeteer Docker sandbox](https://pptr.dev/guides/docker),
 [Chromium proxy semantics](https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md),

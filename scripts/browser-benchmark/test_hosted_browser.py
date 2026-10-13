@@ -10,6 +10,12 @@ class CreationTests(unittest.TestCase):
         self.assertEqual(hosted_browser.validate_failure_receipt(row),row)
         for mutation in ({'launchFailureCategory':'secret password'},{'launchFailureCategory':[]},{'phase':'navigation'},{'rawMessage':'secret'},{'browserFailed':1}):
             with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,**mutation})
+    def test_auth_failure_enum_and_numeric_counters(self):
+        counters={x:0 for x in ('pids.events.max','memory.events.max','memory.events.oom','memory.events.oom_kill')}
+        row={'browserFailed':True,'phase':'authentication','authStage':'submit','failureCounters':counters}
+        self.assertEqual(hosted_browser.validate_failure_receipt(row),row)
+        for mutation in ({'authStage':'private password'},{'phase':'navigation'},{'failureCounters':{**counters,'private':'password'}},{'failureCounters':{**counters,'pids.events.max':True}}):
+            with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,**mutation})
     def test_launch_diagnostics_strict_no_extra_or_string_evidence(self):
         data={key:False for key in ('messageTruncated','launchCallable','processExitHeader','launchNotFunction','setuidNotRoot','crashpadPermission','devtoolsEndpoint','protocolTimeout','configuredPathMissing','cacheConfiguration')}
         data.update(errorName='Error',errno='other',exitCode=1,executableRegular=True,executableAccessible=True,preflightPhase='complete',preflightErrno='other')
@@ -21,7 +27,8 @@ class CreationTests(unittest.TestCase):
         args=creation_args('a'*16,'sha256:'+'b'*64,'gameyfin-browser-net-'+'a'*16,'172.22.0.2',1,'c'*64)
         self.assertEqual(args.count('--cap-add'),2)
         self.assertEqual(hosted_browser.CREATION_PLAN['capAdd'],['SYS_ADMIN','SYS_CHROOT'])
-        for value in ['--read-only','--init','--interactive','no-new-privileges','10042:10042','SYS_ADMIN','SYS_CHROOT','768m','128']:
+        self.assertEqual(hosted_browser.CREATION_PLAN['pidsLimit'],256)
+        for value in ['--read-only','--init','--interactive','no-new-privileges','10042:10042','SYS_ADMIN','SYS_CHROOT','768m','256']:
             self.assertIn(value,args)
         for value in ['--privileged','--publish','--network=host','--no-sandbox','/var/run/docker.sock']:
             self.assertNotIn(value,args)

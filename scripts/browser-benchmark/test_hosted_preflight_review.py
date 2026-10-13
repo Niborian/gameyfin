@@ -62,7 +62,7 @@ class Tests(unittest.TestCase):
             root,row=self.fixture(base);network_calls=[0];browser_id='d'*64
             browser_row={'Id':browser_id,'Name':'/gameyfin-browser-'+OWNER,'Image':IMAGE,
                 'Config':{'Labels':{'gameyfin.browser.owner':OWNER},'User':'10042:10042'},
-                'HostConfig':{'NetworkMode':NETWORK,'Privileged':False,'PidMode':'','IpcMode':'private','UTSMode':'','CgroupnsMode':'private','Init':True,'ReadonlyRootfs':True,'PortBindings':{},'PublishAllPorts':False,'NanoCpus':1000000000,'Memory':768*1024**2,'MemorySwap':768*1024**2,'PidsLimit':128,'CapDrop':['ALL'],'CapAdd':['CAP_SYS_ADMIN','CAP_SYS_CHROOT']},
+                'HostConfig':{'NetworkMode':NETWORK,'Privileged':False,'PidMode':'','IpcMode':'private','UTSMode':'','CgroupnsMode':'private','Init':True,'ReadonlyRootfs':True,'PortBindings':{},'PublishAllPorts':False,'NanoCpus':1000000000,'Memory':768*1024**2,'MemorySwap':768*1024**2,'PidsLimit':256,'CapDrop':['ALL'],'CapAdd':['CAP_SYS_ADMIN','CAP_SYS_CHROOT']},
                 'NetworkSettings':{'Networks':{NETWORK:{}}},'Mounts':[]}
             def command(*args):
                 if args[:2]==('network','inspect'):

@@ -20,7 +20,7 @@ from container_diagnostics import capture
 
 BROWSER_BUDGET = {'cpuLimit': 1, 'memoryMiB': 768, 'scope': 'separate browser container; excluded from application resource savings'}
 CREATION_PLAN = {'user':'10042:10042','capDrop':['ALL'],'capAdd':['SYS_ADMIN','SYS_CHROOT'],
-    'cpuNano':1000000000,'memoryBytes':768*1024*1024,'pidsLimit':128,
+    'cpuNano':1000000000,'memoryBytes':768*1024*1024,'pidsLimit':256,
     'readonlyRoot':True,'publishedPorts':False,'bindMounts':[],
     'tmpfs':{'/tmp':'rw,nosuid,nodev,size=128m,mode=1777'}}
 NUMBERS = {'domContentLoadedMs','loadMs','routeContentReadyMs','coverDecodedMs','coverNaturalWidth','coverNaturalHeight','coverResponseStatus','encodedDataLength','resourceDurationMs'}
@@ -200,7 +200,7 @@ def creation_args(owner,image,network,app_ip,cover_id,cover_sha):
         '--network',network,'--cgroupns','private','--read-only','--init','--user','10042:10042',
         '--cap-drop','ALL','--cap-add','SYS_ADMIN','--cap-add','SYS_CHROOT', # Chrome namespace/chroot sandbox only; ephemeral hosted CI.
         '--security-opt','no-new-privileges','--cpus','1','--memory','768m','--memory-swap','768m',
-        '--pids-limit','128','--shm-size','128m','--tmpfs','/tmp:rw,nosuid,nodev,size=128m,mode=1777',
+        '--pids-limit','256','--shm-size','128m','--tmpfs','/tmp:rw,nosuid,nodev,size=128m,mode=1777',
         '--env','GAMEYFIN_HOSTED_BROWSER=reviewed-fixture-only','--interactive',
         image,app_ip,str(cover_id),cover_sha]
 
@@ -208,9 +208,13 @@ def creation_args(owner,image,network,app_ip,cover_id,cover_sha):
 def validate_failure_receipt(value):
     base={'browserFailed','phase'}
     categories={'crashpad-database','readonly-filesystem','sandbox-unavailable','namespace-permission','missing-shared-library','missing-executable','launch-timeout','other'}
-    if (not isinstance(value,dict) or value.get('browserFailed') is not True or set(value) not in (base,base|{'launchFailureCategory'},base|{'launchFailureCategory','launchDiagnostics'}) or
+    if (not isinstance(value,dict) or value.get('browserFailed') is not True or not base.issubset(value) or set(value)-base-{'launchFailureCategory','launchDiagnostics','authStage','failureCounters'} or
         value.get('phase') not in ('arguments','input','bridge','profile','chrome-launch','sandbox','authentication','navigation','cleanup')):
         raise ValueError('Browser failure receipt schema')
+    if 'authStage' in value and (value['phase']!='authentication' or value['authStage'] not in ('interception','login-navigation','login-form','submit','redirect','complete')):raise ValueError('Auth stage boundary')
+    if 'failureCounters' in value:
+        data=value['failureCounters'];keys={'pids.events.max','memory.events.max','memory.events.oom','memory.events.oom_kill'}
+        if not isinstance(data,dict) or set(data)!=keys or any(x is not None and (type(x) is not int or not 0<=x<=2**53-1) for x in data.values()):raise ValueError('Failure cgroup numeric boundary')
     if 'launchFailureCategory' in value:
         category=value['launchFailureCategory']
         if value['phase']!='chrome-launch' or not isinstance(category,str) or category not in categories:

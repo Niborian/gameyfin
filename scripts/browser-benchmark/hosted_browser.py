@@ -205,6 +205,18 @@ def creation_args(owner,image,network,app_ip,cover_id,cover_sha):
         image,app_ip,str(cover_id),cover_sha]
 
 
+def validate_failure_receipt(value):
+    base={'browserFailed','phase'}
+    categories={'crashpad-database','readonly-filesystem','sandbox-unavailable','namespace-permission','missing-shared-library','missing-executable','launch-timeout','other'}
+    if (not isinstance(value,dict) or value.get('browserFailed') is not True or set(value) not in (base,base|{'launchFailureCategory'}) or
+        value.get('phase') not in ('arguments','input','bridge','profile','chrome-launch','sandbox','authentication','navigation','cleanup')):
+        raise ValueError('Browser failure receipt schema')
+    if 'launchFailureCategory' in value:
+        category=value['launchFailureCategory']
+        if value['phase']!='chrome-launch' or not isinstance(category,str) or category not in categories:
+            raise ValueError('Browser failure receipt schema')
+    return value
+
 class HostedBrowser:
     def __init__(self,owner,image,network,app_ip,cover_id,cover_sha,*,app_id,app_image,fixture_root,waiting=False,diagnostic_output=None):
         if os.name!='posix' or os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('RUNNER_ENVIRONMENT')!='github-hosted':
@@ -259,8 +271,7 @@ class HostedBrowser:
                     value=json.loads(raw)
                     if not isinstance(value,dict): raise ValueError('Browser receipt schema')
                     if value.get('browserFailed') is True:
-                        if set(value)!={'browserFailed','phase'} or value['phase'] not in ('arguments','input','bridge','profile','chrome-launch','sandbox','authentication','navigation','cleanup'):
-                            raise ValueError('Browser failure receipt schema')
+                        validate_failure_receipt(value)
                         self.record_driver_failure(value)
                         raise ValueError('Private browser phase failed; sanitized receipt retained')
                     return value

@@ -5,6 +5,11 @@ import hosted_browser
 from hosted_browser import creation_args,validate_sample,cleanup_known_browser,record_creation_intent,HostedBrowser
 
 class CreationTests(unittest.TestCase):
+    def test_failure_receipt_category_is_strict_nonsecret_enum(self):
+        row={'browserFailed':True,'phase':'chrome-launch','launchFailureCategory':'sandbox-unavailable'}
+        self.assertEqual(hosted_browser.validate_failure_receipt(row),row)
+        for mutation in ({'launchFailureCategory':'secret password'},{'launchFailureCategory':[]},{'phase':'navigation'},{'rawMessage':'secret'},{'browserFailed':1}):
+            with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,**mutation})
     def test_sandbox_and_resource_boundary(self):
         args=creation_args('a'*16,'sha256:'+'b'*64,'gameyfin-browser-net-'+'a'*16,'172.22.0.2',1,'c'*64)
         for value in ['--read-only','--init','--interactive','no-new-privileges','10042:10042','SYS_ADMIN','768m','128']:

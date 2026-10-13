@@ -23,11 +23,14 @@ class Smoke(unittest.TestCase):
  def test_receipt_rejects_raw_and_noninteger_codes(self):
   row={'scope':'Chrome-only startup diagnostic; not app performance','started':False,'sandboxVerified':False,'exitCode':None,'signal':'SIGTRAP','signalScope':'Includes diagnostic shutdown; not automatic crash attribution','deadlineTriggered':False,'exitObservedBeforeCleanup':True,'failurePhase':'endpoint','fatalFlags':{x:False for x in ('pthreadCreate','resourceUnavailable','checkFailed','seccomp','ptrace','credentialsSource','zygoteSource')},'before':{x:0 for x in ('pids.events.max','memory.events.max','memory.events.oom','memory.events.oom_kill')},'after':{x:0 for x in ('pids.events.max','memory.events.max','memory.events.oom','memory.events.oom_kill')}}
   row['chromeCacheVersion']='155.0.8059.39';row['zygoteChecks']={**{x:False for x in ('processValid','socketpair','receiveProcessId','bootPid','realPid')},'errno':None,'sourceLine':None}
+  row['fatalExcerpt']={'lines':['[FATAL] Check failed: .'],'rejected':False}
   self.assertEqual(chrome_smoke.validate_receipt(row),row)
   for mutation in ({'raw':'secret'},{'exitCode':True},{'signal':'private'},{'chromeCacheVersion':'/private/secret'}):
    with self.assertRaises(ValueError):chrome_smoke.validate_receipt({**row,**mutation})
   for mutation in ({'raw':'private'},{'errno':True},{'errno':999},{'processValid':'private'},{'sourceLine':True},{'sourceLine':100001}):
    with self.assertRaises(ValueError):chrome_smoke.validate_receipt({**row,'zygoteChecks':{**row['zygoteChecks'],**mutation}})
+  for line in ['password=private','api_key: hidden','session_id: hidden','session-id: hidden','auth_header: hidden','SID: hidden','client_id: hidden','a=hidden','credential: hidden','ws://private','ftp://private','2001:db8::1','https://private','/private','10.0.0.200','bad\x01text','x'*257]:
+   with self.assertRaises(ValueError):chrome_smoke.validate_receipt({**row,'fatalExcerpt':{'lines':[line],'rejected':False}})
  def test_recorded_renamed_container_cannot_be_forgotten(self):
   with tempfile.TemporaryDirectory() as directory:
    path=Path(directory)/'intent.json';owner='a'*16;image='sha256:'+'b'*64;identity='c'*64

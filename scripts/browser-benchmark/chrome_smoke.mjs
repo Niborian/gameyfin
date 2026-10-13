@@ -12,8 +12,10 @@ export function fatalFlags(text){
 export function zygoteChecks(text){
   text=typeof text==='string'?text.slice(0,8192)+text.slice(-8192):'';
   const lines=text.split('\n').filter(line=>/zygote_host_impl_linux\.cc/.test(line)&&/Check failed:/.test(line));
-  const result={processValid:false,socketpair:false,receiveProcessId:false,bootPid:false,realPid:false,errno:null};
+  const result={processValid:false,socketpair:false,receiveProcessId:false,bootPid:false,realPid:false,errno:null,sourceLine:null};
   for(const line of lines){
+    const source=/zygote_host_impl_linux\.cc(?::|\()(\d{1,6})(?:\)|\]|:)/.exec(line);
+    if(source&&Number(source[1])<=100000)result.sourceLine=Number(source[1]);
     result.processValid ||= /Check failed: process\.IsValid\(\)/.test(line);
     result.socketpair ||= /Check failed:[^\n]*socketpair\(/.test(line);
     result.receiveProcessId ||= /Check failed:[^\n]*EnableReceiveProcessId\(/.test(line);
@@ -23,6 +25,11 @@ export function zygoteChecks(text){
     if(errno&&[1,11,13,28,38,95].includes(Number(errno[1])))result.errno=Number(errno[1]);
   }
   return result;
+}
+export function installedChromeVersion(executable){
+  if(typeof executable!=='string')return null;
+  const match=/\/chrome\/linux-(\d{1,5}\.\d{1,5}\.\d{1,5}\.\d{1,5})\//.exec(executable);
+  return match?match[1]:null;
 }
 export async function counters(read=fs.readFile){
   const result={};
@@ -36,14 +43,15 @@ async function main(){
   if(process.getuid?.()===0||process.env.GAMEYFIN_HOSTED_BROWSER!=='reviewed-fixture-only')throw new Error('Owned hosted boundary');
   const require=createRequire('/home/pptruser/package.json');const puppeteer=require('puppeteer');const {launch}=require('@puppeteer/browsers');
   let child,browser;let raw='',code=null,signal=null,phase='launch';
-  const result={scope:'Chrome-only startup diagnostic; not app performance',started:false,sandboxVerified:false,exitCode:null,signal:'none',signalScope:'Includes diagnostic shutdown; not automatic crash attribution',deadlineTriggered:false,exitObservedBeforeCleanup:false,failurePhase:null,fatalFlags:fatalFlags(''),zygoteChecks:zygoteChecks(''),before:await counters(),after:null};
+  const result={scope:'Chrome-only startup diagnostic; not app performance',chromeCacheVersion:null,started:false,sandboxVerified:false,exitCode:null,signal:'none',signalScope:'Includes diagnostic shutdown; not automatic crash attribution',deadlineTriggered:false,exitObservedBeforeCleanup:false,failurePhase:null,fatalFlags:fatalFlags(''),zygoteChecks:zygoteChecks(''),before:await counters(),after:null};
   const timer=setTimeout(()=>{result.deadlineTriggered=true;child?.kill();},15000);
   try{
     const profile=await fs.mkdtemp('/tmp/gameyfin-browser-');
     await fs.mkdir(profile+'/xdg-config',{mode:0o700});await fs.mkdir(profile+'/xdg-cache',{mode:0o700});
     const args=await puppeteer.defaultArgs({headless:true,userDataDir:profile});
     args.push('--remote-debugging-port=0',...chromeProxyFlags(55202),'--lang=en-US','--disable-background-networking','--disable-component-update','--disable-sync','--no-first-run');
-    child=launch({executablePath:await puppeteer.executablePath(),args,env:launchEnvironment(profile),dumpio:false});
+    const executablePath=await puppeteer.executablePath();result.chromeCacheVersion=installedChromeVersion(executablePath);
+    child=launch({executablePath,args,env:launchEnvironment(profile),dumpio:false});
     child.nodeProcess.once('exit',(actualCode,actualSignal)=>{code=actualCode;signal=actualSignal;});
     child.nodeProcess.stderr.on('data',chunk=>{raw=(raw+String(chunk)).slice(-16384);});
     phase='endpoint';const endpoint=await child.waitForLineOutput(/^DevTools listening on (ws:\/\/.*)$/,10000);

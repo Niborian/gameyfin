@@ -1,5 +1,11 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {fatalFlags,counters,zygoteChecks} from './chrome_smoke.mjs';
+import {fatalFlags,counters,zygoteChecks,installedChromeVersion} from './chrome_smoke.mjs';
+test('version and known CHECK line retain numbers only, never executable/source paths',()=>{
+ assert.equal(installedChromeVersion('/home/private/chrome/linux-155.0.8059.39/chrome-linux64/chrome'),'155.0.8059.39');
+ assert.equal(installedChromeVersion('/private/secret.exe'),null);
+ for(const line of ['[zygote_host_impl_linux.cc:191] Check failed: .','[zygote_host_impl_linux.cc(191)] Check failed: .'])assert.equal(zygoteChecks(line).sourceLine,191);
+ assert.equal(zygoteChecks('[zygote_host_impl_linux.cc:100001] Check failed: .').sourceLine,null);
+});
 test('fixed known CHECK predicates and errno never retain expression/path text',()=>{
  const row=zygoteChecks('[FATAL:zygote_host_impl_linux.cc:191] Check failed: process.IsValid(). private/path password=secret: Operation not permitted (1)');
  assert.equal(row.processValid,true);assert.equal(row.errno,1);assert.equal(JSON.stringify(row).includes('private'),false);

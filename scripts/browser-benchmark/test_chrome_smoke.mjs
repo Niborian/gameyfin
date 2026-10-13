@@ -1,5 +1,12 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {fatalFlags,counters} from './chrome_smoke.mjs';
+import {fatalFlags,counters,zygoteChecks} from './chrome_smoke.mjs';
+test('fixed known CHECK predicates and errno never retain expression/path text',()=>{
+ const row=zygoteChecks('[FATAL:zygote_host_impl_linux.cc:191] Check failed: process.IsValid(). private/path password=secret: Operation not permitted (1)');
+ assert.equal(row.processValid,true);assert.equal(row.errno,1);assert.equal(JSON.stringify(row).includes('private'),false);
+ assert.equal(zygoteChecks('Check failed: process.IsValid() Operation not permitted (1)').processValid,false);
+ assert.equal(zygoteChecks('[zygote_host_impl_linux.cc:1] Check failed: unknown private errno (999)').errno,null);
+ for(const [expression,key] of [['0 == socketpair(AF_UNIX)','socketpair'],['base::UnixDomainSocket::EnableReceiveProcessId(fds[0])','receiveProcessId'],['boot_pid > 1','bootPid'],['real_pid > 1','realPid']])assert.equal(zygoteChecks('[zygote_host_impl_linux.cc:1] Check failed: '+expression)[key],true);
+});
 test('bounded fatal booleans never retain stderr text',()=>{
  const row=fatalFlags('secret /private credentials.cc Check failed: pthread_create: Resource temporarily unavailable');
  assert.equal(row.pthreadCreate,true);assert.equal(row.credentialsSource,true);assert.equal(JSON.stringify(row).includes('secret'),false);

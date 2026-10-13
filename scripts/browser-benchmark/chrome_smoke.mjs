@@ -9,6 +9,21 @@ export function fatalFlags(text){
     checkFailed:/Check failed:/.test(text),seccomp:/seccomp/i.test(text),ptrace:/ptrace/i.test(text),
     credentialsSource:/credentials\.cc/.test(text),zygoteSource:/zygote_host_impl_linux\.cc/.test(text)};
 }
+export function zygoteChecks(text){
+  text=typeof text==='string'?text.slice(0,8192)+text.slice(-8192):'';
+  const lines=text.split('\n').filter(line=>/zygote_host_impl_linux\.cc/.test(line)&&/Check failed:/.test(line));
+  const result={processValid:false,socketpair:false,receiveProcessId:false,bootPid:false,realPid:false,errno:null};
+  for(const line of lines){
+    result.processValid ||= /Check failed: process\.IsValid\(\)/.test(line);
+    result.socketpair ||= /Check failed:[^\n]*socketpair\(/.test(line);
+    result.receiveProcessId ||= /Check failed:[^\n]*EnableReceiveProcessId\(/.test(line);
+    result.bootPid ||= /Check failed:[^\n]*boot_pid\s*>\s*1/.test(line);
+    result.realPid ||= /Check failed:[^\n]*real_pid\s*>\s*1/.test(line);
+    const errno=/(?:Operation not permitted|Permission denied|Resource temporarily unavailable|No space left on device|Function not implemented|Operation not supported) \((\d{1,3})\)\s*$/.exec(line);
+    if(errno&&[1,11,13,28,38,95].includes(Number(errno[1])))result.errno=Number(errno[1]);
+  }
+  return result;
+}
 export async function counters(read=fs.readFile){
   const result={};
   for(const [file,keys] of [['pids.events',['max']],['memory.events',['max','oom','oom_kill']]]){
@@ -21,7 +36,7 @@ async function main(){
   if(process.getuid?.()===0||process.env.GAMEYFIN_HOSTED_BROWSER!=='reviewed-fixture-only')throw new Error('Owned hosted boundary');
   const require=createRequire('/home/pptruser/package.json');const puppeteer=require('puppeteer');const {launch}=require('@puppeteer/browsers');
   let child,browser;let raw='',code=null,signal=null,phase='launch';
-  const result={scope:'Chrome-only startup diagnostic; not app performance',started:false,sandboxVerified:false,exitCode:null,signal:'none',signalScope:'Includes diagnostic shutdown; not automatic crash attribution',deadlineTriggered:false,exitObservedBeforeCleanup:false,failurePhase:null,fatalFlags:fatalFlags(''),before:await counters(),after:null};
+  const result={scope:'Chrome-only startup diagnostic; not app performance',started:false,sandboxVerified:false,exitCode:null,signal:'none',signalScope:'Includes diagnostic shutdown; not automatic crash attribution',deadlineTriggered:false,exitObservedBeforeCleanup:false,failurePhase:null,fatalFlags:fatalFlags(''),zygoteChecks:zygoteChecks(''),before:await counters(),after:null};
   const timer=setTimeout(()=>{result.deadlineTriggered=true;child?.kill();},15000);
   try{
     const profile=await fs.mkdtemp('/tmp/gameyfin-browser-');
@@ -43,7 +58,7 @@ async function main(){
     try{await child?.close();}catch{}
     result.exitCode=Number.isInteger(code)&&code>=0&&code<=255?code:null;
     result.signal=['SIGABRT','SIGTRAP','SIGSYS','SIGSEGV','SIGKILL','SIGTERM'].includes(signal)?signal:signal===null?'none':'other';
-    result.fatalFlags=fatalFlags(raw);raw='';result.after=await counters();
+    result.fatalFlags=fatalFlags(raw);result.zygoteChecks=zygoteChecks(raw);raw='';result.after=await counters();
     process.stdout.write(JSON.stringify(result)+'\n');
     if(!result.started||!result.sandboxVerified)process.exitCode=1;
   }

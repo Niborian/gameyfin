@@ -13,7 +13,7 @@ def fixture():
             "Config": {"Labels": {"gameyfin.browser.owner": OWNER},'User':'10042:10042'},
             'NetworkSettings':{'Networks':{'gameyfin-browser-net-'+OWNER:{}}},'Mounts':[],
             "HostConfig": {"NetworkMode": "gameyfin-browser-net-" + OWNER,
-                           "Privileged": False, "ReadonlyRootfs": True,'CgroupnsMode':'private','Init':True,'PidsLimit':128,'NanoCpus':1000000000,'Memory':768*1024*1024,'MemorySwap':768*1024*1024,'CapDrop':['ALL'],'CapAdd':['SYS_ADMIN']}}
+                           "Privileged": False, "ReadonlyRootfs": True,'CgroupnsMode':'private','Init':True,'PidsLimit':128,'NanoCpus':1000000000,'Memory':768*1024*1024,'MemorySwap':768*1024*1024,'CapDrop':['ALL'],'CapAdd':['SYS_ADMIN','SYS_CHROOT']}}
 
 
 class WatchdogTests(unittest.TestCase):
@@ -45,9 +45,10 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(calls, [("inspect", ID)])
 
     def test_canonical_docker28_cap_does_not_change_accepted_grant(self):
-        row=fixture();row['HostConfig']['CapAdd']=['CAP_SYS_ADMIN']
-        self.assertEqual(validate(row,ID,OWNER,IMAGE),ID)
-        for caps in [['CAP_SYS_ADMIN','CAP_NET_ADMIN'],['ALL'],['SYS_ADMIN','CAP_SYS_ADMIN']]:
+        for caps in [['CAP_SYS_ADMIN','CAP_SYS_CHROOT'],['SYS_CHROOT','CAP_SYS_ADMIN']]:
+            row=fixture();row['HostConfig']['CapAdd']=caps
+            self.assertEqual(validate(row,ID,OWNER,IMAGE),ID)
+        for caps in [['CAP_SYS_ADMIN'],['CAP_SYS_CHROOT'],['CAP_SYS_ADMIN','CAP_SYS_CHROOT','CAP_NET_ADMIN'],['ALL'],['SYS_ADMIN','CAP_SYS_ADMIN'],['SYS_ADMIN','SYS_CHROOT','CAP_SYS_CHROOT']]:
             row=fixture();row['HostConfig']['CapAdd']=caps
             with self.assertRaises(ValueError):validate(row,ID,OWNER,IMAGE)
 

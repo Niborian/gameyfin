@@ -19,7 +19,9 @@ class CreationTests(unittest.TestCase):
             with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,'launchDiagnostics':{**data,**mutation}})
     def test_sandbox_and_resource_boundary(self):
         args=creation_args('a'*16,'sha256:'+'b'*64,'gameyfin-browser-net-'+'a'*16,'172.22.0.2',1,'c'*64)
-        for value in ['--read-only','--init','--interactive','no-new-privileges','10042:10042','SYS_ADMIN','768m','128']:
+        self.assertEqual(args.count('--cap-add'),2)
+        self.assertEqual(hosted_browser.CREATION_PLAN['capAdd'],['SYS_ADMIN','SYS_CHROOT'])
+        for value in ['--read-only','--init','--interactive','no-new-privileges','10042:10042','SYS_ADMIN','SYS_CHROOT','768m','128']:
             self.assertIn(value,args)
         for value in ['--privileged','--publish','--network=host','--no-sandbox','/var/run/docker.sock']:
             self.assertNotIn(value,args)

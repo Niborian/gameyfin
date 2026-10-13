@@ -19,7 +19,7 @@ from owned_container_watchdog import validate as validate_browser_contract
 from container_diagnostics import capture
 
 BROWSER_BUDGET = {'cpuLimit': 1, 'memoryMiB': 768, 'scope': 'separate browser container; excluded from application resource savings'}
-CREATION_PLAN = {'user':'10042:10042','capDrop':['ALL'],'capAdd':['SYS_ADMIN'],
+CREATION_PLAN = {'user':'10042:10042','capDrop':['ALL'],'capAdd':['SYS_ADMIN','SYS_CHROOT'],
     'cpuNano':1000000000,'memoryBytes':768*1024*1024,'pidsLimit':128,
     'readonlyRoot':True,'publishedPorts':False,'bindMounts':[],
     'tmpfs':{'/tmp':'rw,nosuid,nodev,size=128m,mode=1777'}}
@@ -198,7 +198,7 @@ def creation_args(owner,image,network,app_ip,cover_id,cover_sha):
         raise ValueError('Cover boundary')
     return ['create','--name','gameyfin-browser-'+owner,'--label','gameyfin.browser.owner='+owner,
         '--network',network,'--cgroupns','private','--read-only','--init','--user','10042:10042',
-        '--cap-drop','ALL','--cap-add','SYS_ADMIN', # Official Chrome sandbox only; ephemeral hosted CI.
+        '--cap-drop','ALL','--cap-add','SYS_ADMIN','--cap-add','SYS_CHROOT', # Chrome namespace/chroot sandbox only; ephemeral hosted CI.
         '--security-opt','no-new-privileges','--cpus','1','--memory','768m','--memory-swap','768m',
         '--pids-limit','128','--shm-size','128m','--tmpfs','/tmp:rw,nosuid,nodev,size=128m,mode=1777',
         '--env','GAMEYFIN_HOSTED_BROWSER=reviewed-fixture-only','--interactive',

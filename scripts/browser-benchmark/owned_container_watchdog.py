@@ -42,7 +42,7 @@ def validate_cleanup_scope(inspect, container_id, owner, image_id):
 def validate(inspect,container_id,owner,image_id):
     identity=validate_cleanup_scope(inspect,container_id,owner,image_id)
     host=inspect['HostConfig']
-    if host.get('NanoCpus')!=1000000000 or host.get('Memory')!=768*1024*1024 or host.get('MemorySwap')!=768*1024*1024 or host.get('PidsLimit')!=128 or not caps_match(host.get('CapDrop'),['ALL']) or not caps_match(host.get('CapAdd'),['SYS_ADMIN']):
+    if host.get('NanoCpus')!=1000000000 or host.get('Memory')!=768*1024*1024 or host.get('MemorySwap')!=768*1024*1024 or host.get('PidsLimit')!=128 or not caps_match(host.get('CapDrop'),['ALL']) or not caps_match(host.get('CapAdd'),['SYS_ADMIN','SYS_CHROOT']):
         raise ValueError('Browser resource/capability boundary')
     return identity
 

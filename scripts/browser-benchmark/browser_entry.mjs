@@ -5,12 +5,26 @@ import {createRequire} from 'node:module';
 import {LoopbackProxy} from './frontend_loopback_proxy.mjs';
 import {chromeProxyFlags} from './frontend_proxy_policy.mjs';
 import {FixtureUiDriver} from './frontend_ui_driver.mjs';
-let currentPhase='arguments',failurePhase=null,failureEmitted=false;
-export function failureReceipt(phase){
-  if(!['arguments','input','bridge','profile','chrome-launch','sandbox','authentication','navigation','cleanup'].includes(phase))throw new Error('Failure phase enum boundary');
-  return {browserFailed:true,phase};
+let currentPhase='arguments',failurePhase=null,failureEmitted=false,launchFailureCategory=null;
+export const launchFailureCategories=Object.freeze(['crashpad-database','readonly-filesystem','sandbox-unavailable','namespace-permission','missing-shared-library','missing-executable','launch-timeout','other']);
+export function classifyLaunchFailure(error){
+  // Inspect only a bounded in-memory message; never return/store the message.
+  const text=(typeof error?.message==='string'?error.message:'').slice(0,8192);
+  if(/chrome_crashpad_handler: --database is required/.test(text))return 'crashpad-database';
+  if(/Read-only file system|EROFS/.test(text))return 'readonly-filesystem';
+  if(/No usable sandbox|SUID sandbox helper binary was found, but is not configured correctly/.test(text))return 'sandbox-unavailable';
+  if(/Failed to move to new namespace|Failed to unshare/.test(text))return 'namespace-permission';
+  if(/error while loading shared libraries/.test(text))return 'missing-shared-library';
+  if(/Could not find Chrome|Browser was not found at the configured executablePath|spawn .* ENOENT/.test(text))return 'missing-executable';
+  if(/Timed out after .*waiting for the WS endpoint URL|Timeout of .* exceeded/.test(text))return 'launch-timeout';
+  return 'other';
 }
-function emitFailure(phase){if(!failureEmitted){failureEmitted=true;process.stdout.write(JSON.stringify(failureReceipt(phase))+'\n');}}
+export function failureReceipt(phase,category=null){
+  if(!['arguments','input','bridge','profile','chrome-launch','sandbox','authentication','navigation','cleanup'].includes(phase))throw new Error('Failure phase enum boundary');
+  if(category!==null&&(phase!=='chrome-launch'||!launchFailureCategories.includes(category)))throw new Error('Launch failure category boundary');
+  return {browserFailed:true,phase,...(category===null?{}:{launchFailureCategory:category})};
+}
+function emitFailure(phase){if(!failureEmitted){failureEmitted=true;process.stdout.write(JSON.stringify(failureReceipt(phase,launchFailureCategory))+'\n');}}
 
 export function validateArguments(argv){
   if(argv.length!==3||!/^172\.(1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3}$/.test(argv[0])||argv[0].split('.').some(x=>Number(x)>255)||!/^\d{1,10}$/.test(argv[1])||Number(argv[1])<1||! /^[a-f0-9]{64}$/.test(argv[2]))throw new Error('Fixture identity boundary');
@@ -78,7 +92,7 @@ export async function main(argv){
     if(timedOut)throw new Error('Controller deadline');
     const after=await browserResources();
     process.stdout.write(JSON.stringify({originalUiContentReady:true,coverDecoded:true,coverSha256Matches:true,navigations:results,browserResources:{before,after}})+'\n');
-  }catch{failurePhase=currentPhase;emitFailure(failurePhase);throw new Error('Hosted browser operation failed');}finally{
+  }catch(error){failurePhase=currentPhase;if(failurePhase==='chrome-launch')launchFailureCategory=classifyLaunchFailure(error);emitFailure(failurePhase);throw new Error('Hosted browser operation failed');}finally{
     currentPhase='cleanup';
     clearTimeout(timer);process.stdin.destroy();proxy?.close();for(const s of sockets)s.destroy();bridge?.close();
     // Container removal is the independent descendant fence. Never claim the

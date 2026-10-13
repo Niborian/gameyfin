@@ -1,5 +1,13 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {validateArguments,renderingConfiguration,browserResources,failureReceipt,launchEnvironment} from './browser_entry.mjs';
+import {validateArguments,renderingConfiguration,browserResources,failureReceipt,launchEnvironment,classifyLaunchFailure} from './browser_entry.mjs';
+test('bounded launch classification retains only fixed categories, never exception text',()=>{
+  const cases=[['chrome_crashpad_handler: --database is required','crashpad-database'],['Read-only file system','readonly-filesystem'],['No usable sandbox','sandbox-unavailable'],['Failed to move to new namespace: Operation not permitted','namespace-permission'],['error while loading shared libraries: private.so','missing-shared-library'],['Could not find Chrome','missing-executable'],['Timed out after 10000 ms while waiting for the WS endpoint URL','launch-timeout']];
+  for(const [message,expected] of cases){const category=classifyLaunchFailure(new Error(message+' password=secret https://private/'));assert.equal(category,expected);assert.equal(JSON.stringify(failureReceipt('chrome-launch',category)).includes('secret'),false);}
+  assert.equal(classifyLaunchFailure(new Error('private credential')),'other');
+  assert.equal(classifyLaunchFailure(new Error('Operation not permitted without namespace evidence')),'other');
+  assert.equal(classifyLaunchFailure(new Error('x'.repeat(8192)+'No usable sandbox')),'other');
+  assert.throws(()=>failureReceipt('navigation','sandbox-unavailable'));assert.throws(()=>failureReceipt('chrome-launch','raw secret'));
+});
 test('readonly-root launch writes XDG only into owned tmpfs profile without changing HOME or executable cache',()=>{
   const original={HOME:'/home/pptruser',PUPPETEER_CACHE_DIR:'/home/pptruser/.cache/puppeteer'};
   assert.deepEqual(launchEnvironment('/tmp/gameyfin-browser-aB1234',original),{...original,XDG_CONFIG_HOME:'/tmp/gameyfin-browser-aB1234/xdg-config',XDG_CACHE_HOME:'/tmp/gameyfin-browser-aB1234/xdg-cache'});

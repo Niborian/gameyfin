@@ -1,5 +1,13 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {validateArguments,renderingConfiguration,browserResources,failureReceipt,launchEnvironment,classifyLaunchFailure,launchFailureDiagnostics} from './browser_entry.mjs';
+import {validateArguments,renderingConfiguration,browserResources,failureReceipt,launchEnvironment,classifyLaunchFailure,launchFailureDiagnostics,observeExecutable} from './browser_entry.mjs';
+test('observational preflight awaits asynchronous resolver and never exposes paths or blocks launch',async()=>{
+  const fake={launch(){},executablePath:async()=>'/private/chrome'};
+  const io={stat:async path=>{assert.equal(path,'/private/chrome');return {isFile:()=>true};},access:async path=>assert.equal(path,'/private/chrome')};
+  assert.equal((await observeExecutable(fake,io)).preflightPhase,'complete');
+  const failure=await observeExecutable(fake,{stat:async()=>{throw Object.assign(new Error('private'),{code:'ENOENT'});}});
+  assert.equal(failure.preflightPhase,'stat');assert.equal(failure.preflightErrno,'ENOENT');assert.equal(JSON.stringify(failure).includes('private'),false);
+  assert.equal((await observeExecutable({launch(){},executablePath:async()=>{throw new Error('private');}},io)).preflightPhase,'resolve');
+});
 test('launch diagnostics expose only numeric/enums/booleans from bounded head and tail',()=>{
   const error=new Error('Failed to launch the browser process: Code: 1\nstderr: password=private '+ 'x'.repeat(20000)+'The setuid sandbox is not running as root');
   const row=launchFailureDiagnostics(error,{launchCallable:true,executableRegular:true,executableAccessible:true});
@@ -9,6 +17,9 @@ test('launch diagnostics expose only numeric/enums/booleans from bounded head an
   assert.equal(arbitrary.errorName,'other');assert.equal(arbitrary.errno,'other');assert.equal(arbitrary.exitCode,null);
   assert.equal(launchFailureDiagnostics(new TypeError('puppeteer.launch is not a function')).launchNotFunction,true);
   assert.equal(launchFailureDiagnostics(new Error('Target.setAutoAttach timed out. Increase the protocolTimeout setting')).protocolTimeout,true);
+  const spawn=launchFailureDiagnostics(new Error('Failed to launch the browser process: spawn /private/chrome EACCES\nstderr:\nprivate'));
+  assert.equal(spawn.processExitHeader,true);assert.equal(spawn.errno,'EACCES');assert.equal(spawn.exitCode,null);
+  assert.equal(launchFailureDiagnostics(new Error('Failed to launch the browser process: Code: undefined\nstderr:\nENOENT')).errno,'other');
 });
 test('bounded launch classification retains only fixed categories, never exception text',()=>{
   const cases=[['chrome_crashpad_handler: --database is required','crashpad-database'],['Read-only file system','readonly-filesystem'],['No usable sandbox','sandbox-unavailable'],['Failed to move to new namespace: Operation not permitted','namespace-permission'],['error while loading shared libraries: private.so','missing-shared-library'],['Could not find Chrome','missing-executable'],['Timed out after 10000 ms while waiting for the WS endpoint URL','launch-timeout']];

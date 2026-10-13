@@ -61,7 +61,7 @@ export function classifyLaunchFailure(error){
   return 'other';
 }
 export function failureReceipt(phase,category=null,diagnostics=null,stage=null,counters=null){
-  if(!['arguments','input','bridge','profile','chrome-launch','sandbox','authentication','navigation','cleanup'].includes(phase))throw new Error('Failure phase enum boundary');
+  if(!['arguments','input','bridge','profile','chrome-launch','sandbox','authentication','navigation','logout','cleanup'].includes(phase))throw new Error('Failure phase enum boundary');
   if(category!==null&&(phase!=='chrome-launch'||!launchFailureCategories.includes(category)))throw new Error('Launch failure category boundary');
   if(diagnostics!==null&&phase!=='chrome-launch')throw new Error('Launch diagnostics phase boundary');
   if(stage!==null&&(phase!=='authentication'||!authStages.includes(stage)))throw new Error('Authentication stage boundary');
@@ -130,13 +130,20 @@ export async function main(argv){
     if(username.length<1||username.length>128||password.length<16||password.length>256||/[\x00-\x1f\x7f]/.test(username+password))throw new Error('Private credentials boundary');
     currentPhase='authentication';await driver.authenticate(username,password);username='';password='';
     process.stdout.write(JSON.stringify({authenticated:true,sandboxVerified:true})+'\n');
-    if(await readLine()!=='navigate')throw new Error('Controller command boundary');
-    currentPhase='navigation';
-    const before=await browserResources();
-    const results=[];for(const route of ['/library/27003','/game/33000','/library/27003'])results.push(await driver.navigate(route));
-    if(timedOut)throw new Error('Controller deadline');
-    const after=await browserResources();
-    process.stdout.write(JSON.stringify({originalUiContentReady:true,coverDecoded:true,coverSha256Matches:true,navigations:results,browserResources:{before,after}})+'\n');
+    let command=await readLine();
+    if(command==='navigate'){
+      currentPhase='navigation';
+      const before=await browserResources();
+      const results=[];for(const route of ['/library/27003','/game/33000','/library/27003'])results.push(await driver.navigate(route));
+      if(timedOut)throw new Error('Controller deadline');
+      const after=await browserResources();
+      process.stdout.write(JSON.stringify({originalUiContentReady:true,coverDecoded:true,coverSha256Matches:true,navigations:results,browserResources:{before,after}})+'\n');
+      command=await readLine();
+    }
+    if(command!=='logout')throw new Error('Controller command boundary');
+    currentPhase='logout';const loggedOut=await driver.logout();
+    if(loggedOut?.loggedOut!==true)throw new Error('Normal UI logout gate');
+    process.stdout.write(JSON.stringify({loggedOut:true})+'\n');
   }catch(error){failurePhase=currentPhase;failureCounters=await browserFailureCounters();if(failurePhase==='authentication'&&authStages.includes(driver?.authStage))authStage=driver.authStage;if(failurePhase==='chrome-launch'){launchFailureCategory=classifyLaunchFailure(error);launchDiagnostics=launchFailureDiagnostics(error,preflight);}emitFailure(failurePhase);throw new Error('Hosted browser operation failed');}finally{
     currentPhase='cleanup';
     clearTimeout(timer);process.stdin.destroy();proxy?.close();for(const s of sockets)s.destroy();bridge?.close();

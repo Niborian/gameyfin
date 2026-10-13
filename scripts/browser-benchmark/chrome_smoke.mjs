@@ -31,6 +31,39 @@ export function installedChromeVersion(executable){
   const match=/\/chrome\/linux-(\d{1,5}\.\d{1,5}\.\d{1,5}\.\d{1,5})\//.exec(executable);
   return match?match[1]:null;
 }
+export function smokeChildEnvironment(profile){
+  return launchEnvironment(profile,{HOME:'/home/pptruser',PATH:'/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',LANG:'en_US.UTF-8',DBUS_SESSION_BUS_ADDRESS:'autolaunch:'});
+}
+export function redactedFatalExcerpt(raw){
+  // Solely the unauthenticated Chrome smoke. Normal benchmark errors remain enums.
+  const input=typeof raw==='string'?raw.slice(-16384):'';const lines=[],candidates=[];let following=false,previousFatal=false,rejected=false,total=0;
+  for(const original of input.split(/\r?\n/)){
+    const fatal=/\bFATAL\b|Check failed:/.test(original),priority=fatal||previousFatal?0:1;
+    const selected=/\b(?:FATAL|ERROR)\b|Check failed:/.test(original)||following;
+    following=/\b(?:FATAL|ERROR)\b|Check failed:/.test(original);
+    previousFatal=fatal;
+    if(!selected||!original.trim())continue;
+    if(/[^\x20-\x7e\t]/.test(original)||/password|passwd|secret|token|auth|cookie|credential|csrf|(?:api|client|private)[_ -]?key|client[_-]?id|session|\bsid\b|\bkey\b|\bbearer\b|\bENV\b|command.?line|\bargs?\s*[:=]|^\s*(?:at\s|#\d|0x)/i.test(original)){rejected=true;continue;}
+    let text=original.replace(/[a-z][a-z0-9+.-]*:\/\/[^\s\]\)]+/gi,'[url]')
+      .replace(/(?:[A-Za-z]:[\\/]|(?:\.\.\/)+|\/)[^\s\]\),]+/g,'[path]')
+      .replace(/\\[^\s\]\),]+/g,'[path]')
+      .replace(/\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b/g,'[ip]')
+      .replace(/\b(?:[a-f0-9]{1,4}:){2,}[a-f0-9:]+\b/gi,'[ip]')
+      .replace(/\b[a-f0-9]{16,}\b/gi,'[hex]')
+      .replace(/\b[A-Za-z0-9_+\/=.-]{24,}\b/g,'[long-value]')
+      .replace(/0x[a-f0-9]+/gi,'[address]');
+    // Exclude any remaining assignment that could carry private unlabelled data.
+    if(/\b[A-Za-z_][A-Za-z0-9_]*\s*=\s*[^=\s]/.test(text)){rejected=true;continue;}
+    text=text.slice(0,256);
+    candidates.push({text,priority});
+  }
+  for(const {text} of candidates.sort((a,b)=>a.priority-b.priority)){
+    const size=Buffer.byteLength(text)+(lines.length?1:0);
+    if(total+size>2048||lines.length>=16)break;
+    lines.push(text);total+=size;
+  }
+  return {lines,rejected};
+}
 export async function counters(read=fs.readFile){
   const result={};
   for(const [file,keys] of [['pids.events',['max']],['memory.events',['max','oom','oom_kill']]]){
@@ -43,7 +76,7 @@ async function main(){
   if(process.getuid?.()===0||process.env.GAMEYFIN_HOSTED_BROWSER!=='reviewed-fixture-only')throw new Error('Owned hosted boundary');
   const require=createRequire('/home/pptruser/package.json');const puppeteer=require('puppeteer');const {launch}=require('@puppeteer/browsers');
   let child,browser;let raw='',code=null,signal=null,phase='launch';
-  const result={scope:'Chrome-only startup diagnostic; not app performance',chromeCacheVersion:null,started:false,sandboxVerified:false,exitCode:null,signal:'none',signalScope:'Includes diagnostic shutdown; not automatic crash attribution',deadlineTriggered:false,exitObservedBeforeCleanup:false,failurePhase:null,fatalFlags:fatalFlags(''),zygoteChecks:zygoteChecks(''),before:await counters(),after:null};
+  const result={scope:'Chrome-only startup diagnostic; not app performance',chromeCacheVersion:null,started:false,sandboxVerified:false,exitCode:null,signal:'none',signalScope:'Includes diagnostic shutdown; not automatic crash attribution',deadlineTriggered:false,exitObservedBeforeCleanup:false,failurePhase:null,fatalFlags:fatalFlags(''),zygoteChecks:zygoteChecks(''),fatalExcerpt:redactedFatalExcerpt(''),before:await counters(),after:null};
   const timer=setTimeout(()=>{result.deadlineTriggered=true;child?.kill();},15000);
   try{
     const profile=await fs.mkdtemp('/tmp/gameyfin-browser-');
@@ -51,7 +84,7 @@ async function main(){
     const args=await puppeteer.defaultArgs({headless:true,userDataDir:profile});
     args.push('--remote-debugging-port=0',...chromeProxyFlags(55202),'--lang=en-US','--disable-background-networking','--disable-component-update','--disable-sync','--no-first-run');
     const executablePath=await puppeteer.executablePath();result.chromeCacheVersion=installedChromeVersion(executablePath);
-    child=launch({executablePath,args,env:launchEnvironment(profile),dumpio:false});
+    child=launch({executablePath,args,env:smokeChildEnvironment(profile),dumpio:false});
     child.nodeProcess.once('exit',(actualCode,actualSignal)=>{code=actualCode;signal=actualSignal;});
     child.nodeProcess.stderr.on('data',chunk=>{raw=(raw+String(chunk)).slice(-16384);});
     phase='endpoint';const endpoint=await child.waitForLineOutput(/^DevTools listening on (ws:\/\/.*)$/,10000);
@@ -66,7 +99,7 @@ async function main(){
     try{await child?.close();}catch{}
     result.exitCode=Number.isInteger(code)&&code>=0&&code<=255?code:null;
     result.signal=['SIGABRT','SIGTRAP','SIGSYS','SIGSEGV','SIGKILL','SIGTERM'].includes(signal)?signal:signal===null?'none':'other';
-    result.fatalFlags=fatalFlags(raw);result.zygoteChecks=zygoteChecks(raw);raw='';result.after=await counters();
+    result.fatalFlags=fatalFlags(raw);result.zygoteChecks=zygoteChecks(raw);result.fatalExcerpt=redactedFatalExcerpt(raw);raw='';result.after=await counters();
     process.stdout.write(JSON.stringify(result)+'\n');
     if(!result.started||!result.sandboxVerified)process.exitCode=1;
   }

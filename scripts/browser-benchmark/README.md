@@ -106,6 +106,12 @@ booleans and numeric cgroup PID/OOM counters are retained. Signals may include
 diagnostic shutdown and are not automatically classified as application crashes.
 The smoke is not a performance comparison; normal benchmark launch is unchanged.
 
+Only this app-free, authentication-free smoke may retain a redacted fatal excerpt
+(at most 16 ASCII lines and 2048 bytes). Chrome receives a constant environment
+whitelist; credential-like lines are rejected, and URLs, paths, addresses and
+long identifiers are removed. The normal authenticated benchmark still retains
+only structured error categories, never error text.
+
 Primary references: [official Puppeteer Docker sandbox](https://pptr.dev/guides/docker),
 [Chromium proxy semantics](https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md),
 [Spring Boot build-info properties](https://docs.spring.io/spring-boot/gradle-plugin/integrating-with-actuator.html).

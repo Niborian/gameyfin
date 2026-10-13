@@ -131,6 +131,23 @@ never credentials or page/error text, to distinguish authentication from resourc
 pressure. Neither startup success nor this fixture budget change proves an app
 performance improvement.
 
+Partial workload evidence is atomically retained after idle settling, each
+completed scan phase and recovery. A later authentication/validation failure
+does not erase earlier CPU/RAM or navigation status. `complete: false` marks
+unfinished workloads, and all functional, responsiveness, final-health and
+exact-cleanup acceptance gates remain required; partial data is not a paired win.
+
+Each successful fresh browser uses the application's normal Profile menu Sign
+Out action immediately after its measured sample, then proves return to the
+login form before exact container removal. Closing Chrome alone did not retire
+server sessions under the application's existing three-session limit. Logout
+never uses a direct API/POST or changes authentication policy. Navigation timing
+and browser resource endpoints precede logout; during-scan activity gauges bracket
+the complete navigation-plus-logout operation, while app scan CPU/sampling
+includes logout work. Navigation and verified logout share the same 15-second
+operation deadline; the 90-second browser watchdog remains. Logout failure rejects acceptance but
+still attempts exact container removal and retains prior partial evidence.
+
 Primary references: [official Puppeteer Docker sandbox](https://pptr.dev/guides/docker),
 [Chromium proxy semantics](https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md),
 [Spring Boot build-info properties](https://docs.spring.io/spring-boot/gradle-plugin/integrating-with-actuator.html).

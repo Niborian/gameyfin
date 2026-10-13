@@ -23,6 +23,19 @@ test('invalid credentials and missing normal form fail before typing or submissi
   await assert.rejects(driver.authenticate('fixture','private-random-secret-12345'),/Normal UI login unavailable/);
   assert.equal(driver.authStage,'submit');assert(!calls.some(([method])=>method==='Input.insertText'));
 });
+test('logout uses original profile menu and verifies login UI, never a logout API',async()=>{
+  const calls=[];const cdp={request:async(method,params)=>{calls.push([method,params]);return {result:{value:params.expression.includes('.click()')?true:{ready:true}}};}};
+  assert.deepEqual(await new FixtureUiDriver(cdp,config).logout(),{loggedOut:true});
+  assert.equal(calls.length,4);assert(calls.every(([method])=>method==='Runtime.evaluate'));
+  assert.match(calls[0][1].expression,/nav \[aria-haspopup/);assert.match(calls[2][1].expression,/Sign Out/);
+  assert(calls[0][1].expression.includes('[aria-haspopup="true"]'));assert(calls[0][1].expression.includes('[aria-haspopup="menu"]'));
+  assert(!calls[0][1].expression.includes('[aria-haspopup="dialog"]'));assert(!calls[0][1].expression.includes('[aria-haspopup="listbox"]'));
+  assert.match(calls[3][1].expression,/pathname==='\/login'/);assert(!JSON.stringify(calls).includes('/logout'));
+});
+test('ambiguous or absent profile menu fails closed before any logout attempt',async()=>{
+  const calls=[];const driver=new FixtureUiDriver({request:async(method,params)=>{calls.push([method,params]);return {result:{value:false}};}},config);
+  await assert.rejects(driver.logout(),/^Error: Normal UI logout unavailable$/);assert.equal(calls.length,1);
+});
 test('external requests fail closed; headers and arbitrary response fields never retained',async()=>{
   const calls=[];const cdp={request:async(m,p)=>{calls.push([m,p]);return {};}};const driver=new FixtureUiDriver(cdp,config);
   driver.event('Fetch.requestPaused',{requestId:'owned1',request:{url:'https://external.invalid/',headers:{Cookie:'PRIVATE'}}});

@@ -80,12 +80,15 @@ def execute(args):
         image=args.control_image if arm=='control' else args.candidate_image
         row={'pair':pair,'position':position,'arm':arm,'source':CONTROL if arm=='control' else CANDIDATE,'image':image}
         reports.append(row);persist()
+        def retain_partial(report):
+            row['report']=report
+            persist()
         try:
             with OwnedApp(image,args.direct_plugin,args.metadata_plugin,expected_jar_sha=receipt[arm+'JarSha256'],
                 diagnostic_output=output.with_name(f'application-{pair}-{position}-{arm}.json')) as app:
                 row['fixtureManifestSha256']=app.fixture['manifestSha256']
                 row['report']=run_case(app.client,app.fixture,app.cover_path,lambda phase:browser(app,phase),app.resources,
-                    lambda:verify_sources(app.root/'fixture',app.fixture['manifest']))
+                    lambda:verify_sources(app.root/'fixture',app.fixture['manifest']),persist_partial=retain_partial)
                 row['finalGate']=app.final_gate()
             row['exactOwnedCleanupPassed']=True;persist()
             return row['report']
@@ -104,8 +107,14 @@ def execute(args):
                 prerequisites={'syntheticFixtureOnly':True,'normalAdminAuthenticated':True,'browserAlreadyAuthenticated':True,
                     'originalGameyfinUi':True,'boundedBrowserOperationSeconds':15,'publishedPorts':False,'cpuLimit':.5,
                     'memoryMiB':1024,'heapMiB':320,'waitingProviderOptIn':True,'scanLibraryId':27003,'gameId':33000}
+                def finish_waiting_case():
+                    # held_case releases the provider before this callback.
+                    # Logout promptly, outside the held 15s browser operation,
+                    # before any potentially lengthy scan validation.
+                    held_browser.close()
+                    return waiting_validation(app,before)
                 summary['waitingProviderCorrectness']=held_case(app.waiting_root,app.client.request,held_browser.sample,
-                    lambda:waiting_validation(app,before),prerequisites)
+                    finish_waiting_case,prerequisites)
         summary['waitingExactOwnedCleanupPassed']=True
         summary['allCasesCompleted']=True
         summary['responsivenessAccepted']=all(row['report'].get('cleanAcceptance') is True for row in reports)

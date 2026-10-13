@@ -209,7 +209,7 @@ def validate_failure_receipt(value):
     base={'browserFailed','phase'}
     categories={'crashpad-database','readonly-filesystem','sandbox-unavailable','namespace-permission','missing-shared-library','missing-executable','launch-timeout','other'}
     if (not isinstance(value,dict) or value.get('browserFailed') is not True or not base.issubset(value) or set(value)-base-{'launchFailureCategory','launchDiagnostics','authStage','failureCounters'} or
-        value.get('phase') not in ('arguments','input','bridge','profile','chrome-launch','sandbox','authentication','navigation','cleanup')):
+        value.get('phase') not in ('arguments','input','bridge','profile','chrome-launch','sandbox','authentication','navigation','logout','cleanup')):
         raise ValueError('Browser failure receipt schema')
     if 'authStage' in value and (value['phase']!='authentication' or value['authStage'] not in ('interception','login-navigation','login-form','submit','redirect','complete')):raise ValueError('Auth stage boundary')
     if 'failureCounters' in value:
@@ -307,11 +307,37 @@ class HostedBrowser:
         self.process.stdin.write((username+'\n'+password+'\n').encode());self.process.stdin.flush()
         ready=self._read_receipt(30)
         if ready!={'authenticated':True,'sandboxVerified':True}: raise ValueError('Normal UI auth/sandbox gate')
+        self.authenticated=True
 
     def sample(self):
+        deadline=time.monotonic()+15
         self.process.stdin.write(b'navigate\n');self.process.stdin.flush()
-        receipt=self._read_receipt(15)
-        return validate_sample(receipt)
+        receipt=validate_sample(self._read_receipt(max(0,deadline-time.monotonic())))
+        self.record_sample_before_logout(receipt)
+        remaining=deadline-time.monotonic()
+        if remaining<=0:raise TimeoutError('Browser operation budget exhausted before logout')
+        self.process.stdin.write(b'logout\n');self.process.stdin.flush()
+        logged_out=self._read_receipt(remaining)
+        if logged_out!={'loggedOut':True} or logged_out.get('loggedOut') is not True:raise ValueError('Normal UI logout receipt')
+        self.authenticated=False
+        if getattr(self,'diagnostic_output',None):
+            path=Path(self.diagnostic_output);data=read_state(path,8192);data['normalUiLogoutPassed']=True
+            self.write_diagnostic(path,data,'.logout.pending')
+        return receipt
+
+    def write_diagnostic(self,path,data,suffix):
+        encoded=json.dumps(data,indent=2)
+        if len(encoded.encode())>8192:raise ValueError('Browser diagnostic byte bound')
+        pending=path.with_suffix(suffix)
+        fd=os.open(pending,os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,'O_NOFOLLOW',0),0o600)
+        with os.fdopen(fd,'w') as stream:stream.write(encoded)
+        pending.replace(path)
+
+    def record_sample_before_logout(self,receipt):
+        if not getattr(self,'diagnostic_output',None):return
+        path=Path(self.diagnostic_output);data=read_state(path,8192)
+        data['navigationEvidenceBeforeLogout']=validate_sample(receipt);data['normalUiLogoutPassed']=False
+        self.write_diagnostic(path,data,'.sample.pending')
 
     def close(self):
         # Keep independent fence alive if removal fails, but always reap our

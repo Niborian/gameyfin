@@ -79,11 +79,12 @@ class ResourceSampler:
         self.stop.set();self.thread.join(35)
         if self.thread.is_alive():raise RuntimeError('Owned cgroup sampler did not stop within subprocess deadline')
 
-def run_case(client,fixture,cover_path,prepare_browser,resource_snapshot,verify_sources,*,clock=time.monotonic,sleep=time.sleep):
+def run_case(client,fixture,cover_path,prepare_browser,resource_snapshot,verify_sources,*,clock=time.monotonic,sleep=time.sleep,persist_partial=lambda report:None):
     report={'scope':'Unblocked actual-app synthetic successful metadata with original UI; no real provider HTTP or production acceptance',
-        'phaseResults':[],'browserNavigationBudget':15,'forcedGc':False,'schedulerChanged':False,
+        'phaseResults':[],'complete':False,'browserNavigationBudget':15,'browserOperationIncludesNormalUiLogout':True,'forcedGc':False,'schedulerChanged':False,
         'measurementScope':'Scan wall/CPU start after before-browser authentication/navigation and before counters; during browser HTTP adds app CPU. Browser container CPU excluded from app cgroup.',
-        'overlapScope':'Fresh same-request gauge bracket observes activity at two samples, NOT continuous scan execution. Missing/late gauge is unknown.'}
+        'overlapScope':'Fresh same-request gauge bracket observes activity around the bounded navigation+normal-UI-logout operation at two samples, NOT continuous scan execution. Navigation latency/resource receipt ends before logout. Missing/late gauge is unknown.'}
+    persist_partial(report)
     def snapshot():
         return {**resource_snapshot(),**metrics(client)}
     start=snapshot()
@@ -96,10 +97,16 @@ def run_case(client,fixture,cover_path,prepare_browser,resource_snapshot,verify_
         if s['elapsedSeconds']>=60:break
         sleep(min(15,60-s['elapsedSeconds']))
     report['coldIdle']=cold
+    persist_partial(report)
     all_window_before=resource_snapshot()
     for phase in ('cold','repeat'):
         with prepare_browser(phase+'-before') as before_browser:
             before_ui=browser_sample(before_browser)
+            report['pendingPhase']={'phase':phase,'beforeBrowser':before_ui,'beforeBrowserCleanupPassed':False}
+            persist_partial(report)
+            before_browser.close()
+            report['pendingPhase']['beforeBrowserCleanupPassed']=True
+            persist_partial(report)
         with prepare_browser(phase+'-during') as during_browser:
             before=snapshot();phase_started=clock()
             with ResourceSampler(resource_snapshot,clock) as sampler:
@@ -118,6 +125,15 @@ def run_case(client,fixture,cover_path,prepare_browser,resource_snapshot,verify_
                 right_requested=clock()
                 try:right=activity(client);right_completed=clock()
                 except (OSError,TimeoutError):right=None;right_completed=clock()
+                report['pendingPhase']['duringBrowser']=during_ui
+                report['pendingPhase']['duringBrowserCleanupPassed']=False
+                report['pendingPhase']['resourceAfterBrowser']=resource_snapshot()
+                persist_partial(report)
+                # Logout/removal occur promptly, never waiting through scan
+                # completion on the browser's unchanged 15s command deadline.
+                during_browser.close()
+                report['pendingPhase']['duringBrowserCleanupPassed']=True
+                persist_partial(report)
                 overlap='unknown'
                 if left and left['active']>0 and browser_start-left_requested<=5:
                     overlap='started-active'
@@ -134,21 +150,25 @@ def run_case(client,fixture,cover_path,prepare_browser,resource_snapshot,verify_
             validation=client.validate(fixture,cover_path)
             verify_sources()
             after=snapshot();ended=clock()
-        report['phaseResults'].append({'phase':phase,'scanQuiescentSeconds':quiescent_at-phase_started,
-            'scanContainerCpuSeconds':delta(before,quiescent,'cpuSeconds'),
-            'wholePhaseIncludingValidationSeconds':ended-phase_started,
-            'wholePhaseContainerCpuSeconds':delta(before,after,'cpuSeconds'),
-            'containerThrottledSeconds':delta(before,quiescent,'throttledSeconds'),
-            'gcPauseCount':delta(before,quiescent_metrics,'gcPauseCount'),'gcPauseSeconds':delta(before,quiescent_metrics,'gcPauseSeconds'),
-            'resourceSamples':sampler.samples,'resourceSamplerFailure':sampler.failure,
-            'resourceSamplingScope':'Owned app cgroup/RSS at1s during browser and scan. Heap/GC are HTTP endpoint samples, not guaranteed instantaneous peaks.',
-            'actualActivityChecks':active_attempts,
-            'beforeBrowser':before_ui,'duringBrowser':during_ui,'scanClassification':overlap,
-            'gaugeTimes':{'beforeRequested':left_requested,'beforeCompleted':left_completed,
-                'browserStarted':browser_start,'browserFinished':browser_end,
-                'afterRequested':right_requested,'afterCompleted':right_completed},
-            'gaugeValues':{'before':left['active'] if left else None,'after':right['active'] if right else None},
-            'samples':polls,'before':before,'after':after,'functionalValidation':validation})
+            report['phaseResults'].append({'phase':phase,'browserCleanupPassed':False,'scanQuiescentSeconds':quiescent_at-phase_started,
+                'scanContainerCpuSeconds':delta(before,quiescent,'cpuSeconds'),
+                'wholePhaseIncludingValidationSeconds':ended-phase_started,
+                'wholePhaseContainerCpuSeconds':delta(before,after,'cpuSeconds'),
+                'containerThrottledSeconds':delta(before,quiescent,'throttledSeconds'),
+                'gcPauseCount':delta(before,quiescent_metrics,'gcPauseCount'),'gcPauseSeconds':delta(before,quiescent_metrics,'gcPauseSeconds'),
+                'resourceSamples':sampler.samples,'resourceSamplerFailure':sampler.failure,
+                'resourceSamplingScope':'Owned app cgroup/RSS at1s during browser and scan, including prompt normal-UI logout. Navigation browser metrics stop before logout. Heap/GC are HTTP endpoint samples, not guaranteed instantaneous peaks.',
+                'actualActivityChecks':active_attempts,
+                'beforeBrowser':before_ui,'duringBrowser':during_ui,'scanClassification':overlap,
+                'gaugeTimes':{'beforeRequested':left_requested,'beforeCompleted':left_completed,
+                    'browserStarted':browser_start,'browserFinished':browser_end,
+                    'afterRequested':right_requested,'afterCompleted':right_completed},
+                'gaugeValues':{'before':left['active'] if left else None,'after':right['active'] if right else None},
+                'samples':polls,'before':before,'after':after,'functionalValidation':validation})
+            del report['pendingPhase']
+            persist_partial(report)
+        report['phaseResults'][-1]['browserCleanupPassed']=True
+        persist_partial(report)
     recovery_start=clock();samples=[]
     while True:
         sample=snapshot();sample['elapsedSeconds']=clock()-recovery_start;samples.append(sample)
@@ -159,15 +179,19 @@ def run_case(client,fixture,cover_path,prepare_browser,resource_snapshot,verify_
         'cpuSeconds':delta(samples[0],samples[-1],'cpuSeconds'),
         'gcPauseCount':delta(samples[0],samples[-1],'gcPauseCount'),
         'gcPauseSeconds':delta(samples[0],samples[-1],'gcPauseSeconds')}
+    persist_partial(report)
     all_window_after=resource_snapshot()
     report['allWindowCpuSeconds']=delta(all_window_before,all_window_after,'cpuSeconds')
     # Authentication and final browser job occur AFTER recovery end counters.
     with prepare_browser('post300') as post_browser:report['post300Browser']=browser_sample(post_browser)
     report['post300BrowserExcludedFromRecoveryCpu']=True
+    persist_partial(report)
     report['functionalValidation']=client.validate(fixture,cover_path);verify_sources()
-    report['cleanAcceptance']=all(p['resourceSamplerFailure'] is None and bool(p['resourceSamples']) and p['beforeBrowser']['status']=='success' and p['duringBrowser']['status']=='success'
+    report['cleanAcceptance']=all(p['browserCleanupPassed'] is True and p['resourceSamplerFailure'] is None and bool(p['resourceSamples']) and p['beforeBrowser']['status']=='success' and p['duringBrowser']['status']=='success'
         and p['scanClassification']!='unknown' for p in report['phaseResults']) and report['post300Browser']['status']=='success'
     report['acceptanceLimit']='Outer runner must additionally gate application ERROR/OOM/restart/health and exact cleanup. Unknown overlap or timeout is NOT accepted responsiveness.'
+    report['complete']=True
+    persist_partial(report)
     return report
 
 def balanced_pairs(run_arm):

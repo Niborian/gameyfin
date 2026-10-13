@@ -3,6 +3,10 @@ from pathlib import Path
 from unittest.mock import Mock,patch
 import hosted_browser
 from hosted_browser import creation_args,validate_sample,cleanup_known_browser,record_creation_intent,HostedBrowser
+def sample_receipt():
+    row={'domContentLoadedMs':1,'loadMs':2,'routeContentReadyMs':3,'coverDecodedMs':4,'coverNaturalWidth':320,'coverNaturalHeight':480,'coverResponseStatus':200,'coverSha256Matches':True,'fromDiskCache':False,'fromServiceWorker':False}
+    snapshot={'cpuUsageUsec':1,'memoryCurrentBytes':1,'memoryPeakBytes':1}
+    return {'originalUiContentReady':True,'coverDecoded':True,'coverSha256Matches':True,'navigations':[row]*3,'browserResources':{'before':snapshot,'after':snapshot}}
 
 class CreationTests(unittest.TestCase):
     def test_failure_receipt_category_is_strict_nonsecret_enum(self):
@@ -65,6 +69,29 @@ class CreationTests(unittest.TestCase):
         with patch.object(hosted_browser,'cleanup'):value.close()
         value.process.terminate.assert_called_once();value.process.kill.assert_called_once()
         value.watchdog.terminate.assert_called_once();value.watchdog.communicate.assert_called_once_with(timeout=2)
+    def test_logout_failure_keeps_navigation_diagnostic_and_still_removes(self):
+        value=HostedBrowser.__new__(HostedBrowser);value.id='a'*64;value.owner='b'*16;value.image='sha256:'+'c'*64
+        value.process=Mock();value.watchdog=Mock();value.authenticated=True;value._read_receipt=Mock(side_effect=[sample_receipt(),TimeoutError()])
+        with tempfile.TemporaryDirectory() as directory:
+            value.diagnostic_output=Path(directory)/'diagnostic.json';value.diagnostic_output.write_text('{}')
+            with patch.object(hosted_browser,'cleanup') as cleanup:
+                with self.assertRaises(TimeoutError):
+                    with value:value.sample()
+            retained=json.loads(value.diagnostic_output.read_text())
+            self.assertFalse(retained['normalUiLogoutPassed']);self.assertEqual(retained['navigationEvidenceBeforeLogout'],sample_receipt())
+        cleanup.assert_called_once();self.assertEqual([c.args[0] for c in value.process.stdin.write.call_args_list],[b'navigate\n',b'logout\n'])
+        value.watchdog.terminate.assert_called_once();self.assertIsNone(value.id)
+    def test_sample_requires_logout_under_shared_operation_deadline(self):
+        value=HostedBrowser.__new__(HostedBrowser);value.id='a'*64;value.owner='b'*16;value.image='sha256:'+'c'*64
+        value.process=Mock();value.watchdog=Mock();value.authenticated=True;value.diagnostic_output=None
+        value._read_receipt=Mock(side_effect=[sample_receipt(),{'loggedOut':True}])
+        with patch.object(hosted_browser.time,'monotonic',side_effect=[0,1,2]):self.assertEqual(value.sample(),sample_receipt())
+        self.assertFalse(value.authenticated);self.assertEqual([c.args[0] for c in value._read_receipt.call_args_list],[14,13])
+    def test_logout_boolean_integer_alias_is_not_success(self):
+        value=HostedBrowser.__new__(HostedBrowser);value.process=Mock();value.authenticated=True;value.diagnostic_output=None
+        value._read_receipt=Mock(side_effect=[sample_receipt(),{'loggedOut':1}])
+        with self.assertRaises(ValueError):value.sample()
+        self.assertTrue(value.authenticated)
 
     def test_final_cleanup_uses_exact_durable_id_not_name_or_prefix(self):
         with tempfile.TemporaryDirectory() as directory:

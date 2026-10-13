@@ -1,4 +1,4 @@
-import unittest
+import json,unittest
 from throughput_case import parse_metrics,balanced_pairs,run_case,browser_sample
 
 def text(completed=0,active=0):
@@ -27,6 +27,7 @@ class Browser:
     def __init__(self,clock):self.clock=clock
     def __enter__(self):return self
     def __exit__(self,*_):pass
+    def close(self):pass
     def sample(self):
         self.clock.sleep(1)
         return {'originalUiContentReady':True,'coverDecoded':True,'coverSha256Matches':True,'testDoubleOnly':True}
@@ -60,4 +61,35 @@ class ThroughputCaseTest(unittest.TestCase):
         self.assertEqual(browser_phases,['cold-before','cold-during','repeat-before','repeat-during','post300'])
         self.assertEqual(len(source_checks),3)
         self.assertTrue(report['post300BrowserExcludedFromRecoveryCpu'])
+        self.assertTrue(report['complete'])
+    def test_repeat_auth_failure_retains_completed_cold_phase_incomplete(self):
+        clock=Clock();client=Client();retained=[]
+        def browser(phase):
+            if phase=='repeat-during':raise ValueError('Private authentication failure')
+            return Browser(clock)
+        def resource():return {'cpuSeconds':clock.t/4,'throttledSeconds':clock.t/2,'memoryBytes':1000000,
+            'anonymousBytes':900000,'fileCacheBytes':100000,'rssBytes':950000}
+        def persist(report):retained.append(json.loads(json.dumps(report)))
+        with self.assertRaises(ValueError):run_case(client,{},'/images/cover/1',browser,resource,lambda:None,
+            clock=clock.now,sleep=clock.sleep,persist_partial=persist)
+        latest=retained[-1]
+        self.assertFalse(latest['complete']);self.assertNotIn('cleanAcceptance',latest)
+        self.assertEqual(len(latest['phaseResults']),1)
+        cold=latest['phaseResults'][0]
+        self.assertEqual(cold['phase'],'cold');self.assertGreaterEqual(cold['scanContainerCpuSeconds'],0)
+        self.assertTrue(cold['resourceSamples']);self.assertIn('status',cold['beforeBrowser']);self.assertIn('status',cold['duringBrowser'])
+        self.assertTrue(latest['coldIdle']);self.assertEqual(client.completed,4)
+        self.assertNotIn('Private authentication',json.dumps(latest))
+    def test_logout_failure_keeps_measurement_but_never_accepts_cleanup(self):
+        clock=Clock();client=Client();retained=[]
+        class LogoutFailure(Browser):
+            def close(self):raise ValueError('Logout failed')
+        def browser(phase):return LogoutFailure(clock) if phase=='cold-during' else Browser(clock)
+        def resource():return {'cpuSeconds':clock.t/4,'throttledSeconds':clock.t/2,'memoryBytes':1000000,'anonymousBytes':900000,'fileCacheBytes':100000,'rssBytes':950000}
+        with self.assertRaises(ValueError):run_case(client,{},'/images/cover/1',browser,resource,lambda:None,clock=clock.now,sleep=clock.sleep,
+            persist_partial=lambda report:retained.append(json.loads(json.dumps(report))))
+        phase=retained[-1]['pendingPhase']
+        self.assertEqual(phase['phase'],'cold');self.assertFalse(phase['duringBrowserCleanupPassed'])
+        self.assertEqual(phase['duringBrowser']['status'],'success');self.assertIn('memoryBytes',phase['resourceAfterBrowser'])
+        self.assertFalse(retained[-1]['complete'])
 if __name__=='__main__':unittest.main()

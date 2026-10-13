@@ -68,6 +68,15 @@ export class FixtureUiDriver {
     // Normal Hilla login redirects; a protected target then proves fixture route content.
     this.authStage='redirect';await this.poll(`(()=>({ready:location.origin===${JSON.stringify(this.origin)}&&location.pathname!=='/login'}))()`);this.authStage='complete';
   }
+  async logout(){
+    // MainLayout renders one ProfileMenu dropdown in the navbar; its original
+    // Sign Out item calls useAuth().logout. No synthetic logout POST/API call.
+    if(await this.evaluate(`(()=>{if(location.origin!==${JSON.stringify(this.origin)}||location.pathname==='/login')return false;const triggers=[...document.querySelectorAll('nav [aria-haspopup="true"],nav [aria-haspopup="menu"]')].filter(e=>e.getClientRects().length);if(triggers.length!==1)return false;triggers[0].click();return true;})()`)!==true)throw new Error('Normal UI logout unavailable');
+    await this.poll(`(()=>({ready:[...document.querySelectorAll('[role="menuitem"]')].some(e=>e.textContent.trim()==='Sign Out')}))()`);
+    if(await this.evaluate(`(()=>{const items=[...document.querySelectorAll('[role="menuitem"]')];if(!['My Profile','Administration','Help','Sign Out'].every(label=>items.some(e=>e.textContent.trim()===label)))return false;const targets=items.filter(e=>e.textContent.trim()==='Sign Out');if(targets.length!==1)return false;targets[0].click();return true;})()`)!==true)throw new Error('Normal UI logout unavailable');
+    await this.poll(`(()=>({ready:location.origin===${JSON.stringify(this.origin)}&&location.pathname==='/login'&&!!document.querySelector('input[name="username"]')&&!!document.querySelector('input[name="password"]')}))()`);
+    return {loggedOut:true};
+  }
   async navigate(path){
     if(!['/library/27003','/game/33000'].includes(path)||++this.navigations>3)throw new Error('Navigation bound');
     this.cover=null;await this.request('Page.navigate',{url:this.origin+path});

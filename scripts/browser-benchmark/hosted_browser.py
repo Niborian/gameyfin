@@ -229,7 +229,7 @@ def validate_failure_receipt(value):
     if 'authStage' in value and (value['phase']!='authentication' or value['authStage'] not in ('interception','login-navigation','login-form','submit','redirect','profile-proof','complete')):raise ValueError('Auth stage boundary')
     if 'authDiagnostics' in value:
         data=value['authDiagnostics']
-        keys={'loginPostObserved','loginPostStatus','submittedUsernameLengthMatches','submittedPasswordLengthMatches','readiness','cdpFailure','cdpMethod','loginResultHeader','userInfoStatus'}
+        keys={'loginPostObserved','loginPostStatus','submittedUsernameLengthMatches','submittedPasswordLengthMatches','readiness','cdpFailure','cdpMethod','loginResultHeader','userInfoStatus','profile'}
         if value['phase']!='authentication' or not isinstance(data,dict) or set(data)!=keys or type(data['loginPostObserved']) is not bool:raise ValueError('Auth diagnostics schema')
         if data['loginPostStatus'] is not None and (type(data['loginPostStatus']) is not int or not 100<=data['loginPostStatus']<=599):raise ValueError('Auth diagnostic numeric boundary')
         if data['userInfoStatus'] is not None and (type(data['userInfoStatus']) is not int or not 100<=data['userInfoStatus']<=599):raise ValueError('Auth user-info status boundary')
@@ -237,6 +237,10 @@ def validate_failure_receipt(value):
         if any(data[k] is not None and type(data[k]) is not bool for k in ('submittedUsernameLengthMatches','submittedPasswordLengthMatches')):raise ValueError('Auth diagnostic match boundary')
         if data['cdpFailure'] not in ('none','execution-context-destroyed','execution-context-missing','target-closed','protocol-timeout','other'):raise ValueError('Auth CDP failure enum')
         if data['cdpMethod'] not in ('none','page-navigation','runtime-evaluate','input-insert','request-interception','setup','other'):raise ValueError('Auth CDP method enum')
+        profile=data['profile'];stages=('not-started','navigate','profile-dom','open-menu','identity-menu','close-menu','complete')
+        if not isinstance(profile,dict) or set(profile)!={'stage','readiness'} or profile['stage'] not in stages:raise ValueError('Profile diagnostic schema')
+        gates=profile['readiness'];profile_flags={'originMatches','profilePath','loginPath','myProfileHeading','usernamePresent','emailPresent','newPasswordPresent','passwordRepeatPresent','baseRootMatches','identityRow','adminItem','signOutItem'}
+        if gates is not None and (not isinstance(gates,dict) or set(gates)!=profile_flags|{'triggerCount'} or any(type(gates[k]) is not bool for k in profile_flags) or gates['triggerCount'] not in ('none','one','multiple')):raise ValueError('Profile readiness schema')
         readiness=data['readiness'];flags={'originMatches','loginPath','usernamePresent','passwordPresent','submitPresent','submitDisabled','invalidCredentialsDisplayed'}
         if readiness is not None and (not isinstance(readiness,dict) or set(readiness)!=flags|{'documentReady'} or any(type(readiness[k]) is not bool for k in flags) or readiness['documentReady'] not in ('loading','interactive','complete')):raise ValueError('Auth readiness boundary')
     if 'failureCounters' in value:

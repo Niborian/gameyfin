@@ -1,14 +1,20 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import vm from 'node:vm';
-import {FixtureUiDriver,connectAndMeasure,navigationProgress,authReadiness,safeAuthDiagnostics,loginResultHeader,fixtureProfileExpression,fixtureIdentityMenuExpression} from './frontend_ui_driver.mjs';
+import {FixtureUiDriver,connectAndMeasure,navigationProgress,authReadiness,safeAuthDiagnostics,loginResultHeader,fixtureProfileExpression,fixtureIdentityMenuExpression,profileReadiness,profileDiagnostic} from './frontend_ui_driver.mjs';
 const config={origin:'http://127.0.0.1:53123',coverId:7,coverSha256:'0'.repeat(64)};
 const readyAuth={originMatches:true,loginPath:false,usernamePresent:false,passwordPresent:false,submitPresent:false,submitDisabled:false,invalidCredentialsDisplayed:false,documentReady:'complete'};
+const readyProfile={originMatches:true,profilePath:true,loginPath:false,myProfileHeading:true,usernamePresent:true,emailPresent:true,newPasswordPresent:true,passwordRepeatPresent:true,baseRootMatches:true,identityRow:true,adminItem:true,signOutItem:true,triggerCount:'one'};
 test('authentication diagnostics expose only status, length matches and fixed readiness',()=>{
-  const row={loginPostObserved:true,loginPostStatus:401,submittedUsernameLengthMatches:true,submittedPasswordLengthMatches:true,cdpFailure:'none',cdpMethod:'none',loginResultHeader:'missing',userInfoStatus:null,readiness:readyAuth};
+  const row={loginPostObserved:true,loginPostStatus:401,submittedUsernameLengthMatches:true,submittedPasswordLengthMatches:true,cdpFailure:'none',cdpMethod:'none',loginResultHeader:'missing',userInfoStatus:null,readiness:readyAuth,profile:{stage:'not-started',readiness:null}};
   assert.deepEqual(safeAuthDiagnostics(row),row);
   for(const bad of [{...row,cookie:'secret'},{...row,loginPostStatus:'secret'},{...row,submittedPasswordLengthMatches:43},{...row,readiness:{...readyAuth,documentReady:'secret'}},{...row,readiness:{...readyAuth,text:'secret'}}])assert.throws(()=>safeAuthDiagnostics(bad));
   assert.throws(()=>authReadiness({...readyAuth,loginPath:1}));
+});
+test('profile substage/readiness diagnostics reject arbitrary data without loosening gates',()=>{
+  assert.deepEqual(profileDiagnostic({stage:'profile-dom',readiness:readyProfile}),{stage:'profile-dom',readiness:readyProfile});
+  for(const bad of [{...readyProfile,url:'secret'},{...readyProfile,triggerCount:2},{...readyProfile,identityRow:'private'}])assert.throws(()=>profileReadiness(bad));
+  assert.throws(()=>profileDiagnostic({stage:'private',readiness:null}));
 });
 test('Hilla Result header is a fixed protocol classification, never a raw header',()=>{
   assert.equal(loginResultHeader({Result:'success','Spring-CSRF-token':'private'}),'success');assert.equal(loginResultHeader({result:'failure'}),'failure');
@@ -53,7 +59,7 @@ test('interception is enabled before login navigation; no auth API bypass',async
       cdp.onEvent('Network.requestWillBeSent',{requestId:'accepted',request:{url:config.origin+'/login',method:'POST'}});
       cdp.onEvent('Network.responseReceived',{requestId:'accepted',response:{url:config.origin+'/login',status:200,headers:{Result:'success'}}});
     }
-    calls.push([method,params]);return method==='Runtime.evaluate'?{result:{value:params.expression.includes('usernameLength:u.value.length')?{clicked:true,usernameLength:'fixture-user'.length,passwordLength:'private-random-secret-12345'.length}:params.expression.includes('document.readyState')?{ready:true,diagnostic:readyAuth}:/\.click\(\)|\.focus\(\)|new Promise/.test(params.expression)?true:{ready:true}}}:{};
+    calls.push([method,params]);return method==='Runtime.evaluate'?{result:{value:params.expression.includes('usernameLength:u.value.length')?{clicked:true,usernameLength:'fixture-user'.length,passwordLength:'private-random-secret-12345'.length}:params.expression.includes('document.readyState')?{ready:true,diagnostic:readyAuth}:params.expression.includes('document.baseURI')?{ready:true,diagnostic:readyProfile}:params.expression.includes('Object.values(diagnostic)')?{ready:true,diagnostic:{identityRow:true,adminItem:true,signOutItem:true}}:/\.click\(\)|\.focus\(\)|new Promise/.test(params.expression)?true:{ready:true}}}:{};
   }};
   assert.deepEqual(await new FixtureUiDriver(cdp,config).authenticate('fixture-user','private-random-secret-12345'),{normalLoginAutoRedirectObserved:true,fixtureProfileVerified:true});
   assert.deepEqual(calls.slice(0,4).map(c=>c[0]),['Page.enable','Runtime.enable','Network.enable','Fetch.enable']);
@@ -71,11 +77,18 @@ test('interception is enabled before login navigation; no auth API bypass',async
 test('profile identity probe reads only fixed fixture identity, never submits profile forms or loads covers',()=>{
   const profile=fixtureProfileExpression(config.origin),identity=fixtureIdentityMenuExpression();
   assert(profile.includes('/settings/profile'));assert(!profile.includes('.value'));assert(!profile.includes('.click()'));assert(!profile.includes('images/cover'));
-  assert(identity.includes('Signed in as fixture-admin'));assert(identity.includes('Administration'));assert(identity.includes('Sign Out'));assert(!identity.includes('.value'));
+  assert(identity.includes('Signed in as fixture-admin'));assert(identity.includes('Administration'));assert(identity.includes('Sign Out'));assert(!/\.value\b/.test(identity));
   const evaluateIdentity=labels=>vm.runInNewContext(identity,{document:{querySelectorAll:()=>labels.map(textContent=>({textContent}))}}).ready;
   assert.equal(evaluateIdentity(['Signed in as fixture-admin','Administration','Sign Out']),true);
   assert.equal(evaluateIdentity(['Signed in as another-account','Administration','Sign Out']),false);
   assert.equal(evaluateIdentity(['Signed in as fixture-admin','Sign Out']),false);
+});
+test('profile DOM diagnostics distinguish multiple triggers and preserve strict rejection',()=>{
+  const origin=config.origin;let count=2;
+  const document={baseURI:origin+'/',querySelector:selector=>selector.includes('Password')||selector.includes('passwordRepeat')?{type:'password'}:{},querySelectorAll:selector=>selector==='h2'?[{textContent:'My Profile'}]:selector.startsWith('nav ')?Array.from({length:count},()=>({getClientRects:()=>[1]})):[]};
+  const evaluate=()=>vm.runInNewContext(fixtureProfileExpression(origin),{document,location:{origin,pathname:'/settings/profile'},URL});
+  const rejected=evaluate();assert.equal(rejected.ready,false);assert.equal(rejected.diagnostic.triggerCount,'multiple');assert.equal(rejected.diagnostic.baseRootMatches,true);
+  count=1;assert.equal(evaluate().ready,true);assert.equal(evaluate().diagnostic.identityRow,false);
 });
 test('late accepted login stays within original budget and explicitly retains missing automatic landing',async()=>{
   let timer,accepted=false,profileStarted=false;
@@ -88,6 +101,8 @@ test('late accepted login stays within original budget and explicitly retains mi
       return {result:{value:{clicked:true,usernameLength:'fixture-user'.length,passwordLength:'private-random-secret-12345'.length}}};
     }
     if(params.expression.includes('document.readyState'))return {result:{value:{ready:false,diagnostic:{...readyAuth,loginPath:true,usernamePresent:true,passwordPresent:true,submitPresent:true}}}};
+    if(params.expression.includes('document.baseURI'))return {result:{value:{ready:true,diagnostic:readyProfile}}};
+    if(params.expression.includes('Object.values(diagnostic)'))return {result:{value:{ready:true,diagnostic:{identityRow:true,adminItem:true,signOutItem:true}}}};
     return {result:{value:/\.click\(\)|\.focus\(\)|new Promise/.test(params.expression)?true:{ready:true}}};
   }};
   try{assert.deepEqual(await new FixtureUiDriver(cdp,config).authenticate('fixture-user','private-random-secret-12345'),{normalLoginAutoRedirectObserved:false,fixtureProfileVerified:true});assert.equal(profileStarted,true);}finally{clearTimeout(timer);}

@@ -45,6 +45,12 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v5
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
       - name: Verify the release version is synchronized
         id: version
         shell: bash
@@ -59,6 +65,11 @@ jobs:
 
       - name: Run automated tests
         run: ./gradlew :app:test --no-daemon --console=plain
+
+      - name: Verify frontend startup lifecycle
+        run: |
+          npm ci --prefix app --ignore-scripts --no-audit --no-fund
+          node --test scripts/test-auth-startup.cjs
 
       - name: Verify bounded synthetic proxy smoke validators
         run: |

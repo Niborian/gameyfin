@@ -1,3 +1,4 @@
+import {startupIsCurrent, ownStartupState} from "Frontend/util/startupLifecycle";
 import {proxy} from 'valtio';
 import {BandwidthMonitoringEndpoint} from "Frontend/generated/endpoints";
 import SessionStatsDto from "Frontend/generated/org/gameyfin/app/core/download/bandwidth/SessionStatsDto";
@@ -28,25 +29,33 @@ export const downloadSessionState = proxy<DownloadSessionState>({
 });
 
 /** Subscribe to and process download session updates from backend **/
-export async function initializeDownloadSessionState() {
-    if (downloadSessionState.isLoaded) return;
+export async function initializeDownloadSessionState(signal?: AbortSignal) {
+    if (!startupIsCurrent(signal) || downloadSessionState.isLoaded) return;
+    ownStartupState(downloadSessionState, signal, () => { downloadSessionState.all = []; downloadSessionState.byId = {}; });
 
-    // Fetch initial configuration data
-    const initialSessions = await BandwidthMonitoringEndpoint.getActiveSessions();
-    downloadSessionState.all = sortSessions(initialSessions);
-    initialSessions.forEach((session: SessionStatsDto) => {
-        downloadSessionState.byId[session.sessionId] = session;
-    });
+    try {
+        // Fetch initial configuration data
+        const initialSessions = await BandwidthMonitoringEndpoint.getActiveSessions(signal ? {signal} : undefined);
+        if (!startupIsCurrent(signal)) return;
+        downloadSessionState.all = sortSessions(initialSessions);
+        initialSessions.forEach((session: SessionStatsDto) => {
+            downloadSessionState.byId[session.sessionId] = session;
+        });
 
-    // Subscribe to real-time updates
-    downloadSessionState.subscription = BandwidthMonitoringEndpoint.subscribe().onNext((downloadSessionUpdate: SessionStatsDto[][]) => {
-        downloadSessionUpdate.forEach((updateBatch: SessionStatsDto[]) => {
-            downloadSessionState.all = sortSessions(updateBatch);
-            updateBatch.forEach((session: SessionStatsDto) => {
-                downloadSessionState.byId[session.sessionId] = session;
+        // Subscribe to real-time updates
+        downloadSessionState.subscription = BandwidthMonitoringEndpoint.subscribe().onNext((downloadSessionUpdate: SessionStatsDto[][]) => {
+            if (!startupIsCurrent(signal)) return;
+            downloadSessionUpdate.forEach((updateBatch: SessionStatsDto[]) => {
+                downloadSessionState.all = sortSessions(updateBatch);
+                updateBatch.forEach((session: SessionStatsDto) => {
+                    downloadSessionState.byId[session.sessionId] = session;
+                });
             });
         });
-    });
+    } catch (error) {
+        if (!startupIsCurrent(signal)) return;
+        throw error;
+    }
 }
 
 /** Sort sessions: active sessions (by bandwidth, then oldest first), inactive sessions (newest first) **/

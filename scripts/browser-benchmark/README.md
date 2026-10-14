@@ -12,6 +12,10 @@ profiling may continue, but `cleanAcceptance` cannot pass unless every before/du
 and post-300-second browser observed the automatic redirect. This does not bypass
 authentication or repair the original UI. The same post-submit 15-second and total
 90-second deadlines remain in force; no cover is preloaded by the profile check.
+Profile-proof failures retain only a fixed substage and boolean DOM/base/identity
+conditions plus a none/one/multiple trigger-count category. No profile field values,
+page text, URLs, base URL values, cookies or credentials are recorded. These checks
+reuse existing polls and do not relax identity verification or extend deadlines.
 
 This is an opt-in scientific fixture, not deployment or release promotion. It
 never publishes an image, moves `latest`, connects to TrueNAS, reads production

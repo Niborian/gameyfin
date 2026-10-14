@@ -11,8 +11,17 @@ export function authReadiness(value){
   if(!value||typeof value!=='object'||Object.keys(value).length!==flags.length+1||!flags.every(key=>typeof value[key]==='boolean')||!['loading','interactive','complete'].includes(value.documentReady))throw new Error('Auth readiness boundary');
   return {...Object.fromEntries(flags.map(key=>[key,value[key]])),documentReady:value.documentReady};
 }
+export function profileReadiness(value){
+  const flags=['originMatches','profilePath','loginPath','myProfileHeading','usernamePresent','emailPresent','newPasswordPresent','passwordRepeatPresent','baseRootMatches','identityRow','adminItem','signOutItem'];
+  if(!value||typeof value!=='object'||Object.keys(value).length!==flags.length+1||!flags.every(key=>typeof value[key]==='boolean')||!['none','one','multiple'].includes(value.triggerCount))throw new Error('Profile readiness boundary');
+  return {...Object.fromEntries(flags.map(key=>[key,value[key]])),triggerCount:value.triggerCount};
+}
+export function profileDiagnostic(value){
+  if(!value||typeof value!=='object'||Object.keys(value).length!==2||!['not-started','navigate','profile-dom','open-menu','identity-menu','close-menu','complete'].includes(value.stage)||!Object.hasOwn(value,'readiness'))throw new Error('Profile diagnostic boundary');
+  return {stage:value.stage,readiness:value.readiness===null?null:profileReadiness(value.readiness)};
+}
 export function safeAuthDiagnostics(value){
-  const keys=['loginPostObserved','loginPostStatus','submittedUsernameLengthMatches','submittedPasswordLengthMatches','cdpFailure','cdpMethod','loginResultHeader','userInfoStatus','readiness'];
+  const keys=['loginPostObserved','loginPostStatus','submittedUsernameLengthMatches','submittedPasswordLengthMatches','cdpFailure','cdpMethod','loginResultHeader','userInfoStatus','readiness','profile'];
   if(!value||typeof value!=='object'||Object.keys(value).length!==keys.length||!keys.every(key=>Object.hasOwn(value,key))||typeof value.loginPostObserved!=='boolean')throw new Error('Auth diagnostic schema');
   if(value.loginPostStatus!==null&&(!Number.isInteger(value.loginPostStatus)||value.loginPostStatus<100||value.loginPostStatus>599))throw new Error('Auth numeric boundary');
   for(const key of ['submittedUsernameLengthMatches','submittedPasswordLengthMatches'])if(value[key]!==null&&typeof value[key]!=='boolean')throw new Error('Auth length-match boundary');
@@ -20,7 +29,7 @@ export function safeAuthDiagnostics(value){
   if(!['none','page-navigation','runtime-evaluate','input-insert','request-interception','setup','other'].includes(value.cdpMethod))throw new Error('Auth CDP method boundary');
   if(!['success','failure','missing','other'].includes(value.loginResultHeader))throw new Error('Auth protocol header boundary');
   if(value.userInfoStatus!==null&&(!Number.isInteger(value.userInfoStatus)||value.userInfoStatus<100||value.userInfoStatus>599))throw new Error('Auth user-info status boundary');
-  return {...Object.fromEntries(keys.slice(0,8).map(key=>[key,value[key]])),readiness:value.readiness===null?null:authReadiness(value.readiness)};
+  return {...Object.fromEntries(keys.slice(0,8).map(key=>[key,value[key]])),readiness:value.readiness===null?null:authReadiness(value.readiness),profile:profileDiagnostic(value.profile)};
 }
 export function loginResultHeader(headers){
   if(!headers||typeof headers!=='object')return 'missing';
@@ -30,10 +39,10 @@ export function loginResultHeader(headers){
 }
 export function fixtureProfileExpression(origin){
   if(!allowRequest(origin,origin))throw new Error('Fixture profile origin boundary');
-  return `(()=>{if(location.origin!==${JSON.stringify(origin)}||location.pathname!=='/settings/profile')return {ready:false};const u=document.querySelector('input[name="username"]'),e=document.querySelector('input[name="email"]'),p=document.querySelector('input[name="newPassword"]'),r=document.querySelector('input[name="passwordRepeat"]');const menu=[...document.querySelectorAll('nav [aria-haspopup="true"],nav [aria-haspopup="menu"]')].filter(node=>node.getClientRects().length);return {ready:[...document.querySelectorAll('h2')].some(node=>node.textContent.trim()==='My Profile')&&!!u&&!!e&&p?.type==='password'&&r?.type==='password'&&menu.length===1};})()`;
+  return `(()=>{const u=document.querySelector('input[name="username"]'),e=document.querySelector('input[name="email"]'),p=document.querySelector('input[name="newPassword"]'),r=document.querySelector('input[name="passwordRepeat"]');const menu=[...document.querySelectorAll('nav [aria-haspopup="true"],nav [aria-haspopup="menu"]')].filter(node=>node.getClientRects().length);const items=[...document.querySelectorAll('[role="menuitem"]')];const base=new URL(document.baseURI);const diagnostic={originMatches:location.origin===${JSON.stringify(origin)},profilePath:location.pathname==='/settings/profile',loginPath:location.pathname==='/login',myProfileHeading:[...document.querySelectorAll('h2')].some(node=>node.textContent.trim()==='My Profile'),usernamePresent:!!u,emailPresent:!!e,newPasswordPresent:p?.type==='password',passwordRepeatPresent:r?.type==='password',baseRootMatches:base.origin===location.origin&&base.pathname==='/',identityRow:items.some(node=>node.textContent.trim()==='Signed in as fixture-admin'),adminItem:items.some(node=>node.textContent.trim()==='Administration'),signOutItem:items.some(node=>node.textContent.trim()==='Sign Out'),triggerCount:menu.length===0?'none':menu.length===1?'one':'multiple'};return {ready:diagnostic.originMatches&&diagnostic.profilePath&&diagnostic.myProfileHeading&&diagnostic.usernamePresent&&diagnostic.emailPresent&&diagnostic.newPasswordPresent&&diagnostic.passwordRepeatPresent&&diagnostic.triggerCount==='one',diagnostic};})()`;
 }
 export function fixtureIdentityMenuExpression(){
-  return `(()=>{const items=[...document.querySelectorAll('[role="menuitem"]')];return {ready:['Signed in as fixture-admin','Administration','Sign Out'].every(label=>items.some(node=>node.textContent.trim()===label))};})()`;
+  return `(()=>{const items=[...document.querySelectorAll('[role="menuitem"]')];const diagnostic={identityRow:items.some(node=>node.textContent.trim()==='Signed in as fixture-admin'),adminItem:items.some(node=>node.textContent.trim()==='Administration'),signOutItem:items.some(node=>node.textContent.trim()==='Sign Out')};return {ready:Object.values(diagnostic).every(value=>value===true),diagnostic};})()`;
 }
 export class FixtureUiDriver {
   constructor(cdp,{origin,coverId,coverSha256,onProgress=()=>{}}){
@@ -41,7 +50,7 @@ export class FixtureUiDriver {
     this.cdp=cdp;this.origin=origin;this.coverId=coverId;this.coverSha256=coverSha256;this.cover=null;this.failure=false;this.navigations=0;
     this.totalDeadline=performance.now()+90000;
     if(typeof onProgress!=='function')throw new Error('Progress callback boundary');this.onProgress=onProgress;
-    this.loginRequestIds=new Set();this.userInfoRequestIds=new Set();this.authDiagnostics={loginPostObserved:false,loginPostStatus:null,submittedUsernameLengthMatches:null,submittedPasswordLengthMatches:null,cdpFailure:'none',cdpMethod:'none',loginResultHeader:'missing',userInfoStatus:null,readiness:null};
+    this.loginRequestIds=new Set();this.userInfoRequestIds=new Set();this.authDiagnostics={loginPostObserved:false,loginPostStatus:null,submittedUsernameLengthMatches:null,submittedPasswordLengthMatches:null,cdpFailure:'none',cdpMethod:'none',loginResultHeader:'missing',userInfoStatus:null,readiness:null,profile:{stage:'not-started',readiness:null}};
     cdp.onEvent=(method,params)=>this.event(method,params);
   }
   event(method,params){
@@ -138,11 +147,16 @@ export class FixtureUiDriver {
       if(this.authDiagnostics.loginResultHeader==='failure'||(this.authDiagnostics.loginPostStatus!==null&&this.authDiagnostics.loginPostStatus>=400)||performance.now()>=postSubmitDeadline)throw new Error('Normal login protocol acceptance unproved');
       await new Promise(resolve=>setTimeout(resolve,Math.min(50,Math.max(0,postSubmitDeadline-performance.now()))));
     }
-    this.authStage='profile-proof';await this.request('Page.navigate',{url:this.origin+'/settings/profile'},postSubmitDeadline);
-    await this.poll(fixtureProfileExpression(this.origin),()=>{},postSubmitDeadline);
+    this.authStage='profile-proof';this.authDiagnostics.profile.stage='navigate';await this.request('Page.navigate',{url:this.origin+'/settings/profile'},postSubmitDeadline);
+    this.authDiagnostics.profile.stage='profile-dom';
+    await this.poll(fixtureProfileExpression(this.origin),value=>{this.authDiagnostics.profile.readiness=profileReadiness(value?.diagnostic);},postSubmitDeadline);
+    this.authDiagnostics.profile.stage='open-menu';
     await this.openProfileMenu(postSubmitDeadline);
-    await this.poll(fixtureIdentityMenuExpression(),()=>{},postSubmitDeadline);
+    this.authDiagnostics.profile.stage='identity-menu';
+    await this.poll(fixtureIdentityMenuExpression(),value=>{this.authDiagnostics.profile.readiness=profileReadiness({...this.authDiagnostics.profile.readiness,...value?.diagnostic});},postSubmitDeadline);
+    this.authDiagnostics.profile.stage='close-menu';
     await this.openProfileMenu(postSubmitDeadline); // Close through the same normal trigger.
+    this.authDiagnostics.profile.stage='complete';
     this.authStage='complete';return {normalLoginAutoRedirectObserved:autoRedirectObserved,fixtureProfileVerified:true};
   }
   async logout(){

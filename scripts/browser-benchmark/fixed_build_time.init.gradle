@@ -1,0 +1,16 @@
+// Scientific paired-build INPUT only, not a source/JAR rewrite. Both source
+// builds receive the reviewed candidate commit instant and this exact script.
+// Boot4.0.3 BuildInfoProperties.getTime(): Property<String>, locally javap verified.
+gradle.projectsEvaluated {
+    def fixed = System.getenv('GAMEYFIN_BENCHMARK_BUILD_TIME')
+    if (fixed != '2026-10-11T18:51:55Z') {
+        throw new GradleException('Exact reviewed benchmark build instant required')
+    }
+    rootProject.allprojects.each { project ->
+        if (project.plugins.hasPlugin('org.springframework.boot')) {
+            project.tasks.named('bootBuildInfo').configure { task ->
+                task.getProperties().getTime().set(fixed)
+            }
+        }
+    }
+}

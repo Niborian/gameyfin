@@ -1,0 +1,107 @@
+import json,unittest
+from throughput_case import parse_metrics,balanced_pairs,run_case,browser_sample,browser_accepted
+
+def text(completed=0,active=0):
+    return (f'gameyfin_scans_active {active}\ngameyfin_scans_draining 0\n'
+        f'gameyfin_scans_completed_total{{type="full"}} {completed}\n'
+        'gameyfin_scans_failed_total{type="full"} 0\n'
+        'jvm_memory_used_bytes{area="heap",id="G1 Eden Space"} 123\n'
+        'jvm_gc_pause_seconds_count{action="minor"} 0\n'
+        'jvm_gc_pause_seconds_sum{action="minor"} 0\n').encode()
+
+class Clock:
+    t=0
+    def now(self):return self.t
+    def sleep(self,seconds):self.t+=seconds
+
+class Client:
+    completed=0;pending=False
+    def raw(self,path,management=False):
+        if 'includedNames' in path:return 200,{},f'gameyfin_scans_active {int(self.pending)}\n'.encode()
+        if self.pending:self.completed+=4;self.pending=False
+        return 200,{},text(self.completed)
+    def scan(self):self.pending=True
+    def validate(self,fixture,path):return {'testDoubleOnly':True}
+
+class Browser:
+    authenticationEvidence={'normalLoginAutoRedirectObserved':True,'fixtureProfileVerified':True}
+    def __init__(self,clock):self.clock=clock
+    def __enter__(self):return self
+    def __exit__(self,*_):pass
+    def close(self):pass
+    def sample(self):
+        self.clock.sleep(1)
+        return {'originalUiContentReady':True,'coverDecoded':True,'coverSha256Matches':True,'testDoubleOnly':True}
+
+class ThroughputCaseTest(unittest.TestCase):
+    def test_required_metrics_not_optional_or_nan(self):
+        parsed=parse_metrics(text())
+        self.assertEqual(parsed['heapBytes'],123)
+        with self.assertRaises(ValueError):parse_metrics(text().replace(b'gameyfin_scans_active 0',b'gameyfin_scans_active NaN'))
+        with self.assertRaises(ValueError):parse_metrics(text().replace(b'gameyfin_scans_draining 0\n',b''))
+        self.assertEqual(parse_metrics(text()+b'irrelevant_metric -1\n')['active'],0)
+    def test_order_balanced_six_sequential_arms(self):
+        calls=[]
+        report=balanced_pairs(lambda arm,pair,position:calls.append((arm,pair,position)))
+        self.assertEqual(report['caseOrder'],['control','candidate','candidate','control','control','candidate'])
+        self.assertEqual(len(calls),6)
+    def test_original_ui_deadline_is_not_success(self):
+        class Hung:
+            authenticationEvidence=Browser.authenticationEvidence
+            def sample(self):raise TimeoutError()
+        self.assertEqual(browser_sample(Hung())['acceptance'],'not_completed')
+    def test_diagnostic_landing_never_accepts_redirect_failure_in_any_phase(self):
+        for failed_phase in ('cold-before','cold-during','repeat-before','repeat-during','post300'):
+            clock=Clock();client=Client()
+            def browser(phase):
+                value=Browser(clock);value.authenticationEvidence={'normalLoginAutoRedirectObserved':phase!=failed_phase,'fixtureProfileVerified':True};return value
+            def resource():return {'cpuSeconds':clock.t/4,'throttledSeconds':clock.t/2,'memoryBytes':1000000,'anonymousBytes':900000,'fileCacheBytes':100000,'rssBytes':950000}
+            report=run_case(client,{},'/images/cover/1',browser,resource,lambda:None,clock=clock.now,sleep=clock.sleep)
+            self.assertTrue(report['complete']);self.assertFalse(report['cleanAcceptance'])
+            samples=[p[k] for p in report['phaseResults'] for k in ('beforeBrowser','duringBrowser')]+[report['post300Browser']]
+            self.assertEqual(sum(not browser_accepted(s) for s in samples),1)
+    def test_normal_scans_and_full_natural_recovery(self):
+        clock=Clock();client=Client();browser_phases=[];source_checks=[]
+        def browser(phase):browser_phases.append(phase);return Browser(clock)
+        def resource():return {'cpuSeconds':clock.t/4,'throttledSeconds':clock.t/2,'memoryBytes':1000000,
+            'anonymousBytes':900000,'fileCacheBytes':100000,'rssBytes':950000}
+        report=run_case(client,{},'/images/cover/1',browser,resource,lambda:source_checks.append(True),clock=clock.now,sleep=clock.sleep)
+        self.assertEqual(client.completed,8)
+        self.assertEqual(report['naturalRecovery']['observedSeconds'],300)
+        self.assertEqual(report['naturalRecovery']['cpuSeconds'],75)
+        self.assertEqual(report['phaseResults'][0]['scanClassification'],'bracketed-active')
+        self.assertEqual(browser_phases,['cold-before','cold-during','repeat-before','repeat-during','post300'])
+        self.assertEqual(len(source_checks),3)
+        self.assertTrue(report['post300BrowserExcludedFromRecoveryCpu'])
+        self.assertTrue(report['complete'])
+    def test_repeat_auth_failure_retains_completed_cold_phase_incomplete(self):
+        clock=Clock();client=Client();retained=[]
+        def browser(phase):
+            if phase=='repeat-during':raise ValueError('Private authentication failure')
+            return Browser(clock)
+        def resource():return {'cpuSeconds':clock.t/4,'throttledSeconds':clock.t/2,'memoryBytes':1000000,
+            'anonymousBytes':900000,'fileCacheBytes':100000,'rssBytes':950000}
+        def persist(report):retained.append(json.loads(json.dumps(report)))
+        with self.assertRaises(ValueError):run_case(client,{},'/images/cover/1',browser,resource,lambda:None,
+            clock=clock.now,sleep=clock.sleep,persist_partial=persist)
+        latest=retained[-1]
+        self.assertFalse(latest['complete']);self.assertNotIn('cleanAcceptance',latest)
+        self.assertEqual(len(latest['phaseResults']),1)
+        cold=latest['phaseResults'][0]
+        self.assertEqual(cold['phase'],'cold');self.assertGreaterEqual(cold['scanContainerCpuSeconds'],0)
+        self.assertTrue(cold['resourceSamples']);self.assertIn('status',cold['beforeBrowser']);self.assertIn('status',cold['duringBrowser'])
+        self.assertTrue(latest['coldIdle']);self.assertEqual(client.completed,4)
+        self.assertNotIn('Private authentication',json.dumps(latest))
+    def test_logout_failure_keeps_measurement_but_never_accepts_cleanup(self):
+        clock=Clock();client=Client();retained=[]
+        class LogoutFailure(Browser):
+            def close(self):raise ValueError('Logout failed')
+        def browser(phase):return LogoutFailure(clock) if phase=='cold-during' else Browser(clock)
+        def resource():return {'cpuSeconds':clock.t/4,'throttledSeconds':clock.t/2,'memoryBytes':1000000,'anonymousBytes':900000,'fileCacheBytes':100000,'rssBytes':950000}
+        with self.assertRaises(ValueError):run_case(client,{},'/images/cover/1',browser,resource,lambda:None,clock=clock.now,sleep=clock.sleep,
+            persist_partial=lambda report:retained.append(json.loads(json.dumps(report))))
+        phase=retained[-1]['pendingPhase']
+        self.assertEqual(phase['phase'],'cold');self.assertFalse(phase['duringBrowserCleanupPassed'])
+        self.assertEqual(phase['duringBrowser']['status'],'success');self.assertIn('memoryBytes',phase['resourceAfterBrowser'])
+        self.assertFalse(retained[-1]['complete'])
+if __name__=='__main__':unittest.main()

@@ -3,7 +3,7 @@ import {validateArguments,renderingConfiguration,browserResources,failureReceipt
 test('authentication CDP cause is a fixed hint, never arbitrary exception text',()=>{
  for(const [text,expected] of [['Execution context was destroyed. private','execution-context-destroyed'],['Cannot find context with specified id secret','execution-context-missing'],['Target closed secret','target-closed'],['operation timed out secret','protocol-timeout'],['private secret','other']])assert.equal(classifyCdpFailure(new Error(text)),expected);
  assert.equal(classifyCdpFailure(new Error('x'.repeat(8192)+'Execution context was destroyed')),'other');
- const auth={loginPostObserved:true,loginPostStatus:403,submittedUsernameLengthMatches:true,submittedPasswordLengthMatches:false,cdpFailure:'none',cdpMethod:'none',readiness:null};
+ const auth={loginPostObserved:true,loginPostStatus:403,submittedUsernameLengthMatches:true,submittedPasswordLengthMatches:false,cdpFailure:'none',cdpMethod:'none',loginResultHeader:'missing',userInfoStatus:null,readiness:null};
  assert.deepEqual(failureReceipt('authentication',null,null,'redirect',null,auth).authDiagnostics,auth);
  assert.throws(()=>failureReceipt('navigation',null,null,null,null,auth));assert.throws(()=>failureReceipt('authentication',null,null,'redirect',null,{...auth,raw:'secret'}));
  recordFirstAuthCdpFailure(auth,'Runtime.evaluate',new Error('Execution context was destroyed private'));recordFirstAuthCdpFailure(auth,'Fetch.continueRequest',new Error('Target closed private'));

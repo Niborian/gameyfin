@@ -6,7 +6,11 @@ import {LoopbackProxy} from './frontend_loopback_proxy.mjs';
 import {chromeProxyFlags} from './frontend_proxy_policy.mjs';
 import {FixtureUiDriver,safeAuthDiagnostics} from './frontend_ui_driver.mjs';
 let currentPhase='arguments',failurePhase=null,failureEmitted=false,launchFailureCategory=null,launchDiagnostics=null,authStage=null,failureCounters=null,authDiagnostics=null;
-export const authStages=Object.freeze(['interception','login-navigation','login-form','submit','redirect','complete']);
+export const authStages=Object.freeze(['interception','login-navigation','login-form','submit','redirect','profile-proof','complete']);
+export function authenticationReady(proof){
+  if(!proof||typeof proof!=='object'||Object.keys(proof).length!==2||typeof proof.normalLoginAutoRedirectObserved!=='boolean'||proof.fixtureProfileVerified!==true)throw new Error('Fixture authentication proof boundary');
+  return {authenticated:true,sandboxVerified:true,normalLoginAutoRedirectObserved:proof.normalLoginAutoRedirectObserved,fixtureProfileVerified:true};
+}
 export function classifyCdpFailure(error){
   const text=typeof error?.message==='string'?error.message.slice(0,8192):'';
   if(/Execution context was destroyed/.test(text))return 'execution-context-destroyed';
@@ -142,8 +146,8 @@ export async function main(argv){
     driver=new FixtureUiDriver(cdp,{origin,...identity,onProgress:progress=>process.stdout.write(JSON.stringify({navigationProgress:progress})+'\n')});
     currentPhase='input';let username=await readLine(),password=await readLine();
     if(username.length<1||username.length>128||password.length<16||password.length>256||/[\x00-\x1f\x7f]/.test(username+password))throw new Error('Private credentials boundary');
-    currentPhase='authentication';await driver.authenticate(username,password);username='';password='';
-    process.stdout.write(JSON.stringify({authenticated:true,sandboxVerified:true})+'\n');
+    currentPhase='authentication';const authProof=await driver.authenticate(username,password);username='';password='';
+    process.stdout.write(JSON.stringify(authenticationReady(authProof))+'\n');
     let command=await readLine();
     if(command==='navigate'){
       currentPhase='navigation';

@@ -9,6 +9,11 @@ def sample_receipt():
     return {'originalUiContentReady':True,'coverDecoded':True,'coverSha256Matches':True,'navigations':[row]*3,'browserResources':{'before':snapshot,'after':snapshot}}
 
 class CreationTests(unittest.TestCase):
+    def test_auth_ready_requires_exact_fixture_identity_proof_and_boolean_redirect(self):
+        row={'authenticated':True,'sandboxVerified':True,'fixtureProfileVerified':True,'normalLoginAutoRedirectObserved':False}
+        self.assertEqual(hosted_browser.validate_auth_ready(row),row)
+        for mutation in ({'fixtureProfileVerified':False},{'normalLoginAutoRedirectObserved':1},{'rawIdentity':'private'},{'authenticated':1}):
+            with self.assertRaises(ValueError):hosted_browser.validate_auth_ready({**row,**mutation})
     def test_auth_diagnostics_exact_nonsecret_schema(self):
         readiness={k:False for k in ('originMatches','loginPath','usernamePresent','passwordPresent','submitPresent','submitDisabled','invalidCredentialsDisplayed')};readiness['documentReady']='complete'
         data={'loginPostObserved':True,'loginPostStatus':302,'submittedUsernameLengthMatches':True,'submittedPasswordLengthMatches':True,'readiness':readiness,'cdpFailure':'none','cdpMethod':'none','loginResultHeader':'missing','userInfoStatus':None}

@@ -53,13 +53,18 @@ def delta(before,after,key):
     return value
 
 def browser_sample(browser):
+    auth=getattr(browser,'authenticationEvidence',None)
+    if not isinstance(auth,dict) or set(auth)!={'normalLoginAutoRedirectObserved','fixtureProfileVerified'} or type(auth['normalLoginAutoRedirectObserved']) is not bool or auth['fixtureProfileVerified'] is not True:raise ValueError('Verified fixture UI authentication evidence required')
     try:
         result=browser.sample()
         if any(result.get(k) is not True for k in ('originalUiContentReady','coverDecoded','coverSha256Matches')):
             raise ValueError('Original UI/cover functional evidence absent')
-        return {'status':'success','evidence':result}
+        return {'status':'success','evidence':result,'authenticationEvidence':dict(auth)}
     except TimeoutError:
-        return {'status':'timeout','censoredAtLeastSeconds':15,'acceptance':'not_completed'}
+        return {'status':'timeout','censoredAtLeastSeconds':15,'acceptance':'not_completed','authenticationEvidence':dict(auth)}
+
+def browser_accepted(sample):
+    return sample.get('status')=='success' and sample.get('authenticationEvidence',{}).get('normalLoginAutoRedirectObserved') is True and sample.get('authenticationEvidence',{}).get('fixtureProfileVerified') is True
 
 class ResourceSampler:
     """One owned bounded non-daemon sampler; no JVM/HTTP work or forced GC."""
@@ -187,8 +192,8 @@ def run_case(client,fixture,cover_path,prepare_browser,resource_snapshot,verify_
     report['post300BrowserExcludedFromRecoveryCpu']=True
     persist_partial(report)
     report['functionalValidation']=client.validate(fixture,cover_path);verify_sources()
-    report['cleanAcceptance']=all(p['browserCleanupPassed'] is True and p['resourceSamplerFailure'] is None and bool(p['resourceSamples']) and p['beforeBrowser']['status']=='success' and p['duringBrowser']['status']=='success'
-        and p['scanClassification']!='unknown' for p in report['phaseResults']) and report['post300Browser']['status']=='success'
+    report['cleanAcceptance']=all(p['browserCleanupPassed'] is True and p['resourceSamplerFailure'] is None and bool(p['resourceSamples']) and browser_accepted(p['beforeBrowser']) and browser_accepted(p['duringBrowser'])
+        and p['scanClassification']!='unknown' for p in report['phaseResults']) and browser_accepted(report['post300Browser'])
     report['acceptanceLimit']='Outer runner must additionally gate application ERROR/OOM/restart/health and exact cleanup. Unknown overlap or timeout is NOT accepted responsiveness.'
     report['complete']=True
     persist_partial(report)

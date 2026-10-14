@@ -218,10 +218,20 @@ def creation_args(owner,image,network,app_ip,cover_id,cover_sha):
 def validate_failure_receipt(value):
     base={'browserFailed','phase'}
     categories={'crashpad-database','readonly-filesystem','sandbox-unavailable','namespace-permission','missing-shared-library','missing-executable','launch-timeout','other'}
-    if (not isinstance(value,dict) or value.get('browserFailed') is not True or not base.issubset(value) or set(value)-base-{'launchFailureCategory','launchDiagnostics','authStage','failureCounters'} or
+    if (not isinstance(value,dict) or value.get('browserFailed') is not True or not base.issubset(value) or set(value)-base-{'launchFailureCategory','launchDiagnostics','authStage','failureCounters','authDiagnostics'} or
         value.get('phase') not in ('arguments','input','bridge','profile','chrome-launch','sandbox','authentication','navigation','logout','cleanup')):
         raise ValueError('Browser failure receipt schema')
     if 'authStage' in value and (value['phase']!='authentication' or value['authStage'] not in ('interception','login-navigation','login-form','submit','redirect','complete')):raise ValueError('Auth stage boundary')
+    if 'authDiagnostics' in value:
+        data=value['authDiagnostics']
+        keys={'loginPostObserved','loginPostStatus','submittedUsernameLengthMatches','submittedPasswordLengthMatches','readiness','cdpFailure','cdpMethod'}
+        if value['phase']!='authentication' or not isinstance(data,dict) or set(data)!=keys or type(data['loginPostObserved']) is not bool:raise ValueError('Auth diagnostics schema')
+        if data['loginPostStatus'] is not None and (type(data['loginPostStatus']) is not int or not 100<=data['loginPostStatus']<=599):raise ValueError('Auth diagnostic numeric boundary')
+        if any(data[k] is not None and type(data[k]) is not bool for k in ('submittedUsernameLengthMatches','submittedPasswordLengthMatches')):raise ValueError('Auth diagnostic match boundary')
+        if data['cdpFailure'] not in ('none','execution-context-destroyed','execution-context-missing','target-closed','protocol-timeout','other'):raise ValueError('Auth CDP failure enum')
+        if data['cdpMethod'] not in ('none','page-navigation','runtime-evaluate','input-insert','request-interception','setup','other'):raise ValueError('Auth CDP method enum')
+        readiness=data['readiness'];flags={'originMatches','loginPath','usernamePresent','passwordPresent','submitPresent','submitDisabled','invalidCredentialsDisplayed'}
+        if readiness is not None and (not isinstance(readiness,dict) or set(readiness)!=flags|{'documentReady'} or any(type(readiness[k]) is not bool for k in flags) or readiness['documentReady'] not in ('loading','interactive','complete')):raise ValueError('Auth readiness boundary')
     if 'failureCounters' in value:
         data=value['failureCounters'];keys={'pids.events.max','memory.events.max','memory.events.oom','memory.events.oom_kill'}
         if not isinstance(data,dict) or set(data)!=keys or any(x is not None and (type(x) is not int or not 0<=x<=2**53-1) for x in data.values()):raise ValueError('Failure cgroup numeric boundary')

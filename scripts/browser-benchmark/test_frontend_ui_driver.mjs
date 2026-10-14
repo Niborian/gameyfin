@@ -1,7 +1,25 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {FixtureUiDriver,connectAndMeasure,navigationProgress} from './frontend_ui_driver.mjs';
+import {FixtureUiDriver,connectAndMeasure,navigationProgress,authReadiness,safeAuthDiagnostics} from './frontend_ui_driver.mjs';
 const config={origin:'http://127.0.0.1:53123',coverId:7,coverSha256:'0'.repeat(64)};
+const readyAuth={originMatches:true,loginPath:false,usernamePresent:false,passwordPresent:false,submitPresent:false,submitDisabled:false,invalidCredentialsDisplayed:false,documentReady:'complete'};
+test('authentication diagnostics expose only status, length matches and fixed readiness',()=>{
+  const row={loginPostObserved:true,loginPostStatus:401,submittedUsernameLengthMatches:true,submittedPasswordLengthMatches:true,cdpFailure:'none',cdpMethod:'none',readiness:readyAuth};
+  assert.deepEqual(safeAuthDiagnostics(row),row);
+  for(const bad of [{...row,cookie:'secret'},{...row,loginPostStatus:'secret'},{...row,submittedPasswordLengthMatches:43},{...row,readiness:{...readyAuth,documentReady:'secret'}},{...row,readiness:{...readyAuth,text:'secret'}}])assert.throws(()=>safeAuthDiagnostics(bad));
+  assert.throws(()=>authReadiness({...readyAuth,loginPath:1}));
+});
+test('only correlated same-origin login POST status survives response and redirect events',()=>{
+  const driver=new FixtureUiDriver({request:async()=>({})},config);
+  driver.event('Network.responseReceived',{requestId:'get',response:{url:config.origin+'/login',status:200,headers:{Cookie:'secret'}}});
+  assert.equal(driver.authDiagnostics.loginPostStatus,null);
+  driver.event('Fetch.requestPaused',{requestId:'fetch',request:{url:config.origin+'/login',method:'POST',postData:'secret'}});
+  driver.event('Network.requestWillBeSent',{requestId:'post',request:{url:config.origin+'/login',method:'POST',postData:'secret'}});
+  driver.event('Network.requestWillBeSent',{requestId:'post',redirectResponse:{url:config.origin+'/login',status:302,headers:{Location:'secret'}},request:{url:config.origin+'/',method:'GET'}});
+  driver.event('Network.responseReceived',{requestId:'post',response:{url:config.origin+'/',status:200}});
+  assert.equal(driver.authDiagnostics.loginPostObserved,true);assert.equal(driver.authDiagnostics.loginPostStatus,302);assert.equal(driver.loginRequestIds.size,0);
+  assert(!JSON.stringify(safeAuthDiagnostics(driver.authDiagnostics)).includes('secret'));
+});
 test('navigation progress retains only fixed route indexes, stages and boolean gates',()=>{
   const flags=Object.fromEntries(['pathMatches','contentReady','coverTitlePresent','coverPresent','coverComplete','dimensionsMatch'].map(key=>[key,false]));
   assert.deepEqual(navigationProgress(1,'content',flags),{routeIndex:1,stage:'content',readiness:flags});
@@ -22,7 +40,7 @@ test('successful route emits bounded stage sequence and keeps readiness out of t
 });
 test('interception is enabled before login navigation; no auth API bypass',async()=>{
   const calls=[];const cdp={request:async(method,params)=>{
-    calls.push([method,params]);return method==='Runtime.evaluate'?{result:{value:/\.click\(\)|\.focus\(\)|new Promise/.test(params.expression)?true:{ready:true}}}:{};
+    calls.push([method,params]);return method==='Runtime.evaluate'?{result:{value:params.expression.includes('usernameLength:u.value.length')?{clicked:true,usernameLength:'fixture-user'.length,passwordLength:'private-random-secret-12345'.length}:params.expression.includes('document.readyState')?{ready:true,diagnostic:readyAuth}:/\.click\(\)|\.focus\(\)|new Promise/.test(params.expression)?true:{ready:true}}}:{};
   }};
   await new FixtureUiDriver(cdp,config).authenticate('fixture-user','private-random-secret-12345');
   assert.deepEqual(calls.slice(0,4).map(c=>c[0]),['Page.enable','Runtime.enable','Network.enable','Fetch.enable']);

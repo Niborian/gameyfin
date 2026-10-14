@@ -125,7 +125,7 @@ export async function main(argv){
       session.send(m,p).then(value=>{clearTimeout(deadline);resolve(value);},()=>{clearTimeout(deadline);reject(new Error('Private CDP operation failed'));});
     })};
     for(const name of ['Fetch.requestPaused','Network.responseReceived','Network.loadingFinished'])session.on(name,p=>cdp.onEvent?.(name,p));
-    driver=new FixtureUiDriver(cdp,{origin,...identity});
+    driver=new FixtureUiDriver(cdp,{origin,...identity,onProgress:progress=>process.stdout.write(JSON.stringify({navigationProgress:progress})+'\n')});
     currentPhase='input';let username=await readLine(),password=await readLine();
     if(username.length<1||username.length>128||password.length<16||password.length>256||/[\x00-\x1f\x7f]/.test(username+password))throw new Error('Private credentials boundary');
     currentPhase='authentication';await driver.authenticate(username,password);username='';password='';

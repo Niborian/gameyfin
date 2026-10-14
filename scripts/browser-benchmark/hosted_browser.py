@@ -28,6 +28,16 @@ BOOLEANS = {'coverSha256Matches','fromDiskCache','fromServiceWorker'}
 REQUIRED = {'domContentLoadedMs','loadMs','routeContentReadyMs','coverDecodedMs','coverNaturalWidth','coverNaturalHeight','coverResponseStatus','coverSha256Matches','fromDiskCache','fromServiceWorker'}
 
 
+def validate_navigation_progress(value):
+    if not isinstance(value,dict) or set(value)!={'navigationProgress'}:raise ValueError('Browser progress schema')
+    row=value['navigationProgress']
+    if not isinstance(row,dict) or set(row)!={'routeIndex','stage','readiness'}:raise ValueError('Browser progress schema')
+    if type(row['routeIndex']) is not int or not 1<=row['routeIndex']<=3 or row['stage'] not in ('navigate','content','cover-body','complete'):raise ValueError('Browser progress value')
+    readiness=row['readiness']
+    keys={'pathMatches','contentReady','coverTitlePresent','coverPresent','coverComplete','dimensionsMatch'}
+    if readiness is not None and (not isinstance(readiness,dict) or set(readiness)!=keys or any(type(v) is not bool for v in readiness.values())):raise ValueError('Browser readiness schema')
+    return value
+
 def validate_sample(receipt):
     if not isinstance(receipt,dict) or set(receipt)!={'originalUiContentReady','coverDecoded','coverSha256Matches','navigations','browserResources'} or any(receipt[k] is not True for k in ('originalUiContentReady','coverDecoded','coverSha256Matches')):
         raise ValueError('Normal UI sample gate')
@@ -275,6 +285,7 @@ class HostedBrowser:
         # Binary unbuffered stdout makes select truthful; no raw failures echoed.
         end=time.monotonic()+timeout
         raw=bytearray()
+        progress_count=0
         with selectors.DefaultSelector() as selector:
             selector.register(self.process.stdout,selectors.EVENT_READ)
             while time.monotonic()<end:
@@ -284,6 +295,13 @@ class HostedBrowser:
                 if chunk==b'\n':
                     value=json.loads(raw)
                     if not isinstance(value,dict): raise ValueError('Browser receipt schema')
+                    if 'navigationProgress' in value:
+                        validate_navigation_progress(value)
+                        progress_count+=1
+                        if progress_count>64:raise ValueError('Browser progress count bound')
+                        self.record_navigation_progress(value['navigationProgress'])
+                        raw.clear()
+                        continue
                     if value.get('browserFailed') is True:
                         validate_failure_receipt(value)
                         self.record_driver_failure(value)
@@ -292,6 +310,12 @@ class HostedBrowser:
                 raw.extend(chunk)
                 if len(raw)>8192: raise ValueError('Browser receipt bound')
         raise TimeoutError('Browser receipt deadline')
+
+    def record_navigation_progress(self,value):
+        if not getattr(self,'diagnostic_output',None):return
+        path=Path(self.diagnostic_output);data=read_state(path,8192)
+        data['lastNavigationProgress']=value
+        self.write_diagnostic(path,data,'.progress.pending')
 
     def record_driver_failure(self,value):
         if not self.diagnostic_output:return

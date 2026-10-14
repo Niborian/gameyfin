@@ -1,6 +1,25 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {FixtureUiDriver,connectAndMeasure} from './frontend_ui_driver.mjs';
+import {createHash} from 'node:crypto';
+import {FixtureUiDriver,connectAndMeasure,navigationProgress} from './frontend_ui_driver.mjs';
 const config={origin:'http://127.0.0.1:53123',coverId:7,coverSha256:'0'.repeat(64)};
+test('navigation progress retains only fixed route indexes, stages and boolean gates',()=>{
+  const flags=Object.fromEntries(['pathMatches','contentReady','coverTitlePresent','coverPresent','coverComplete','dimensionsMatch'].map(key=>[key,false]));
+  assert.deepEqual(navigationProgress(1,'content',flags),{routeIndex:1,stage:'content',readiness:flags});
+  for(const args of [[0,'navigate'],[4,'navigate'],[1,'secret'],[1,'content',{...flags,coverPresent:'secret'}],[1,'content',{...flags,url:'secret'}]])assert.throws(()=>navigationProgress(...args));
+});
+test('successful route emits bounded stage sequence and keeps readiness out of timing schema',async()=>{
+  const body=Buffer.alloc(371528),progress=[];
+  const diagnostic=Object.fromEntries(['pathMatches','contentReady','coverTitlePresent','coverPresent','coverComplete','dimensionsMatch'].map(key=>[key,true]));
+  const cdp={request:async(method)=>{
+    if(method==='Page.navigate'){cdp.onEvent('Network.responseReceived',{requestId:'cover',response:{url:config.origin+'/images/cover/7',status:200}});return {};}
+    if(method==='Network.getResponseBody')return {body:body.toString('base64'),base64Encoded:true};
+    if(method==='Runtime.evaluate')return {result:{value:{ready:true,diagnostic,loadMs:1,coverNaturalWidth:320,coverNaturalHeight:480}}};
+    throw new Error('Unexpected unit command');
+  }};
+  const result=await new FixtureUiDriver(cdp,{...config,coverSha256:createHash('sha256').update(body).digest('hex'),onProgress:row=>progress.push(row)}).navigate('/library/27003');
+  assert.deepEqual(progress.map(row=>row.stage),['navigate','content','cover-body','complete']);assert(progress.every(row=>row.routeIndex===1));
+  assert.equal(result.coverSha256Matches,true);assert(!('diagnostic' in result));assert.deepEqual(progress[1].readiness,diagnostic);
+});
 test('interception is enabled before login navigation; no auth API bypass',async()=>{
   const calls=[];const cdp={request:async(method,params)=>{
     calls.push([method,params]);return method==='Runtime.evaluate'?{result:{value:/\.click\(\)|\.focus\(\)|new Promise/.test(params.expression)?true:{ready:true}}}:{};

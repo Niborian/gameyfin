@@ -12,7 +12,7 @@ export function authReadiness(value){
   return {...Object.fromEntries(flags.map(key=>[key,value[key]])),documentReady:value.documentReady};
 }
 export function profileReadiness(value){
-  const flags=['originMatches','profilePath','loginPath','myProfileHeading','usernamePresent','emailPresent','newPasswordPresent','passwordRepeatPresent','baseRootMatches','identityRow','adminItem','signOutItem'];
+  const flags=['originMatches','profilePath','loginPath','myProfileHeading','usernamePresent','emailPresent','newPasswordPresent','passwordRepeatPresent','baseRootMatches','identityRow','adminItem','signOutItem','navPresent','navbarAvatarPresent','navbarSignInPresent','navTriggerPresent','navTriggerVisible','menuAriaPresent','menuAriaVisible','menuAriaOutsideNav','profileTriggerUnique'];
   if(!value||typeof value!=='object'||Object.keys(value).length!==flags.length+1||!flags.every(key=>typeof value[key]==='boolean')||!['none','one','multiple'].includes(value.triggerCount))throw new Error('Profile readiness boundary');
   return {...Object.fromEntries(flags.map(key=>[key,value[key]])),triggerCount:value.triggerCount};
 }
@@ -21,7 +21,7 @@ export function profileDiagnostic(value){
   return {stage:value.stage,readiness:value.readiness===null?null:profileReadiness(value.readiness)};
 }
 export function safeAuthDiagnostics(value){
-  const keys=['loginPostObserved','loginPostStatus','submittedUsernameLengthMatches','submittedPasswordLengthMatches','cdpFailure','cdpMethod','loginResultHeader','userInfoStatus','readiness','profile'];
+  const keys=['loginPostObserved','loginPostStatus','submittedUsernameLengthMatches','submittedPasswordLengthMatches','cdpFailure','cdpMethod','loginResultHeader','userInfoStatus','userInfoIdentity','readiness','profile'];
   if(!value||typeof value!=='object'||Object.keys(value).length!==keys.length||!keys.every(key=>Object.hasOwn(value,key))||typeof value.loginPostObserved!=='boolean')throw new Error('Auth diagnostic schema');
   if(value.loginPostStatus!==null&&(!Number.isInteger(value.loginPostStatus)||value.loginPostStatus<100||value.loginPostStatus>599))throw new Error('Auth numeric boundary');
   for(const key of ['submittedUsernameLengthMatches','submittedPasswordLengthMatches'])if(value[key]!==null&&typeof value[key]!=='boolean')throw new Error('Auth length-match boundary');
@@ -29,7 +29,19 @@ export function safeAuthDiagnostics(value){
   if(!['none','page-navigation','runtime-evaluate','input-insert','request-interception','setup','other'].includes(value.cdpMethod))throw new Error('Auth CDP method boundary');
   if(!['success','failure','missing','other'].includes(value.loginResultHeader))throw new Error('Auth protocol header boundary');
   if(value.userInfoStatus!==null&&(!Number.isInteger(value.userInfoStatus)||value.userInfoStatus<100||value.userInfoStatus>599))throw new Error('Auth user-info status boundary');
-  return {...Object.fromEntries(keys.slice(0,8).map(key=>[key,value[key]])),readiness:value.readiness===null?null:authReadiness(value.readiness),profile:profileDiagnostic(value.profile)};
+  if(!['not-observed','null','fixture-user','other','invalid','failed'].includes(value.userInfoIdentity))throw new Error('Auth user-info identity boundary');
+  return {...Object.fromEntries(keys.slice(0,9).map(key=>[key,value[key]])),readiness:value.readiness===null?null:authReadiness(value.readiness),profile:profileDiagnostic(value.profile)};
+}
+// Private response input is reduced immediately; no DTO fields leave this function.
+export function classifyUserInfoBody(response){
+  if(!response||typeof response.body!=='string'||typeof response.base64Encoded!=='boolean'||Buffer.byteLength(response.body)>16384)return 'invalid';
+  let body=response.body;
+  if(response.base64Encoded){if(!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(body))return 'invalid';body=Buffer.from(body,'base64').toString('utf8');}
+  if(Buffer.byteLength(body)>16384)return 'invalid';
+  let value;try{value=JSON.parse(body);}catch{return 'invalid';}
+  if(value===null)return 'null';
+  if(typeof value!=='object'||Array.isArray(value)||typeof value.username!=='string'||typeof value.enabled!=='boolean'||!Array.isArray(value.roles)||!value.roles.every(role=>typeof role==='string'))return 'invalid';
+  return value.username==='fixture-admin'&&value.enabled===true&&value.roles.some(role=>['ROLE_ADMIN','ROLE_SUPERADMIN'].includes(role))?'fixture-user':'other';
 }
 export function loginResultHeader(headers){
   if(!headers||typeof headers!=='object')return 'missing';
@@ -37,9 +49,12 @@ export function loginResultHeader(headers){
   if(rows.length===0)return 'missing';
   return rows.length===1&&['success','failure'].includes(rows[0][1])?rows[0][1]:'other';
 }
+// Published HeroUI Popover clones data-slot=trigger onto ProfileMenu's DIV;
+// ProfileMenu's unique child Avatar renders as button with fixed size-8 class.
+const profileTriggers=`[...document.querySelectorAll('nav [data-slot="trigger"]')].filter(node=>node.getClientRects().length>0&&node.querySelectorAll('button.size-8').length===1)`;
 export function fixtureProfileExpression(origin){
   if(!allowRequest(origin,origin))throw new Error('Fixture profile origin boundary');
-  return `(()=>{const u=document.querySelector('input[name="username"]'),e=document.querySelector('input[name="email"]'),p=document.querySelector('input[name="newPassword"]'),r=document.querySelector('input[name="passwordRepeat"]');const menu=[...document.querySelectorAll('nav [aria-haspopup="true"],nav [aria-haspopup="menu"]')].filter(node=>node.getClientRects().length);const items=[...document.querySelectorAll('[role="menuitem"]')];const base=new URL(document.baseURI);const diagnostic={originMatches:location.origin===${JSON.stringify(origin)},profilePath:location.pathname==='/settings/profile',loginPath:location.pathname==='/login',myProfileHeading:[...document.querySelectorAll('h2')].some(node=>node.textContent.trim()==='My Profile'),usernamePresent:!!u,emailPresent:!!e,newPasswordPresent:p?.type==='password',passwordRepeatPresent:r?.type==='password',baseRootMatches:base.origin===location.origin&&base.pathname==='/',identityRow:items.some(node=>node.textContent.trim()==='Signed in as fixture-admin'),adminItem:items.some(node=>node.textContent.trim()==='Administration'),signOutItem:items.some(node=>node.textContent.trim()==='Sign Out'),triggerCount:menu.length===0?'none':menu.length===1?'one':'multiple'};return {ready:diagnostic.originMatches&&diagnostic.profilePath&&diagnostic.myProfileHeading&&diagnostic.usernamePresent&&diagnostic.emailPresent&&diagnostic.newPasswordPresent&&diagnostic.passwordRepeatPresent&&diagnostic.triggerCount==='one',diagnostic};})()`;
+  return `(()=>{const u=document.querySelector('input[name="username"]'),e=document.querySelector('input[name="email"]'),p=document.querySelector('input[name="newPassword"]'),r=document.querySelector('input[name="passwordRepeat"]');const visible=node=>node.getClientRects().length>0;const menu=[...document.querySelectorAll('nav [aria-haspopup="true"],nav [aria-haspopup="menu"]')].filter(visible);const triggers=[...document.querySelectorAll('nav [data-slot="trigger"]')];const aria=[...document.querySelectorAll('[aria-haspopup="true"],[aria-haspopup="menu"]')];const items=[...document.querySelectorAll('[role="menuitem"]')];const base=new URL(document.baseURI);const diagnostic={originMatches:location.origin===${JSON.stringify(origin)},profilePath:location.pathname==='/settings/profile',loginPath:location.pathname==='/login',myProfileHeading:[...document.querySelectorAll('h2')].some(node=>node.textContent.trim()==='My Profile'),usernamePresent:!!u,emailPresent:!!e,newPasswordPresent:p?.type==='password',passwordRepeatPresent:r?.type==='password',baseRootMatches:base.origin===location.origin&&base.pathname==='/',identityRow:items.some(node=>node.textContent.trim()==='Signed in as fixture-admin'),adminItem:items.some(node=>node.textContent.trim()==='Administration'),signOutItem:items.some(node=>node.textContent.trim()==='Sign Out'),navPresent:!!document.querySelector('nav'),navbarAvatarPresent:!!document.querySelector('nav button.size-8'),navbarSignInPresent:!!document.querySelector('nav button.gradient-primary:not(.size-8)'),navTriggerPresent:triggers.length>0,navTriggerVisible:triggers.some(visible),menuAriaPresent:aria.length>0,menuAriaVisible:aria.some(visible),menuAriaOutsideNav:aria.some(node=>!node.closest('nav')),profileTriggerUnique:(${profileTriggers}).length===1,triggerCount:menu.length===0?'none':menu.length===1?'one':'multiple'};return {ready:diagnostic.originMatches&&diagnostic.profilePath&&diagnostic.myProfileHeading&&diagnostic.usernamePresent&&diagnostic.emailPresent&&diagnostic.newPasswordPresent&&diagnostic.passwordRepeatPresent&&diagnostic.profileTriggerUnique,diagnostic};})()`;
 }
 export function fixtureIdentityMenuExpression(){
   return `(()=>{const items=[...document.querySelectorAll('[role="menuitem"]')];const diagnostic={identityRow:items.some(node=>node.textContent.trim()==='Signed in as fixture-admin'),adminItem:items.some(node=>node.textContent.trim()==='Administration'),signOutItem:items.some(node=>node.textContent.trim()==='Sign Out')};return {ready:Object.values(diagnostic).every(value=>value===true),diagnostic};})()`;
@@ -50,7 +65,7 @@ export class FixtureUiDriver {
     this.cdp=cdp;this.origin=origin;this.coverId=coverId;this.coverSha256=coverSha256;this.cover=null;this.failure=false;this.navigations=0;
     this.totalDeadline=performance.now()+90000;
     if(typeof onProgress!=='function')throw new Error('Progress callback boundary');this.onProgress=onProgress;
-    this.loginRequestIds=new Set();this.userInfoRequestIds=new Set();this.authDiagnostics={loginPostObserved:false,loginPostStatus:null,submittedUsernameLengthMatches:null,submittedPasswordLengthMatches:null,cdpFailure:'none',cdpMethod:'none',loginResultHeader:'missing',userInfoStatus:null,readiness:null,profile:{stage:'not-started',readiness:null}};
+    this.loginRequestIds=new Set();this.userInfoRequestIds=new Set();this.postLoginUserInfoIds=new Set();this.userInfoBodyRequestId=null;this.userInfoBodyAttempted=false;this.authDiagnostics={loginPostObserved:false,loginPostStatus:null,submittedUsernameLengthMatches:null,submittedPasswordLengthMatches:null,cdpFailure:'none',cdpMethod:'none',loginResultHeader:'missing',userInfoStatus:null,userInfoIdentity:'not-observed',readiness:null,profile:{stage:'not-started',readiness:null}};
     cdp.onEvent=(method,params)=>this.event(method,params);
   }
   event(method,params){
@@ -64,20 +79,27 @@ export class FixtureUiDriver {
         this.recordLoginStatus(params.redirectResponse);this.loginRequestIds.delete(params.requestId);
       }
       try{const u=new URL(params.request?.url);if(u.origin===this.origin&&u.pathname==='/login'&&params.request.method==='POST'&&typeof params.requestId==='string'&&params.requestId.length<=128&&this.loginRequestIds.size<4)this.loginRequestIds.add(params.requestId);}catch{}
-      try{const u=new URL(params.request?.url);if(u.origin===this.origin&&u.pathname==='/connect/UserEndpoint/getUserInfo'&&params.request.method==='POST'&&typeof params.requestId==='string'&&params.requestId.length<=128&&this.userInfoRequestIds.size<4)this.userInfoRequestIds.add(params.requestId);}catch{}
+      try{const u=new URL(params.request?.url);if(u.origin===this.origin&&u.pathname==='/connect/UserEndpoint/getUserInfo'&&params.request.method==='POST'&&typeof params.requestId==='string'&&params.requestId.length<=128&&this.userInfoRequestIds.size<4){this.userInfoRequestIds.add(params.requestId);if(this.authStage==='profile-proof'&&this.authDiagnostics.loginPostStatus===200&&this.authDiagnostics.loginResultHeader==='success'&&this.postLoginUserInfoIds.size<4)this.postLoginUserInfoIds.add(params.requestId);}}catch{}
     }else if(method==='Network.responseReceived'){
       const response=params.response;let parsed;try{parsed=new URL(response.url);}catch{return;}
       if(this.loginRequestIds.has(params.requestId)){this.recordLoginStatus(response);this.loginRequestIds.delete(params.requestId);}
       if(this.userInfoRequestIds.has(params.requestId)){
         if(parsed.origin===this.origin&&parsed.pathname==='/connect/UserEndpoint/getUserInfo'&&Number.isInteger(response.status)&&response.status>=100&&response.status<=599)this.authDiagnostics.userInfoStatus=response.status;
+        if(parsed.origin===this.origin&&parsed.pathname==='/connect/UserEndpoint/getUserInfo'&&response.status===200&&this.postLoginUserInfoIds.has(params.requestId)&&!this.userInfoBodyAttempted&&this.userInfoBodyRequestId===null)this.userInfoBodyRequestId=params.requestId;
+        this.postLoginUserInfoIds.delete(params.requestId);
         this.userInfoRequestIds.delete(params.requestId);
       }
       if(parsed.origin===this.origin&&parsed.pathname===`/images/cover/${this.coverId}`){
         if(typeof params.requestId!=='string'||params.requestId.length>128||!Number.isInteger(response.status))return;
         this.cover={requestId:params.requestId,coverResponseStatus:response.status,fromDiskCache:response.fromDiskCache===true,fromServiceWorker:response.fromServiceWorker===true};
       }
-    }else if(method==='Network.loadingFinished'&&this.cover?.requestId===params.requestId){
-      this.cover.encodedDataLength=params.encodedDataLength;
+    }else if(method==='Network.loadingFinished'){
+      if(this.cover?.requestId===params.requestId)this.cover.encodedDataLength=params.encodedDataLength;
+      if(this.userInfoBodyRequestId===params.requestId&&!this.userInfoBodyAttempted){
+        this.userInfoBodyAttempted=true;this.userInfoBodyRequestId=null;
+        if(!Number.isFinite(params.encodedDataLength)||params.encodedDataLength<0||params.encodedDataLength>16384){this.authDiagnostics.userInfoIdentity='invalid';return;}
+        this.request('Network.getResponseBody',{requestId:params.requestId},this.postSubmitDeadline??0).then(response=>{this.authDiagnostics.userInfoIdentity=classifyUserInfoBody(response);}).catch(()=>{this.authDiagnostics.userInfoIdentity='failed';});
+      }
     }
   }
   recordLoginStatus(response){
@@ -126,19 +148,20 @@ export class FixtureUiDriver {
       await this.evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))`);
     }
     const postSubmitDeadline=performance.now()+15000;
+    this.postSubmitDeadline=postSubmitDeadline;
     const submitted=await this.evaluate(`(()=>{const u=document.querySelector('input[name="username"]'),p=document.querySelector('input[name="password"]');const b=u?.closest('form')?.querySelector('button[type="submit"]');if(location.pathname!=='/login'||!p||!b||b.disabled)return {clicked:false};const result={clicked:true,usernameLength:u.value.length,passwordLength:p.value.length};b.click();return result;})()`,postSubmitDeadline);
     if(!submitted||submitted.clicked!==true||!Number.isInteger(submitted.usernameLength)||submitted.usernameLength<0||submitted.usernameLength>128||!Number.isInteger(submitted.passwordLength)||submitted.passwordLength<0||submitted.passwordLength>256)throw new Error('Normal UI login unavailable');
     this.authDiagnostics.submittedUsernameLengthMatches=submitted.usernameLength===username.length;this.authDiagnostics.submittedPasswordLengthMatches=submitted.passwordLength===password.length;
     // Diagnostic continuation, not a successful automatic-landing acceptance.
-    // Observe the original UI for at most3s; profile verification shares the
-    // SAME15s post-submit budget. The fixed read-only profile route loads no
+    // Start original-UI observation checks for up to3s; each DOM query and
+    // profile verification share the SAME15s post-submit budget. The profile loads no
     // fixture cover. Dynamic profile-menu identity proves auth; HTTP200 alone
     // cannot, and ProfileManagement's non-reinitializing Formik fields can race
     // auth initialization. No field values are read or modified by the probe.
     this.authStage='redirect';let autoRedirectObserved=false;
     const observationEnd=Math.min(performance.now()+3000,postSubmitDeadline);
     while(performance.now()<observationEnd){
-      const value=await this.evaluate(`(()=>{const u=document.querySelector('input[name="username"]'),p=document.querySelector('input[name="password"]'),b=u?.closest('form')?.querySelector('button[type="submit"]');const diagnostic={originMatches:location.origin===${JSON.stringify(this.origin)},loginPath:location.pathname==='/login',usernamePresent:!!u,passwordPresent:!!p,submitPresent:!!b,submitDisabled:!!b?.disabled,invalidCredentialsDisplayed:document.body?.textContent?.includes('Invalid username and/or password.')===true,documentReady:document.readyState};return {ready:diagnostic.originMatches&&!diagnostic.loginPath,diagnostic};})()`,observationEnd);
+      const value=await this.evaluate(`(()=>{const u=document.querySelector('input[name="username"]'),p=document.querySelector('input[name="password"]'),b=u?.closest('form')?.querySelector('button[type="submit"]');const diagnostic={originMatches:location.origin===${JSON.stringify(this.origin)},loginPath:location.pathname==='/login',usernamePresent:!!u,passwordPresent:!!p,submitPresent:!!b,submitDisabled:!!b?.disabled,invalidCredentialsDisplayed:document.body?.textContent?.includes('Invalid username and/or password.')===true,documentReady:document.readyState};return {ready:diagnostic.originMatches&&!diagnostic.loginPath,diagnostic};})()`,postSubmitDeadline);
       this.authDiagnostics.readiness=authReadiness(value?.diagnostic);
       if(value.ready===true){autoRedirectObserved=true;break;}
       await new Promise(resolve=>setTimeout(resolve,50));
@@ -169,7 +192,7 @@ export class FixtureUiDriver {
     return {loggedOut:true};
   }
   async openProfileMenu(deadline=this.totalDeadline){
-    if(await this.evaluate(`(()=>{if(location.origin!==${JSON.stringify(this.origin)}||location.pathname==='/login')return false;const triggers=[...document.querySelectorAll('nav [aria-haspopup="true"],nav [aria-haspopup="menu"]')].filter(e=>e.getClientRects().length);if(triggers.length!==1)return false;triggers[0].click();return true;})()`,deadline)!==true)throw new Error('Normal UI logout unavailable');
+      if(await this.evaluate(`(()=>{if(location.origin!==${JSON.stringify(this.origin)}||location.pathname==='/login')return false;const triggers=${profileTriggers};if(triggers.length!==1)return false;triggers[0].click();return true;})()`,deadline)!==true)throw new Error('Normal UI logout unavailable');
   }
   async navigate(path){
     if(!['/library/27003','/game/33000'].includes(path)||++this.navigations>3)throw new Error('Navigation bound');

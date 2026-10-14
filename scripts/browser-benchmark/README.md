@@ -5,8 +5,10 @@ identity-verified normal profile UI navigation to verify the exact fixture ident
 in the original ProfileMenu (not protection of the profile route itself).
 This same unmeasured preparation applies to both arms and is not a pure metadata
 cold-cache claim. Automatic redirect observation and fixture-profile proof are retained separately
-for every browser. Automatic landing is observed for at most three seconds before
-the diagnostic profile probe; absence during that interval is unaccepted evidence,
+for every browser. Optional automatic-landing checks start only within the first
+three seconds; each query and the following diagnostic profile probe share the
+original 15-second post-submit deadline (not a separate three-second CDP timeout).
+Absence during that observation interval is unaccepted evidence,
 not proof of a full 15-second standalone login failure. It remains a blocking UX finding:
 profiling may continue, but `cleanAcceptance` cannot pass unless every before/during
 and post-300-second browser observed the automatic redirect. This does not bypass
@@ -16,6 +18,14 @@ Profile-proof failures retain only a fixed substage and boolean DOM/base/identit
 conditions plus a none/one/multiple trigger-count category. No profile field values,
 page text, URLs, base URL values, cookies or credentials are recorded. These checks
 reuse existing polls and do not relax identity verification or extend deadlines.
+The already-observed exact user-info response may additionally be classified as
+not-observed/null/fixture-user/other/invalid/failed after accepted normal login.
+Its bounded private body is never retained; only the fixed category is recorded.
+This is not a substitute for the original UI identity gate and adds no HTTP request.
+Profile-menu interaction targets exactly one visible original navbar trigger wrapper
+containing exactly one small avatar button, rather than assuming an ARIA attribute
+is placed on that wrapper. Missing or ambiguous wrappers still fail closed; the
+fixture identity, administrator/menu and automatic-redirect acceptance gates remain.
 
 This is an opt-in scientific fixture, not deployment or release promotion. It
 never publishes an image, moves `latest`, connects to TrueNAS, reads production

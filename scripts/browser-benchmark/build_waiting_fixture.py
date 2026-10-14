@@ -2,6 +2,25 @@
 import argparse,hashlib,os,subprocess,tempfile,zipfile
 from pathlib import Path
 
+def lifecycle_failure_category(stderr):
+    # Only these fixture-owned literals may leave the private child capture.
+    text=stderr.decode('utf-8','replace')[:16384] if isinstance(stderr,bytes) else ''
+    for literal,category in (
+        ('Invalid fixture release marker','invalid-release-marker'),
+        ('Fixture waiting-provider deadline exceeded','provider-deadline'),
+        ('AssertionError: Not held','hold-assertion'),
+        ('AssertionError: Release failed','release-assertion'),
+        ('TimeoutException','test-future-deadline')):
+        if literal in text:return category
+    return 'other'
+
+def check_lifecycle(argv):
+    try:subprocess.run(argv,check=True,timeout=10,capture_output=True)
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError('Waiting fixture lifecycle failed: '+lifecycle_failure_category(error.stderr)) from None
+    except subprocess.TimeoutExpired:
+        raise RuntimeError('Waiting fixture lifecycle failed: process-deadline') from None
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     for name in ('javac','java','plugin-api','pf4j','kotlin-stdlib','output'):p.add_argument('--'+name,required=True)
@@ -15,8 +34,8 @@ def main():
         sources=[base/'FixtureMetadataPlugin.java',*[base/'overlap'/name for name in
             ('FixtureRendezvous.java','WaitingMetadataPlugin.java','FixtureRendezvousTest.java')]]
         subprocess.run([a.javac,'-proc:none','-cp',cp,'-d',str(classes),*map(str,sources)],check=True,timeout=60,capture_output=True)
-        subprocess.run([a.java,'-Xmx32m','-cp',str(classes)+os.pathsep+cp,
-            'org.gameyfin.experiments.fixture.overlap.FixtureRendezvousTest'],check=True,timeout=10,capture_output=True)
+        check_lifecycle([a.java,'-Xmx32m','-cp',str(classes)+os.pathsep+cp,
+            'org.gameyfin.experiments.fixture.overlap.FixtureRendezvousTest'])
         manifest=('Manifest-Version: 1.0\nPlugin-Version: 0.0.2\n'
             'Plugin-Class: org.gameyfin.experiments.fixture.overlap.WaitingMetadataPlugin\n'
             'Plugin-Id: org.gameyfin.experiments.fixture.metadata\n'

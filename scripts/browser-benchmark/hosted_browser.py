@@ -38,6 +38,11 @@ def validate_navigation_progress(value):
     if readiness is not None and (not isinstance(readiness,dict) or set(readiness)!=keys or any(type(v) is not bool for v in readiness.values())):raise ValueError('Browser readiness schema')
     return value
 
+def validate_auth_ready(value):
+    keys={'authenticated','sandboxVerified','normalLoginAutoRedirectObserved','fixtureProfileVerified'}
+    if not isinstance(value,dict) or set(value)!=keys or any(value[k] is not True for k in ('authenticated','sandboxVerified','fixtureProfileVerified')) or type(value['normalLoginAutoRedirectObserved']) is not bool:raise ValueError('Normal UI auth/sandbox/profile gate')
+    return value
+
 def validate_sample(receipt):
     if not isinstance(receipt,dict) or set(receipt)!={'originalUiContentReady','coverDecoded','coverSha256Matches','navigations','browserResources'} or any(receipt[k] is not True for k in ('originalUiContentReady','coverDecoded','coverSha256Matches')):
         raise ValueError('Normal UI sample gate')
@@ -221,7 +226,7 @@ def validate_failure_receipt(value):
     if (not isinstance(value,dict) or value.get('browserFailed') is not True or not base.issubset(value) or set(value)-base-{'launchFailureCategory','launchDiagnostics','authStage','failureCounters','authDiagnostics'} or
         value.get('phase') not in ('arguments','input','bridge','profile','chrome-launch','sandbox','authentication','navigation','logout','cleanup')):
         raise ValueError('Browser failure receipt schema')
-    if 'authStage' in value and (value['phase']!='authentication' or value['authStage'] not in ('interception','login-navigation','login-form','submit','redirect','complete')):raise ValueError('Auth stage boundary')
+    if 'authStage' in value and (value['phase']!='authentication' or value['authStage'] not in ('interception','login-navigation','login-form','submit','redirect','profile-proof','complete')):raise ValueError('Auth stage boundary')
     if 'authDiagnostics' in value:
         data=value['authDiagnostics']
         keys={'loginPostObserved','loginPostStatus','submittedUsernameLengthMatches','submittedPasswordLengthMatches','readiness','cdpFailure','cdpMethod','loginResultHeader','userInfoStatus'}
@@ -342,7 +347,11 @@ class HostedBrowser:
             raise ValueError('Private input boundary')
         self.process.stdin.write((username+'\n'+password+'\n').encode());self.process.stdin.flush()
         ready=self._read_receipt(30)
-        if ready!={'authenticated':True,'sandboxVerified':True}: raise ValueError('Normal UI auth/sandbox gate')
+        validate_auth_ready(ready)
+        self.authenticationEvidence={k:ready[k] for k in ('normalLoginAutoRedirectObserved','fixtureProfileVerified')}
+        if getattr(self,'diagnostic_output',None):
+            path=Path(self.diagnostic_output);data=read_state(path,8192);data['authenticationEvidence']=self.authenticationEvidence
+            self.write_diagnostic(path,data,'.auth-ready.pending')
         self.authenticated=True
 
     def sample(self):

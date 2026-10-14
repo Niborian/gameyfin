@@ -1,5 +1,18 @@
 # Original-UI scan benchmark (#27, partial #61 evidence)
 
+Diagnostic continuation after a successful normal login POST uses one unmeasured
+identity-verified normal profile UI navigation to verify the exact fixture identity
+in the original ProfileMenu (not protection of the profile route itself).
+This same unmeasured preparation applies to both arms and is not a pure metadata
+cold-cache claim. Automatic redirect observation and fixture-profile proof are retained separately
+for every browser. Automatic landing is observed for at most three seconds before
+the diagnostic profile probe; absence during that interval is unaccepted evidence,
+not proof of a full 15-second standalone login failure. It remains a blocking UX finding:
+profiling may continue, but `cleanAcceptance` cannot pass unless every before/during
+and post-300-second browser observed the automatic redirect. This does not bypass
+authentication or repair the original UI. The same post-submit 15-second and total
+90-second deadlines remain in force; no cover is preloaded by the profile check.
+
 This is an opt-in scientific fixture, not deployment or release promotion. It
 never publishes an image, moves `latest`, connects to TrueNAS, reads production
 H2, or mounts game/torrent source paths. GitHub-hosted Linux is the only runtime.

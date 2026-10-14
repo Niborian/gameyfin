@@ -10,6 +10,12 @@ from throughput_case import balanced_pairs,metrics,run_case
 CONTROL='792a8aaacbc410e6f716ff23c1e38d77f14ba17e'
 CANDIDATE='f0c2870ef17d02b4d71bc9fe0170bb89a098a25f'
 
+def responsiveness_accepted(reports,waiting_authentication):
+    return (len(reports)==6 and all(row['report'].get('cleanAcceptance') is True for row in reports)
+        and isinstance(waiting_authentication,dict)
+        and set(waiting_authentication)=={'normalLoginAutoRedirectObserved','fixtureProfileVerified'}
+        and all(value is True for value in waiting_authentication.values()))
+
 def validate_receipt(receipt,control_image,candidate_image):
     if receipt.get('controlSource')!=CONTROL or receipt.get('candidateSource')!=CANDIDATE:
         raise ValueError('Exact reviewed source pair required')
@@ -104,20 +110,22 @@ def execute(args):
             before=metrics(app.client)
             if before['active'] or before['draining']:raise ValueError('Held fixture starts nonidle')
             with browser(app,'waiting') as held_browser:
+                summary['waitingAuthenticationEvidence']=dict(held_browser.authenticationEvidence)
+                persist()
                 prerequisites={'syntheticFixtureOnly':True,'normalAdminAuthenticated':True,'browserAlreadyAuthenticated':True,
                     'originalGameyfinUi':True,'boundedBrowserOperationSeconds':15,'publishedPorts':False,'cpuLimit':.5,
                     'memoryMiB':1024,'heapMiB':320,'waitingProviderOptIn':True,'scanLibraryId':27003,'gameId':33000}
                 def finish_waiting_case():
                     # held_case releases the provider before this callback.
-                    # Logout promptly, outside the held 15s browser operation,
-                    # before any potentially lengthy scan validation.
+                    # Logout already shared the held 15s sample budget. Remove
+                    # its owned container before lengthy scan validation.
                     held_browser.close()
                     return waiting_validation(app,before)
                 summary['waitingProviderCorrectness']=held_case(app.waiting_root,app.client.request,held_browser.sample,
                     finish_waiting_case,prerequisites)
         summary['waitingExactOwnedCleanupPassed']=True
         summary['allCasesCompleted']=True
-        summary['responsivenessAccepted']=all(row['report'].get('cleanAcceptance') is True for row in reports)
+        summary['responsivenessAccepted']=responsiveness_accepted(reports,summary.get('waitingAuthenticationEvidence'))
         persist()
         if not summary['responsivenessAccepted']:raise ValueError('All measured cases retained but responsiveness overlap/deadline acceptance unmet')
     except Exception as error:

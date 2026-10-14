@@ -28,6 +28,13 @@ export function loginResultHeader(headers){
   if(rows.length===0)return 'missing';
   return rows.length===1&&['success','failure'].includes(rows[0][1])?rows[0][1]:'other';
 }
+export function fixtureProfileExpression(origin){
+  if(!allowRequest(origin,origin))throw new Error('Fixture profile origin boundary');
+  return `(()=>{if(location.origin!==${JSON.stringify(origin)}||location.pathname!=='/settings/profile')return {ready:false};const u=document.querySelector('input[name="username"]'),e=document.querySelector('input[name="email"]'),p=document.querySelector('input[name="newPassword"]'),r=document.querySelector('input[name="passwordRepeat"]');const menu=[...document.querySelectorAll('nav [aria-haspopup="true"],nav [aria-haspopup="menu"]')].filter(node=>node.getClientRects().length);return {ready:[...document.querySelectorAll('h2')].some(node=>node.textContent.trim()==='My Profile')&&!!u&&!!e&&p?.type==='password'&&r?.type==='password'&&menu.length===1};})()`;
+}
+export function fixtureIdentityMenuExpression(){
+  return `(()=>{const items=[...document.querySelectorAll('[role="menuitem"]')];return {ready:['Signed in as fixture-admin','Administration','Sign Out'].every(label=>items.some(node=>node.textContent.trim()===label))};})()`;
+}
 export class FixtureUiDriver {
   constructor(cdp,{origin,coverId,coverSha256,onProgress=()=>{}}){
     if(!allowRequest(origin,origin)||!Number.isSafeInteger(coverId)||coverId<1||!/^[a-f0-9]{64}$/.test(coverSha256))throw new Error('Fixture identity boundary');
@@ -86,8 +93,8 @@ export class FixtureUiDriver {
     if(value.exceptionDetails)throw new Error('DOM operation failed');
     return value.result?.value;
   }
-  async poll(expression,observe=()=>{}){
-    const deadline=Math.min(performance.now()+15000,this.totalDeadline);
+  async poll(expression,observe=()=>{},outerDeadline=this.totalDeadline){
+    const deadline=Math.min(performance.now()+15000,this.totalDeadline,outerDeadline);
     while(performance.now()<deadline){
       if(this.failure)throw new Error('Origin interception failed');
       const value=await this.evaluate(expression,deadline);observe(value);if(value?.ready===true)return value;
@@ -109,20 +116,46 @@ export class FixtureUiDriver {
       await this.request('Input.insertText',{text});
       await this.evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))`);
     }
-    const submitted=await this.evaluate(`(()=>{const u=document.querySelector('input[name="username"]'),p=document.querySelector('input[name="password"]');const b=u?.closest('form')?.querySelector('button[type="submit"]');if(location.pathname!=='/login'||!p||!b||b.disabled)return {clicked:false};const result={clicked:true,usernameLength:u.value.length,passwordLength:p.value.length};b.click();return result;})()`);
+    const postSubmitDeadline=performance.now()+15000;
+    const submitted=await this.evaluate(`(()=>{const u=document.querySelector('input[name="username"]'),p=document.querySelector('input[name="password"]');const b=u?.closest('form')?.querySelector('button[type="submit"]');if(location.pathname!=='/login'||!p||!b||b.disabled)return {clicked:false};const result={clicked:true,usernameLength:u.value.length,passwordLength:p.value.length};b.click();return result;})()`,postSubmitDeadline);
     if(!submitted||submitted.clicked!==true||!Number.isInteger(submitted.usernameLength)||submitted.usernameLength<0||submitted.usernameLength>128||!Number.isInteger(submitted.passwordLength)||submitted.passwordLength<0||submitted.passwordLength>256)throw new Error('Normal UI login unavailable');
     this.authDiagnostics.submittedUsernameLengthMatches=submitted.usernameLength===username.length;this.authDiagnostics.submittedPasswordLengthMatches=submitted.passwordLength===password.length;
-    // Normal Hilla login redirects; a protected target then proves fixture route content.
-    this.authStage='redirect';await this.poll(`(()=>{const u=document.querySelector('input[name="username"]'),p=document.querySelector('input[name="password"]'),b=u?.closest('form')?.querySelector('button[type="submit"]');const diagnostic={originMatches:location.origin===${JSON.stringify(this.origin)},loginPath:location.pathname==='/login',usernamePresent:!!u,passwordPresent:!!p,submitPresent:!!b,submitDisabled:!!b?.disabled,invalidCredentialsDisplayed:document.body?.textContent?.includes('Invalid username and/or password.')===true,documentReady:document.readyState};return {ready:diagnostic.originMatches&&!diagnostic.loginPath,diagnostic};})()`,value=>{this.authDiagnostics.readiness=authReadiness(value?.diagnostic);});this.authStage='complete';
+    // Diagnostic continuation, not a successful automatic-landing acceptance.
+    // Observe the original UI for at most3s; profile verification shares the
+    // SAME15s post-submit budget. The fixed read-only profile route loads no
+    // fixture cover. Dynamic profile-menu identity proves auth; HTTP200 alone
+    // cannot, and ProfileManagement's non-reinitializing Formik fields can race
+    // auth initialization. No field values are read or modified by the probe.
+    this.authStage='redirect';let autoRedirectObserved=false;
+    const observationEnd=Math.min(performance.now()+3000,postSubmitDeadline);
+    while(performance.now()<observationEnd){
+      const value=await this.evaluate(`(()=>{const u=document.querySelector('input[name="username"]'),p=document.querySelector('input[name="password"]'),b=u?.closest('form')?.querySelector('button[type="submit"]');const diagnostic={originMatches:location.origin===${JSON.stringify(this.origin)},loginPath:location.pathname==='/login',usernamePresent:!!u,passwordPresent:!!p,submitPresent:!!b,submitDisabled:!!b?.disabled,invalidCredentialsDisplayed:document.body?.textContent?.includes('Invalid username and/or password.')===true,documentReady:document.readyState};return {ready:diagnostic.originMatches&&!diagnostic.loginPath,diagnostic};})()`,observationEnd);
+      this.authDiagnostics.readiness=authReadiness(value?.diagnostic);
+      if(value.ready===true){autoRedirectObserved=true;break;}
+      await new Promise(resolve=>setTimeout(resolve,50));
+    }
+    while(this.authDiagnostics.loginPostStatus!==200||this.authDiagnostics.loginResultHeader!=='success'){
+      if(this.authDiagnostics.loginResultHeader==='failure'||(this.authDiagnostics.loginPostStatus!==null&&this.authDiagnostics.loginPostStatus>=400)||performance.now()>=postSubmitDeadline)throw new Error('Normal login protocol acceptance unproved');
+      await new Promise(resolve=>setTimeout(resolve,Math.min(50,Math.max(0,postSubmitDeadline-performance.now()))));
+    }
+    this.authStage='profile-proof';await this.request('Page.navigate',{url:this.origin+'/settings/profile'},postSubmitDeadline);
+    await this.poll(fixtureProfileExpression(this.origin),()=>{},postSubmitDeadline);
+    await this.openProfileMenu(postSubmitDeadline);
+    await this.poll(fixtureIdentityMenuExpression(),()=>{},postSubmitDeadline);
+    await this.openProfileMenu(postSubmitDeadline); // Close through the same normal trigger.
+    this.authStage='complete';return {normalLoginAutoRedirectObserved:autoRedirectObserved,fixtureProfileVerified:true};
   }
   async logout(){
     // MainLayout renders one ProfileMenu dropdown in the navbar; its original
     // Sign Out item calls useAuth().logout. No synthetic logout POST/API call.
-    if(await this.evaluate(`(()=>{if(location.origin!==${JSON.stringify(this.origin)}||location.pathname==='/login')return false;const triggers=[...document.querySelectorAll('nav [aria-haspopup="true"],nav [aria-haspopup="menu"]')].filter(e=>e.getClientRects().length);if(triggers.length!==1)return false;triggers[0].click();return true;})()`)!==true)throw new Error('Normal UI logout unavailable');
+    await this.openProfileMenu();
     await this.poll(`(()=>({ready:[...document.querySelectorAll('[role="menuitem"]')].some(e=>e.textContent.trim()==='Sign Out')}))()`);
     if(await this.evaluate(`(()=>{const items=[...document.querySelectorAll('[role="menuitem"]')];if(!['My Profile','Administration','Help','Sign Out'].every(label=>items.some(e=>e.textContent.trim()===label)))return false;const targets=items.filter(e=>e.textContent.trim()==='Sign Out');if(targets.length!==1)return false;targets[0].click();return true;})()`)!==true)throw new Error('Normal UI logout unavailable');
     await this.poll(`(()=>({ready:location.origin===${JSON.stringify(this.origin)}&&location.pathname==='/login'&&!!document.querySelector('input[name="username"]')&&!!document.querySelector('input[name="password"]')}))()`);
     return {loggedOut:true};
+  }
+  async openProfileMenu(deadline=this.totalDeadline){
+    if(await this.evaluate(`(()=>{if(location.origin!==${JSON.stringify(this.origin)}||location.pathname==='/login')return false;const triggers=[...document.querySelectorAll('nav [aria-haspopup="true"],nav [aria-haspopup="menu"]')].filter(e=>e.getClientRects().length);if(triggers.length!==1)return false;triggers[0].click();return true;})()`,deadline)!==true)throw new Error('Normal UI logout unavailable');
   }
   async navigate(path){
     if(!['/library/27003','/game/33000'].includes(path)||++this.navigations>3)throw new Error('Navigation bound');

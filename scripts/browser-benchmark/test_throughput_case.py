@@ -1,5 +1,5 @@
 import json,unittest
-from throughput_case import parse_metrics,balanced_pairs,run_case,browser_sample
+from throughput_case import parse_metrics,balanced_pairs,run_case,browser_sample,browser_accepted
 
 def text(completed=0,active=0):
     return (f'gameyfin_scans_active {active}\ngameyfin_scans_draining 0\n'
@@ -24,6 +24,7 @@ class Client:
     def validate(self,fixture,path):return {'testDoubleOnly':True}
 
 class Browser:
+    authenticationEvidence={'normalLoginAutoRedirectObserved':True,'fixtureProfileVerified':True}
     def __init__(self,clock):self.clock=clock
     def __enter__(self):return self
     def __exit__(self,*_):pass
@@ -46,8 +47,19 @@ class ThroughputCaseTest(unittest.TestCase):
         self.assertEqual(len(calls),6)
     def test_original_ui_deadline_is_not_success(self):
         class Hung:
+            authenticationEvidence=Browser.authenticationEvidence
             def sample(self):raise TimeoutError()
         self.assertEqual(browser_sample(Hung())['acceptance'],'not_completed')
+    def test_diagnostic_landing_never_accepts_redirect_failure_in_any_phase(self):
+        for failed_phase in ('cold-before','cold-during','repeat-before','repeat-during','post300'):
+            clock=Clock();client=Client()
+            def browser(phase):
+                value=Browser(clock);value.authenticationEvidence={'normalLoginAutoRedirectObserved':phase!=failed_phase,'fixtureProfileVerified':True};return value
+            def resource():return {'cpuSeconds':clock.t/4,'throttledSeconds':clock.t/2,'memoryBytes':1000000,'anonymousBytes':900000,'fileCacheBytes':100000,'rssBytes':950000}
+            report=run_case(client,{},'/images/cover/1',browser,resource,lambda:None,clock=clock.now,sleep=clock.sleep)
+            self.assertTrue(report['complete']);self.assertFalse(report['cleanAcceptance'])
+            samples=[p[k] for p in report['phaseResults'] for k in ('beforeBrowser','duringBrowser')]+[report['post300Browser']]
+            self.assertEqual(sum(not browser_accepted(s) for s in samples),1)
     def test_normal_scans_and_full_natural_recovery(self):
         clock=Clock();client=Client();browser_phases=[];source_checks=[]
         def browser(phase):browser_phases.append(phase);return Browser(clock)

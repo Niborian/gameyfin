@@ -1,5 +1,10 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {validateArguments,renderingConfiguration,browserResources,failureReceipt,launchEnvironment,classifyLaunchFailure,launchFailureDiagnostics,observeExecutable,browserFailureCounters,classifyCdpFailure,recordFirstAuthCdpFailure} from './browser_entry.mjs';
+import {validateArguments,renderingConfiguration,browserResources,failureReceipt,launchEnvironment,classifyLaunchFailure,launchFailureDiagnostics,observeExecutable,browserFailureCounters,classifyCdpFailure,recordFirstAuthCdpFailure,authenticationReady} from './browser_entry.mjs';
+
+test('diagnostic profile proof preserves blocking automatic-redirect false',()=>{
+ assert.deepEqual(authenticationReady({normalLoginAutoRedirectObserved:false,fixtureProfileVerified:true}),{authenticated:true,sandboxVerified:true,normalLoginAutoRedirectObserved:false,fixtureProfileVerified:true});
+ for(const proof of [{normalLoginAutoRedirectObserved:1,fixtureProfileVerified:true},{normalLoginAutoRedirectObserved:true,fixtureProfileVerified:false},{normalLoginAutoRedirectObserved:true,fixtureProfileVerified:true,raw:'private'}])assert.throws(()=>authenticationReady(proof));
+});
 test('authentication CDP cause is a fixed hint, never arbitrary exception text',()=>{
  for(const [text,expected] of [['Execution context was destroyed. private','execution-context-destroyed'],['Cannot find context with specified id secret','execution-context-missing'],['Target closed secret','target-closed'],['operation timed out secret','protocol-timeout'],['private secret','other']])assert.equal(classifyCdpFailure(new Error(text)),expected);
  assert.equal(classifyCdpFailure(new Error('x'.repeat(8192)+'Execution context was destroyed')),'other');

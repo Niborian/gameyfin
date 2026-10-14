@@ -21,7 +21,7 @@ export function profileDiagnostic(value){
   return {stage:value.stage,readiness:value.readiness===null?null:profileReadiness(value.readiness)};
 }
 export function safeAuthDiagnostics(value){
-  const keys=['loginPostObserved','loginPostStatus','submittedUsernameLengthMatches','submittedPasswordLengthMatches','cdpFailure','cdpMethod','loginResultHeader','userInfoStatus','userInfoIdentity','readiness','profile'];
+  const keys=['loginPostObserved','loginPostStatus','submittedUsernameLengthMatches','submittedPasswordLengthMatches','cdpFailure','cdpMethod','loginResultHeader','userInfoStatus','userInfoIdentity','cookieDiagnostics','readiness','profile'];
   if(!value||typeof value!=='object'||Object.keys(value).length!==keys.length||!keys.every(key=>Object.hasOwn(value,key))||typeof value.loginPostObserved!=='boolean')throw new Error('Auth diagnostic schema');
   if(value.loginPostStatus!==null&&(!Number.isInteger(value.loginPostStatus)||value.loginPostStatus<100||value.loginPostStatus>599))throw new Error('Auth numeric boundary');
   for(const key of ['submittedUsernameLengthMatches','submittedPasswordLengthMatches'])if(value[key]!==null&&typeof value[key]!=='boolean')throw new Error('Auth length-match boundary');
@@ -30,7 +30,83 @@ export function safeAuthDiagnostics(value){
   if(!['success','failure','missing','other'].includes(value.loginResultHeader))throw new Error('Auth protocol header boundary');
   if(value.userInfoStatus!==null&&(!Number.isInteger(value.userInfoStatus)||value.userInfoStatus<100||value.userInfoStatus>599))throw new Error('Auth user-info status boundary');
   if(!['not-observed','null','fixture-user','other','invalid','failed'].includes(value.userInfoIdentity))throw new Error('Auth user-info identity boundary');
-  return {...Object.fromEntries(keys.slice(0,9).map(key=>[key,value[key]])),readiness:value.readiness===null?null:authReadiness(value.readiness),profile:profileDiagnostic(value.profile)};
+  return {...Object.fromEntries(keys.slice(0,9).map(key=>[key,value[key]])),cookieDiagnostics:cookieDiagnostics(value.cookieDiagnostics),readiness:value.readiness===null?null:authReadiness(value.readiness),profile:profileDiagnostic(value.profile)};
+}
+const cookieFlags=['loginSetCookieSeen','loginSessionCookieSetSeen','loginSessionCookieBlocked','profileCookieHeaderSeen','profileSessionCookieAssociated','profileSessionCookieBlocked','loginSubmittedWithPendingRpc','otherSessionCookieSetAfterLogin'];
+export function cookieDiagnostics(value){
+  if(!value||typeof value!=='object'||Object.keys(value).length!==cookieFlags.length||!cookieFlags.every(key=>Object.hasOwn(value,key)&&(value[key]===null||typeof value[key]==='boolean')))throw new Error('Cookie diagnostic boundary');
+  return Object.fromEntries(cookieFlags.map(key=>[key,value[key]]));
+}
+function privateCookieInput(headers,rows,response){
+  if(!headers||typeof headers!=='object'||Array.isArray(headers)||Object.keys(headers).length>32||!Array.isArray(rows)||rows.length>64)return false;
+  let bytes=0;
+  for(const [name,value] of Object.entries(headers)){if(typeof value!=='string'||name.length>256)return false;bytes+=Buffer.byteLength(name)+Buffer.byteLength(value);}
+  for(const row of rows){
+    if(!row||typeof row!=='object'||!Array.isArray(row.blockedReasons)||row.blockedReasons.length>32||!row.blockedReasons.every(reason=>typeof reason==='string'&&reason.length<=128))return false;
+    if(row.cookie!==undefined){if(!row.cookie||typeof row.cookie.name!=='string'||row.cookie.name.length>256||typeof row.cookie.value!=='string')return false;bytes+=Buffer.byteLength(row.cookie.name)+Buffer.byteLength(row.cookie.value);}
+    else if(!response)return false;
+    if(response){if(typeof row.cookieLine!=='string')return false;bytes+=Buffer.byteLength(row.cookieLine);}
+  }
+  return bytes<=16384;
+}
+export function requestCookieProjection(params){
+  if(!privateCookieInput(params?.headers,params?.associatedCookies,false))return null;
+  const session=params.associatedCookies.filter(row=>row.cookie.name==='JSESSIONID');
+  return {profileCookieHeaderSeen:Object.keys(params.headers).some(name=>name.toLowerCase()==='cookie'),profileSessionCookieAssociated:session.length>0,profileSessionCookieBlocked:session.some(row=>row.blockedReasons.length>0)};
+}
+export function responseCookieProjection(params){
+  if(params?.statusCode!==200||!privateCookieInput(params?.headers,params?.blockedCookies,true))return null;
+  const headers=Object.entries(params.headers).filter(([name])=>name.toLowerCase()==='set-cookie');
+  return {loginSetCookieSeen:headers.length>0,loginSessionCookieSetSeen:headers.some(([,value])=>value.split('\n').some(line=>/^\s*JSESSIONID\s*=/.test(line))),loginSessionCookieBlocked:params.blockedCookies.some(row=>(row.cookie?.name==='JSESSIONID'||/^\s*JSESSIONID\s*=/.test(row.cookieLine))&&row.blockedReasons.length>0)};
+}
+class CookieObservation {
+  constructor(output){this.output=output;this.known=new Map();this.ignored=new Set();this.earlyRequest=new Map();this.earlyResponse=new Map();this.overflow=new Set();this.metadata=new Map();this.pendingRpc=new Set();this.metadataOverflow=false;this.loginTimestamp=null;}
+  valid(id){return typeof id==='string'&&id.length>0&&id.length<=128;}
+  failUnknown(){this.metadataOverflow=true;this.output.otherSessionCookieSetAfterLogin=null;}
+  main(id,kind,sameOrigin=false,rpc=false){
+    if(!this.valid(id))return;
+    if(sameOrigin){if(!this.metadata.has(id)&&this.metadata.size>=256)this.failUnknown();else this.metadata.set(id,{kind,timestamp:null,cookie:null});}
+    if(rpc){if(this.pendingRpc.size>=256)this.failUnknown();else this.pendingRpc.add(id);}
+    if(kind)for(const key of cookieFlags.slice(kind==='login'?0:3,kind==='login'?3:6))this.output[key]=null;
+    if(!kind)this.known.delete(id); // Redirect reuse must not associate a later GET200 with login POST.
+    if(kind&&this.known.size<4)this.known.set(id,kind);else if(!this.known.has(id)&&this.ignored.size<256)this.ignored.add(id);
+    for(const [type,cache] of [['request',this.earlyRequest],['response',this.earlyResponse]]){if(cache.has(id)){this.apply(id,type,cache.get(id));if(type==='response'&&this.metadata.has(id))this.metadata.get(id).cookie=cache.get(id);cache.delete(id);}}
+  }
+  apply(id,type,row){
+    const kind=this.known.get(id);
+    if((type==='request'&&kind==='profile')||(type==='response'&&kind==='login')){for(const key of cookieFlags.slice(kind==='login'?0:3,kind==='login'?3:6))this.output[key]=row?.[key]??null;}
+  }
+  response(id,timestamp,status){
+    const data=this.metadata.get(id);if(!data)return;
+    if(!Number.isFinite(timestamp)||timestamp<0){this.failUnknown();return;}
+    data.timestamp=timestamp;
+    if(data.kind==='login'&&status===200){this.loginTimestamp=timestamp;this.output.otherSessionCookieSetAfterLogin=this.metadataOverflow?null:false;}
+    this.reconcile();
+  }
+  reconcile(){
+    if(this.metadataOverflow){this.output.otherSessionCookieSetAfterLogin=null;return;}if(this.loginTimestamp===null)return;
+    this.output.otherSessionCookieSetAfterLogin=false;
+    for(const data of this.metadata.values())if(data.kind!=='login'&&data.timestamp!==null&&data.timestamp>this.loginTimestamp){
+      if(data.cookie===null){this.output.otherSessionCookieSetAfterLogin=null;continue;}
+      if(data.cookie.loginSessionCookieSetSeen){this.output.otherSessionCookieSetAfterLogin=true;return;}
+    }
+  }
+  snapshotPending(){this.output.loginSubmittedWithPendingRpc=this.metadataOverflow?null:this.pendingRpc.size>0;}
+  finished(id){this.pendingRpc.delete(id);}
+  extra(type,params){
+    const id=params?.requestId;if(!this.valid(id)||(this.ignored.has(id)&&!this.metadata.has(id)))return;
+    const row=type==='request'?requestCookieProjection(params):responseCookieProjection(params);
+    if(type==='response'){
+      const data=this.metadata.get(id);
+      if(data){data.cookie=Number.isInteger(params.statusCode)&&params.statusCode>=100&&params.statusCode<=599?responseCookieProjection({...params,statusCode:200}):null;this.reconcile();}
+    }
+    if(this.known.has(id)){this.apply(id,type,row);return;}
+    if(this.ignored.has(id))return;
+    const cache=type==='request'?this.earlyRequest:this.earlyResponse;
+    if(this.overflow.has(type))return;
+    if(!cache.has(id)&&cache.size>=4){cache.clear();this.overflow.add(type);return;}
+    cache.set(id,row); // Only projected booleans/null and bounded request IDs survive.
+  }
 }
 // Private response input is reduced immediately; no DTO fields leave this function.
 export function classifyUserInfoBody(response){
@@ -65,16 +141,21 @@ export class FixtureUiDriver {
     this.cdp=cdp;this.origin=origin;this.coverId=coverId;this.coverSha256=coverSha256;this.cover=null;this.failure=false;this.navigations=0;
     this.totalDeadline=performance.now()+90000;
     if(typeof onProgress!=='function')throw new Error('Progress callback boundary');this.onProgress=onProgress;
-    this.loginRequestIds=new Set();this.userInfoRequestIds=new Set();this.postLoginUserInfoIds=new Set();this.userInfoBodyRequestId=null;this.userInfoBodyAttempted=false;this.authDiagnostics={loginPostObserved:false,loginPostStatus:null,submittedUsernameLengthMatches:null,submittedPasswordLengthMatches:null,cdpFailure:'none',cdpMethod:'none',loginResultHeader:'missing',userInfoStatus:null,userInfoIdentity:'not-observed',readiness:null,profile:{stage:'not-started',readiness:null}};
+    this.loginRequestIds=new Set();this.userInfoRequestIds=new Set();this.postLoginUserInfoIds=new Set();this.userInfoBodyRequestId=null;this.userInfoBodyAttempted=false;this.authDiagnostics={loginPostObserved:false,loginPostStatus:null,submittedUsernameLengthMatches:null,submittedPasswordLengthMatches:null,cdpFailure:'none',cdpMethod:'none',loginResultHeader:'missing',userInfoStatus:null,userInfoIdentity:'not-observed',cookieDiagnostics:Object.fromEntries(cookieFlags.map(key=>[key,null])),readiness:null,profile:{stage:'not-started',readiness:null}};
+    this.cookieObservation=new CookieObservation(this.authDiagnostics.cookieDiagnostics);
     cdp.onEvent=(method,params)=>this.event(method,params);
   }
   event(method,params){
-    if(method==='Fetch.requestPaused'){
+    if(method==='Network.requestWillBeSentExtraInfo'||method==='Network.responseReceivedExtraInfo'){
+      this.cookieObservation.extra(method==='Network.requestWillBeSentExtraInfo'?'request':'response',params);
+    }else if(method==='Fetch.requestPaused'){
       const permitted=allowRequest(params.request?.url||'',this.origin);
       try{const u=new URL(params.request?.url);if(u.origin===this.origin&&u.pathname==='/login'&&params.request.method==='POST')this.authDiagnostics.loginPostObserved=true;}catch{}
       // Never retain headers/postData/cookies/console bodies in evidence.
       this.request(permitted?'Fetch.continueRequest':'Fetch.failRequest',permitted?{requestId:params.requestId}:{requestId:params.requestId,errorReason:'BlockedByClient'}).catch(()=>{this.failure=true;});
     }else if(method==='Network.requestWillBeSent'){
+      let cookieKind=null,sameOrigin=false,rpc=false;try{const u=new URL(params.request?.url);sameOrigin=u.origin===this.origin;rpc=sameOrigin&&u.pathname.startsWith('/connect/')&&params.request?.method==='POST';if(sameOrigin&&params.request?.method==='POST'){if(u.pathname==='/login')cookieKind='login';else if(u.pathname==='/connect/UserEndpoint/getUserInfo'&&this.authStage==='profile-proof'&&this.authDiagnostics.loginPostStatus===200&&this.authDiagnostics.loginResultHeader==='success')cookieKind='profile';}}catch{}
+      this.cookieObservation.main(params.requestId,cookieKind,sameOrigin,rpc);
       if(this.loginRequestIds.has(params.requestId)&&params.redirectResponse){
         this.recordLoginStatus(params.redirectResponse);this.loginRequestIds.delete(params.requestId);
       }
@@ -82,6 +163,7 @@ export class FixtureUiDriver {
       try{const u=new URL(params.request?.url);if(u.origin===this.origin&&u.pathname==='/connect/UserEndpoint/getUserInfo'&&params.request.method==='POST'&&typeof params.requestId==='string'&&params.requestId.length<=128&&this.userInfoRequestIds.size<4){this.userInfoRequestIds.add(params.requestId);if(this.authStage==='profile-proof'&&this.authDiagnostics.loginPostStatus===200&&this.authDiagnostics.loginResultHeader==='success'&&this.postLoginUserInfoIds.size<4)this.postLoginUserInfoIds.add(params.requestId);}}catch{}
     }else if(method==='Network.responseReceived'){
       const response=params.response;let parsed;try{parsed=new URL(response.url);}catch{return;}
+      if(parsed.origin===this.origin)this.cookieObservation.response(params.requestId,params.timestamp,response.status);
       if(this.loginRequestIds.has(params.requestId)){this.recordLoginStatus(response);this.loginRequestIds.delete(params.requestId);}
       if(this.userInfoRequestIds.has(params.requestId)){
         if(parsed.origin===this.origin&&parsed.pathname==='/connect/UserEndpoint/getUserInfo'&&Number.isInteger(response.status)&&response.status>=100&&response.status<=599)this.authDiagnostics.userInfoStatus=response.status;
@@ -94,13 +176,14 @@ export class FixtureUiDriver {
         this.cover={requestId:params.requestId,coverResponseStatus:response.status,fromDiskCache:response.fromDiskCache===true,fromServiceWorker:response.fromServiceWorker===true};
       }
     }else if(method==='Network.loadingFinished'){
+      this.cookieObservation.finished(params.requestId);
       if(this.cover?.requestId===params.requestId)this.cover.encodedDataLength=params.encodedDataLength;
       if(this.userInfoBodyRequestId===params.requestId&&!this.userInfoBodyAttempted){
         this.userInfoBodyAttempted=true;this.userInfoBodyRequestId=null;
         if(!Number.isFinite(params.encodedDataLength)||params.encodedDataLength<0||params.encodedDataLength>16384){this.authDiagnostics.userInfoIdentity='invalid';return;}
         this.request('Network.getResponseBody',{requestId:params.requestId},this.postSubmitDeadline??0).then(response=>{this.authDiagnostics.userInfoIdentity=classifyUserInfoBody(response);}).catch(()=>{this.authDiagnostics.userInfoIdentity='failed';});
       }
-    }
+    }else if(method==='Network.loadingFailed')this.cookieObservation.finished(params.requestId);
   }
   recordLoginStatus(response){
     try{const u=new URL(response.url);if(u.origin===this.origin&&u.pathname==='/login'&&Number.isInteger(response.status)&&response.status>=100&&response.status<=599){this.authDiagnostics.loginPostStatus=response.status;this.authDiagnostics.loginResultHeader=loginResultHeader(response.headers);}}catch{}
@@ -149,6 +232,7 @@ export class FixtureUiDriver {
     }
     const postSubmitDeadline=performance.now()+15000;
     this.postSubmitDeadline=postSubmitDeadline;
+    this.cookieObservation.snapshotPending(); // Snapshot before the normal DOM submit click, never after its network side effects.
     const submitted=await this.evaluate(`(()=>{const u=document.querySelector('input[name="username"]'),p=document.querySelector('input[name="password"]');const b=u?.closest('form')?.querySelector('button[type="submit"]');if(location.pathname!=='/login'||!p||!b||b.disabled)return {clicked:false};const result={clicked:true,usernameLength:u.value.length,passwordLength:p.value.length};b.click();return result;})()`,postSubmitDeadline);
     if(!submitted||submitted.clicked!==true||!Number.isInteger(submitted.usernameLength)||submitted.usernameLength<0||submitted.usernameLength>128||!Number.isInteger(submitted.passwordLength)||submitted.passwordLength<0||submitted.passwordLength>256)throw new Error('Normal UI login unavailable');
     this.authDiagnostics.submittedUsernameLengthMatches=submitted.usernameLength===username.length;this.authDiagnostics.submittedPasswordLengthMatches=submitted.passwordLength===password.length;

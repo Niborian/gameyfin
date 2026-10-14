@@ -18,7 +18,9 @@ class CreationTests(unittest.TestCase):
         readiness={k:False for k in ('originMatches','loginPath','usernamePresent','passwordPresent','submitPresent','submitDisabled','invalidCredentialsDisplayed')};readiness['documentReady']='complete'
         profile_flags=('originMatches','profilePath','loginPath','myProfileHeading','usernamePresent','emailPresent','newPasswordPresent','passwordRepeatPresent','baseRootMatches','identityRow','adminItem','signOutItem','navPresent','navbarAvatarPresent','navbarSignInPresent','navTriggerPresent','navTriggerVisible','menuAriaPresent','menuAriaVisible','menuAriaOutsideNav','profileTriggerUnique')
         profile={'stage':'profile-dom','readiness':{**dict.fromkeys(profile_flags,False),'triggerCount':'one'}}
-        data={'loginPostObserved':True,'loginPostStatus':302,'submittedUsernameLengthMatches':True,'submittedPasswordLengthMatches':True,'readiness':readiness,'cdpFailure':'none','cdpMethod':'none','loginResultHeader':'missing','userInfoStatus':None,'profile':profile,'userInfoIdentity':'not-observed'}
+        cookie_keys=('loginSetCookieSeen','loginSessionCookieSetSeen','loginSessionCookieBlocked','profileCookieHeaderSeen','profileSessionCookieAssociated','profileSessionCookieBlocked','loginSubmittedWithPendingRpc','otherSessionCookieSetAfterLogin')
+        cookies=dict.fromkeys(cookie_keys)
+        data={'loginPostObserved':True,'loginPostStatus':302,'submittedUsernameLengthMatches':True,'submittedPasswordLengthMatches':True,'readiness':readiness,'cdpFailure':'none','cdpMethod':'none','loginResultHeader':'missing','userInfoStatus':None,'profile':profile,'userInfoIdentity':'not-observed','cookieDiagnostics':cookies}
         row={'browserFailed':True,'phase':'authentication','authDiagnostics':data}
         self.assertEqual(hosted_browser.validate_failure_receipt(row),row)
         for mutation in ({'url':'private'},{'loginPostObserved':1},{'loginPostStatus':True},{'loginPostStatus':600},{'submittedUsernameLengthMatches':1},{'submittedPasswordLengthMatches':'private'},{'readiness':{**readiness,'rawText':'secret'}},{'readiness':{**readiness,'documentReady':'private'}},{'readiness':{**readiness,'loginPath':1}}):
@@ -38,9 +40,12 @@ class CreationTests(unittest.TestCase):
             hosted_browser.validate_failure_receipt({**row,'authDiagnostics':{**data,'userInfoIdentity':identity}})
         for invalid in ('fixture-admin',None,1,{},['fixture-user']):
             with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,'authDiagnostics':{**data,'userInfoIdentity':invalid}})
+        for invalid in (None,{**cookies,'rawCookie':'private'},{**cookies,'loginSetCookieSeen':1},{**cookies,'profileCookieHeaderSeen':'private'}):
+            with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,'authDiagnostics':{**data,'cookieDiagnostics':invalid}})
+        for flag in (True,False,None):hosted_browser.validate_failure_receipt({**row,'authDiagnostics':{**data,'cookieDiagnostics':dict.fromkeys(cookie_keys,flag)}})
         for invalid in (None,{'stage':'private','readiness':None},{**profile,'raw':'private'},{**profile,'readiness':{**profile['readiness'],'identityRow':1}},{**profile,'readiness':{**profile['readiness'],'triggerCount':2}},{**profile,'readiness':{**profile['readiness'],'rawText':'private'}}):
             with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,'authDiagnostics':{**data,'profile':invalid}})
-        self.assertEqual(hosted_browser.validate_failure_receipt({**row,'authDiagnostics':dict.fromkeys(data)|{'loginPostObserved':False,'cdpFailure':'none','cdpMethod':'none','loginResultHeader':'missing','profile':{'stage':'not-started','readiness':None},'userInfoIdentity':'not-observed'}})['authDiagnostics']['readiness'],None)
+        self.assertEqual(hosted_browser.validate_failure_receipt({**row,'authDiagnostics':dict.fromkeys(data)|{'loginPostObserved':False,'cdpFailure':'none','cdpMethod':'none','loginResultHeader':'missing','profile':{'stage':'not-started','readiness':None},'userInfoIdentity':'not-observed','cookieDiagnostics':cookies}})['authDiagnostics']['readiness'],None)
     def test_progress_schema_rejects_private_fields_and_integer_flags(self):
         row={'routeIndex':1,'stage':'content','readiness':{k:False for k in ('pathMatches','contentReady','coverTitlePresent','coverPresent','coverComplete','dimensionsMatch')}}
         self.assertEqual(hosted_browser.validate_navigation_progress({'navigationProgress':row}),{'navigationProgress':row})

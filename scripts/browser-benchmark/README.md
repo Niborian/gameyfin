@@ -22,6 +22,13 @@ The already-observed exact user-info response may additionally be classified as
 not-observed/null/fixture-user/other/invalid/failed after accepted normal login.
 Its bounded private body is never retained; only the fixed category is recorded.
 This is not a substitute for the original UI identity gate and adds no HTTP request.
+Cookie transport diagnostics observe only the existing CDP extra-info events and
+retain eight nullable booleans. Missing, malformed or overflowed observations remain
+unknown, not proof of absent cookies. Cookie/header names and values are never
+retained, and no cookie API, new HTTP request or authentication bypass is added.
+The pending-RPC snapshot and later session-cookie observation are hypotheses-only
+timing diagnostics: later means a strictly greater CDP response timestamp, not
+event-arrival order. They do not add a wait, retry or change application authentication.
 Profile-menu interaction targets exactly one visible original navbar trigger wrapper
 containing exactly one small avatar button, rather than assuming an ARIA attribute
 is placed on that wrapper. Missing or ambiguous wrappers still fail closed; the

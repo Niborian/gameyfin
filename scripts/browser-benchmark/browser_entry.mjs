@@ -7,6 +7,7 @@ import {chromeProxyFlags} from './frontend_proxy_policy.mjs';
 import {FixtureUiDriver,safeAuthDiagnostics} from './frontend_ui_driver.mjs';
 let currentPhase='arguments',failurePhase=null,failureEmitted=false,launchFailureCategory=null,launchDiagnostics=null,authStage=null,failureCounters=null,authDiagnostics=null;
 export const authStages=Object.freeze(['interception','login-navigation','login-form','submit','redirect','profile-proof','complete']);
+export const observedNetworkEvents=Object.freeze(['Fetch.requestPaused','Network.requestWillBeSent','Network.responseReceived','Network.loadingFinished','Network.loadingFailed','Network.requestWillBeSentExtraInfo','Network.responseReceivedExtraInfo']);
 export function authenticationReady(proof){
   if(!proof||typeof proof!=='object'||Object.keys(proof).length!==2||typeof proof.normalLoginAutoRedirectObserved!=='boolean'||proof.fixtureProfileVerified!==true)throw new Error('Fixture authentication proof boundary');
   return {authenticated:true,sandboxVerified:true,normalLoginAutoRedirectObserved:proof.normalLoginAutoRedirectObserved,fixtureProfileVerified:true};
@@ -142,7 +143,7 @@ export async function main(argv){
       const deadline=setTimeout(()=>{if(currentPhase==='authentication'&&driver)recordFirstAuthCdpFailure(driver.authDiagnostics,m,new Error('Private CDP deadline'));reject(new Error('Private CDP deadline'));},Math.min(15000,timeoutMs));
       session.send(m,p).then(value=>{clearTimeout(deadline);resolve(value);},error=>{clearTimeout(deadline);if(currentPhase==='authentication'&&driver)recordFirstAuthCdpFailure(driver.authDiagnostics,m,error);reject(new Error('Private CDP operation failed'));});
     })};
-    for(const name of ['Fetch.requestPaused','Network.requestWillBeSent','Network.responseReceived','Network.loadingFinished'])session.on(name,p=>cdp.onEvent?.(name,p));
+    for(const name of observedNetworkEvents)session.on(name,p=>cdp.onEvent?.(name,p));
     driver=new FixtureUiDriver(cdp,{origin,...identity,onProgress:progress=>process.stdout.write(JSON.stringify({navigationProgress:progress})+'\n')});
     currentPhase='input';let username=await readLine(),password=await readLine();
     if(username.length<1||username.length>128||password.length<16||password.length>256||/[\x00-\x1f\x7f]/.test(username+password))throw new Error('Private credentials boundary');

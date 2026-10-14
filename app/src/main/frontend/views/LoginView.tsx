@@ -6,6 +6,7 @@ import Input from "Frontend/components/general/input/Input";
 import PasswordResetModal from "Frontend/components/general/modals/PasswordResetModal";
 import SignUpModal from "Frontend/components/general/modals/SignUpModal";
 import {RegistrationEndpoint} from "Frontend/generated/endpoints";
+import {loginIsReady} from "Frontend/util/startupLifecycle";
 
 export default function LoginView() {
     const {state, login} = useAuth();
@@ -14,16 +15,26 @@ export default function LoginView() {
     const signUpModal = useDisclosure();
 
     const [signUpAllowed, setSignUpAllowed] = useState<boolean>(false);
+    const [policySettled, setPolicySettled] = useState(false);
+    const ready = loginIsReady(state.initializing, state.loading, policySettled);
 
     useEffect(() => {
+        let current = true;
         if (state.user) {
             redirectAfterLogin();
         } else {
-            RegistrationEndpoint.isSelfRegistrationAllowed().then(setSignUpAllowed);
+            setPolicySettled(false);
+            RegistrationEndpoint.isSelfRegistrationAllowed()
+                .then(allowed => { if (current) setSignUpAllowed(allowed); })
+                // Registration availability must not prevent ordinary login.
+                .catch(() => { if (current) setSignUpAllowed(false); })
+                .finally(() => { if (current) setPolicySettled(true); });
         }
+        return () => { current = false; };
     }, [state.user]);
 
     async function tryLogin(values: any, formik: any) {
+        if (!ready) return;
         const {defaultUrl, error, redirectUrl} = await login(values.username, values.password);
         if (error) {
             formik.setFieldError("username", " "); // Mark the field red, but don't show an error message
@@ -76,7 +87,7 @@ export default function LoginView() {
                                                 Sign up
                                             </Button>
                                         }
-                                        <Button color="primary" type="submit" isLoading={formik.isSubmitting}>
+                                        <Button color="primary" type="submit" isDisabled={!ready} isLoading={formik.isSubmitting}>
                                             {formik.isSubmitting ? "" : "Log in"}
                                         </Button>
                                     </div>

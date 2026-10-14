@@ -1,12 +1,12 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import vm from 'node:vm';
-import {FixtureUiDriver,connectAndMeasure,navigationProgress,authReadiness,safeAuthDiagnostics,loginResultHeader,fixtureProfileExpression,fixtureIdentityMenuExpression,profileReadiness,profileDiagnostic} from './frontend_ui_driver.mjs';
+import {FixtureUiDriver,connectAndMeasure,navigationProgress,authReadiness,safeAuthDiagnostics,loginResultHeader,fixtureProfileExpression,fixtureIdentityMenuExpression,profileReadiness,profileDiagnostic,classifyUserInfoBody} from './frontend_ui_driver.mjs';
 const config={origin:'http://127.0.0.1:53123',coverId:7,coverSha256:'0'.repeat(64)};
 const readyAuth={originMatches:true,loginPath:false,usernamePresent:false,passwordPresent:false,submitPresent:false,submitDisabled:false,invalidCredentialsDisplayed:false,documentReady:'complete'};
-const readyProfile={originMatches:true,profilePath:true,loginPath:false,myProfileHeading:true,usernamePresent:true,emailPresent:true,newPasswordPresent:true,passwordRepeatPresent:true,baseRootMatches:true,identityRow:true,adminItem:true,signOutItem:true,triggerCount:'one'};
+const readyProfile={originMatches:true,profilePath:true,loginPath:false,myProfileHeading:true,usernamePresent:true,emailPresent:true,newPasswordPresent:true,passwordRepeatPresent:true,baseRootMatches:true,identityRow:true,adminItem:true,signOutItem:true,navPresent:true,navbarAvatarPresent:true,navbarSignInPresent:false,navTriggerPresent:true,navTriggerVisible:true,menuAriaPresent:true,menuAriaVisible:true,menuAriaOutsideNav:false,profileTriggerUnique:true,triggerCount:'one'};
 test('authentication diagnostics expose only status, length matches and fixed readiness',()=>{
-  const row={loginPostObserved:true,loginPostStatus:401,submittedUsernameLengthMatches:true,submittedPasswordLengthMatches:true,cdpFailure:'none',cdpMethod:'none',loginResultHeader:'missing',userInfoStatus:null,readiness:readyAuth,profile:{stage:'not-started',readiness:null}};
+  const row={loginPostObserved:true,loginPostStatus:401,submittedUsernameLengthMatches:true,submittedPasswordLengthMatches:true,cdpFailure:'none',cdpMethod:'none',loginResultHeader:'missing',userInfoStatus:null,userInfoIdentity:'not-observed',readiness:readyAuth,profile:{stage:'not-started',readiness:null}};
   assert.deepEqual(safeAuthDiagnostics(row),row);
   for(const bad of [{...row,cookie:'secret'},{...row,loginPostStatus:'secret'},{...row,submittedPasswordLengthMatches:43},{...row,readiness:{...readyAuth,documentReady:'secret'}},{...row,readiness:{...readyAuth,text:'secret'}}])assert.throws(()=>safeAuthDiagnostics(bad));
   assert.throws(()=>authReadiness({...readyAuth,loginPath:1}));
@@ -20,6 +20,36 @@ test('Hilla Result header is a fixed protocol classification, never a raw header
   assert.equal(loginResultHeader({Result:'success','Spring-CSRF-token':'private'}),'success');assert.equal(loginResultHeader({result:'failure'}),'failure');
   assert.equal(loginResultHeader({'Set-Cookie':'private'}),'missing');assert.equal(loginResultHeader({Result:'private'}),'other');
   assert.equal(loginResultHeader({Result:'success',result:'private'}),'other');
+});
+test('private user info reduces only bounded JSON to a fixed identity enum',()=>{
+  const body=value=>({body:JSON.stringify(value),base64Encoded:false});
+  const fixture={username:'fixture-admin',enabled:true,roles:['ROLE_SUPERADMIN'],email:'PRIVATE_EMAIL',token:'PRIVATE_TOKEN'};
+  assert.equal(classifyUserInfoBody(body(fixture)),'fixture-user');
+  assert.equal(classifyUserInfoBody(body({...fixture,roles:['ROLE_ADMIN']})),'fixture-user');
+  assert.equal(classifyUserInfoBody(body({...fixture,roles:['ADMIN']})),'other');
+  assert.equal(classifyUserInfoBody(body({...fixture,username:'PRIVATE_USER'})),'other');
+  assert.equal(classifyUserInfoBody(body({...fixture,enabled:false})),'other');
+  assert.equal(classifyUserInfoBody(body(null)),'null');
+  for(const value of [[],{},'PRIVATE', {...fixture,roles:[{}]}])assert.equal(classifyUserInfoBody(body(value)),'invalid');
+  for(const response of [{body:'PRIVATE',base64Encoded:false},{body:'!PRIVATE',base64Encoded:true},{body:' '.repeat(16385),base64Encoded:false}])assert.equal(classifyUserInfoBody(response),'invalid');
+  assert.equal(classifyUserInfoBody({body:Buffer.from(JSON.stringify(fixture)).toString('base64'),base64Encoded:true}),'fixture-user');
+});
+test('userinfo body diagnostic is one correlated post-login completed response under original deadline',async()=>{
+  const calls=[];const cdp={request:async(method,params,timeout)=>{calls.push({method,params,timeout});return {body:'null',base64Encoded:false};}};
+  const driver=new FixtureUiDriver(cdp,config);driver.postSubmitDeadline=performance.now()+1234;
+  const observe=(id,origin=config.origin)=>{
+    driver.event('Network.requestWillBeSent',{requestId:id,request:{url:origin+'/connect/UserEndpoint/getUserInfo',method:'POST'}});
+    driver.event('Network.responseReceived',{requestId:id,response:{url:origin+'/connect/UserEndpoint/getUserInfo',status:200,headers:{Cookie:'PRIVATE'}}});
+    driver.event('Network.loadingFinished',{requestId:id,encodedDataLength:4});
+  };
+  observe('before');observe('external','https://external.invalid');assert.equal(calls.length,0);
+  driver.event('Network.requestWillBeSent',{requestId:'late-before',request:{url:config.origin+'/connect/UserEndpoint/getUserInfo',method:'POST'}});
+  driver.authDiagnostics.loginPostStatus=200;driver.authDiagnostics.loginResultHeader='success';driver.authStage='profile-proof';
+  driver.event('Network.responseReceived',{requestId:'late-before',response:{url:config.origin+'/connect/UserEndpoint/getUserInfo',status:200}});
+  driver.event('Network.loadingFinished',{requestId:'late-before',encodedDataLength:4});assert.equal(calls.length,0);
+  observe('accepted');observe('second');await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(calls.length,1);assert.equal(calls[0].method,'Network.getResponseBody');assert.deepEqual(calls[0].params,{requestId:'accepted'});assert(calls[0].timeout<=1234);
+  assert.equal(driver.authDiagnostics.userInfoIdentity,'null');assert(!JSON.stringify(safeAuthDiagnostics(driver.authDiagnostics)).includes('PRIVATE'));
 });
 test('only correlated same-origin login POST status survives response and redirect events',()=>{
   const driver=new FixtureUiDriver({request:async()=>({})},config);
@@ -85,10 +115,19 @@ test('profile identity probe reads only fixed fixture identity, never submits pr
 });
 test('profile DOM diagnostics distinguish multiple triggers and preserve strict rejection',()=>{
   const origin=config.origin;let count=2;
-  const document={baseURI:origin+'/',querySelector:selector=>selector.includes('Password')||selector.includes('passwordRepeat')?{type:'password'}:{},querySelectorAll:selector=>selector==='h2'?[{textContent:'My Profile'}]:selector.startsWith('nav ')?Array.from({length:count},()=>({getClientRects:()=>[1]})):[]};
+  const document={baseURI:origin+'/',querySelector:selector=>selector.includes('Password')||selector.includes('passwordRepeat')?{type:'password'}:{},querySelectorAll:selector=>selector==='h2'?[{textContent:'My Profile'}]:selector.startsWith('nav ')?Array.from({length:count},()=>({getClientRects:()=>[1],querySelectorAll:()=>[{}],closest:()=>({})})):[]};
   const evaluate=()=>vm.runInNewContext(fixtureProfileExpression(origin),{document,location:{origin,pathname:'/settings/profile'},URL});
   const rejected=evaluate();assert.equal(rejected.ready,false);assert.equal(rejected.diagnostic.triggerCount,'multiple');assert.equal(rejected.diagnostic.baseRootMatches,true);
   count=1;assert.equal(evaluate().ready,true);assert.equal(evaluate().diagnostic.identityRow,false);
+});
+test('source-backed profile trigger rejects hidden, missing-avatar and ambiguous wrappers',async()=>{
+  let expression;const driver=new FixtureUiDriver({request:async(method,params)=>{expression=params.expression;return {result:{value:true}};}},config);
+  await driver.openProfileMenu();
+  let clicks=0;
+  const wrapper=(visible,avatars)=>({getClientRects:()=>visible?[1]:[],querySelectorAll:selector=>{assert.equal(selector,'button.size-8');return Array.from({length:avatars},()=>({}));},click:()=>{clicks++;}});
+  const evaluate=rows=>vm.runInNewContext(expression,{location:{origin:config.origin,pathname:'/settings/profile'},document:{querySelectorAll:selector=>{assert.equal(selector,'nav [data-slot="trigger"]');return rows;}}});
+  for(const rows of [[],[wrapper(false,1)],[wrapper(true,0)],[wrapper(true,2)],[wrapper(true,1),wrapper(true,1)]])assert.equal(evaluate(rows),false);
+  assert.equal(clicks,0);assert.equal(evaluate([wrapper(true,0),wrapper(true,1)]),true);assert.equal(clicks,1);
 });
 test('late accepted login stays within original budget and explicitly retains missing automatic landing',async()=>{
   let timer,accepted=false,profileStarted=false;
@@ -107,6 +146,29 @@ test('late accepted login stays within original budget and explicitly retains mi
   }};
   try{assert.deepEqual(await new FixtureUiDriver(cdp,config).authenticate('fixture-user','private-random-secret-12345'),{normalLoginAutoRedirectObserved:false,fixtureProfileVerified:true});assert.equal(profileStarted,true);}finally{clearTimeout(timer);}
 });
+test('optional redirect observation uses original auth budget even with submillisecond observation window',async()=>{
+  const original=globalThis.performance;let clock=0,observationClock=false,observationStart=false,redirectTimeout;
+  globalThis.performance={now:()=>{if(observationClock&&!observationStart){observationStart=true;return 0;}return observationClock?2999.5:clock;}};
+  const cdp={request:async(method,params,timeout)=>{
+    if(method!=='Runtime.evaluate')return {};
+    let value=true;
+    if(params.expression.includes('usernameLength:u.value.length')){
+      cdp.onEvent('Network.requestWillBeSent',{requestId:'accepted',request:{url:config.origin+'/login',method:'POST'}});
+      cdp.onEvent('Network.responseReceived',{requestId:'accepted',response:{url:config.origin+'/login',status:200,headers:{Result:'success'}}});
+      observationClock=true;value={clicked:true,usernameLength:12,passwordLength:26};
+    }else if(params.expression.includes('document.readyState')){
+      redirectTimeout=timeout;observationClock=false;clock=3001;value={ready:false,diagnostic:readyAuth};
+    }else if(params.expression.includes('document.baseURI'))value={ready:true,diagnostic:readyProfile};
+    else if(params.expression.includes('Object.values(diagnostic)'))value={ready:true,diagnostic:{identityRow:true,adminItem:true,signOutItem:true}};
+    else if(!/\.click\(\)|\.focus\(\)|new Promise/.test(params.expression))value={ready:true};
+    return {result:{value}};
+  }};
+  try{
+    const result=await new FixtureUiDriver(cdp,config).authenticate('fixture-user','private-random-secret-12345');
+    assert.equal(result.normalLoginAutoRedirectObserved,false);assert.equal(result.fixtureProfileVerified,true);
+    assert.equal(redirectTimeout,12000); // 0.5ms observation remains; original 15s budget still governs CDP.
+  }finally{globalThis.performance=original;}
+});
 test('invalid credentials and missing normal form fail before typing or submission',async()=>{
   const calls=[];const driver=new FixtureUiDriver({request:async(method,params)=>{calls.push([method,params]);return {result:{value:params.expression?.includes('.focus()')?false:{ready:true}}};}},config);
   await assert.rejects(driver.authenticate('fixture','short'),/credential boundary/);assert.equal(calls.length,0);
@@ -117,8 +179,8 @@ test('logout uses original profile menu and verifies login UI, never a logout AP
   const calls=[];const cdp={request:async(method,params)=>{calls.push([method,params]);return {result:{value:params.expression.includes('.click()')?true:{ready:true}}};}};
   assert.deepEqual(await new FixtureUiDriver(cdp,config).logout(),{loggedOut:true});
   assert.equal(calls.length,4);assert(calls.every(([method])=>method==='Runtime.evaluate'));
-  assert.match(calls[0][1].expression,/nav \[aria-haspopup/);assert.match(calls[2][1].expression,/Sign Out/);
-  assert(calls[0][1].expression.includes('[aria-haspopup="true"]'));assert(calls[0][1].expression.includes('[aria-haspopup="menu"]'));
+  assert.match(calls[0][1].expression,/nav \[data-slot/);assert.match(calls[2][1].expression,/Sign Out/);
+  assert(calls[0][1].expression.includes('button.size-8'));assert(calls[0][1].expression.includes('length===1'));
   assert(!calls[0][1].expression.includes('[aria-haspopup="dialog"]'));assert(!calls[0][1].expression.includes('[aria-haspopup="listbox"]'));
   assert.match(calls[3][1].expression,/pathname==='\/login'/);assert(!JSON.stringify(calls).includes('/logout'));
 });

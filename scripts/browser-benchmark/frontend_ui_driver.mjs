@@ -128,6 +128,9 @@ export function loginResultHeader(headers){
 // Published HeroUI Popover clones data-slot=trigger onto ProfileMenu's DIV;
 // ProfileMenu's unique child Avatar renders as button with fixed size-8 class.
 const profileTriggers=`[...document.querySelectorAll('nav [data-slot="trigger"]')].filter(node=>node.getClientRects().length>0&&node.querySelectorAll('button.size-8').length===1)`;
+export function loginFormExpression(){
+  return `(()=>{const u=document.querySelector('input[name="username"]'),p=document.querySelector('input[name="password"]'),b=u?.closest('form')?.querySelector('button[type="submit"]');return {ready:location.pathname==='/login'&&!!u&&!!p&&!!b&&!b.disabled};})()`;
+}
 export function fixtureProfileExpression(origin){
   if(!allowRequest(origin,origin))throw new Error('Fixture profile origin boundary');
   return `(()=>{const u=document.querySelector('input[name="username"]'),e=document.querySelector('input[name="email"]'),p=document.querySelector('input[name="newPassword"]'),r=document.querySelector('input[name="passwordRepeat"]');const visible=node=>node.getClientRects().length>0;const menu=[...document.querySelectorAll('nav [aria-haspopup="true"],nav [aria-haspopup="menu"]')].filter(visible);const triggers=[...document.querySelectorAll('nav [data-slot="trigger"]')];const aria=[...document.querySelectorAll('[aria-haspopup="true"],[aria-haspopup="menu"]')];const items=[...document.querySelectorAll('[role="menuitem"]')];const base=new URL(document.baseURI);const diagnostic={originMatches:location.origin===${JSON.stringify(origin)},profilePath:location.pathname==='/settings/profile',loginPath:location.pathname==='/login',myProfileHeading:[...document.querySelectorAll('h2')].some(node=>node.textContent.trim()==='My Profile'),usernamePresent:!!u,emailPresent:!!e,newPasswordPresent:p?.type==='password',passwordRepeatPresent:r?.type==='password',baseRootMatches:base.origin===location.origin&&base.pathname==='/',identityRow:items.some(node=>node.textContent.trim()==='Signed in as fixture-admin'),adminItem:items.some(node=>node.textContent.trim()==='Administration'),signOutItem:items.some(node=>node.textContent.trim()==='Sign Out'),navPresent:!!document.querySelector('nav'),navbarAvatarPresent:!!document.querySelector('nav button.size-8'),navbarSignInPresent:!!document.querySelector('nav button.gradient-primary:not(.size-8)'),navTriggerPresent:triggers.length>0,navTriggerVisible:triggers.some(visible),menuAriaPresent:aria.length>0,menuAriaVisible:aria.some(visible),menuAriaOutsideNav:aria.some(node=>!node.closest('nav')),profileTriggerUnique:(${profileTriggers}).length===1,triggerCount:menu.length===0?'none':menu.length===1?'one':'multiple'};return {ready:diagnostic.originMatches&&diagnostic.profilePath&&diagnostic.myProfileHeading&&diagnostic.usernamePresent&&diagnostic.emailPresent&&diagnostic.newPasswordPresent&&diagnostic.passwordRepeatPresent&&diagnostic.profileTriggerUnique,diagnostic};})()`;
@@ -220,7 +223,7 @@ export class FixtureUiDriver {
     validateLoginCredentials(username,password);
     this.authStage='interception';await this.enableBeforeAuth();this.authStage='login-navigation';await this.request('Page.navigate',{url:this.origin+'/login'});
     this.authStage='login-form';
-    await this.poll(`(()=>({ready:location.pathname==='/login'&&!!document.querySelector('input[name="username"]')&&!!document.querySelector('input[name="password"]')}))()`);
+    await this.poll(loginFormExpression());
     this.authStage='submit';
     // LoginView uses React/Formik controlled fields. Real browser input events
     // and separate render turns prevent submitting stale Formik state from one

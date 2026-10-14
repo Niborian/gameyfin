@@ -1,10 +1,17 @@
 // Injectable/mock-tested original-UI adapter only; no SSH/browser/transport creation.
 import {allowRequest,validateLoginCredentials,loginFocusExpression,routeExpression,sanitizeMetrics,coverHashMatches,RUNTIME_ENABLED} from './frontend_cdp_measurement.mjs';
+export function navigationProgress(routeIndex,stage,readiness=null){
+  if(!Number.isInteger(routeIndex)||routeIndex<1||routeIndex>3||!['navigate','content','cover-body','complete'].includes(stage))throw new Error('Navigation progress boundary');
+  const keys=['pathMatches','contentReady','coverTitlePresent','coverPresent','coverComplete','dimensionsMatch'];
+  if(readiness!==null&&(typeof readiness!=='object'||Array.isArray(readiness)||Object.keys(readiness).length!==keys.length||!keys.every(key=>typeof readiness[key]==='boolean')))throw new Error('Readiness boolean boundary');
+  return {routeIndex,stage,readiness:readiness===null?null:Object.fromEntries(keys.map(key=>[key,readiness[key]]))};
+}
 export class FixtureUiDriver {
-  constructor(cdp,{origin,coverId,coverSha256}){
+  constructor(cdp,{origin,coverId,coverSha256,onProgress=()=>{}}){
     if(!allowRequest(origin,origin)||!Number.isSafeInteger(coverId)||coverId<1||!/^[a-f0-9]{64}$/.test(coverSha256))throw new Error('Fixture identity boundary');
     this.cdp=cdp;this.origin=origin;this.coverId=coverId;this.coverSha256=coverSha256;this.cover=null;this.failure=false;this.navigations=0;
     this.totalDeadline=performance.now()+90000;
+    if(typeof onProgress!=='function')throw new Error('Progress callback boundary');this.onProgress=onProgress;
     cdp.onEvent=(method,params)=>this.event(method,params);
   }
   event(method,params){
@@ -41,11 +48,11 @@ export class FixtureUiDriver {
     if(value.exceptionDetails)throw new Error('DOM operation failed');
     return value.result?.value;
   }
-  async poll(expression){
+  async poll(expression,observe=()=>{}){
     const deadline=Math.min(performance.now()+15000,this.totalDeadline);
     while(performance.now()<deadline){
       if(this.failure)throw new Error('Origin interception failed');
-      const value=await this.evaluate(expression,deadline);if(value?.ready===true)return value;
+      const value=await this.evaluate(expression,deadline);observe(value);if(value?.ready===true)return value;
       await new Promise(resolve=>setTimeout(resolve,50));
     }
     throw new Error('DOM readiness deadline');
@@ -79,13 +86,19 @@ export class FixtureUiDriver {
   }
   async navigate(path){
     if(!['/library/27003','/game/33000'].includes(path)||++this.navigations>3)throw new Error('Navigation bound');
+    this.onProgress(navigationProgress(this.navigations,'navigate'));
     this.cover=null;await this.request('Page.navigate',{url:this.origin+path});
-    const value=await this.poll(routeExpression(path,this.coverId));
+    let lastProgress=-Infinity;
+    const value=await this.poll(routeExpression(path,this.coverId),value=>{
+      if(performance.now()-lastProgress>=1000||value?.ready===true){this.onProgress(navigationProgress(this.navigations,'content',value?.diagnostic));lastProgress=performance.now();}
+    });
     if(!this.cover||![200,304].includes(this.cover.coverResponseStatus))throw new Error('Normal cover response absent');
+    this.onProgress(navigationProgress(this.navigations,'cover-body'));
     const body=await this.request('Network.getResponseBody',{requestId:this.cover.requestId});
     const matches=coverHashMatches(body.body,body.base64Encoded,this.coverSha256);
     if(!matches)throw new Error('Normal cover body identity failed');
-    const {ready,...metrics}=value;const {requestId,...response}=this.cover;
+    const {ready,diagnostic,...metrics}=value;const {requestId,...response}=this.cover;
+    this.onProgress(navigationProgress(this.navigations,'complete'));
     return sanitizeMetrics({...metrics,...response,coverSha256Matches:matches});
   }
 }

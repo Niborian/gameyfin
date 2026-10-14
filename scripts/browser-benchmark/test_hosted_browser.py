@@ -9,6 +9,33 @@ def sample_receipt():
     return {'originalUiContentReady':True,'coverDecoded':True,'coverSha256Matches':True,'navigations':[row]*3,'browserResources':{'before':snapshot,'after':snapshot}}
 
 class CreationTests(unittest.TestCase):
+    def test_progress_schema_rejects_private_fields_and_integer_flags(self):
+        row={'routeIndex':1,'stage':'content','readiness':{k:False for k in ('pathMatches','contentReady','coverTitlePresent','coverPresent','coverComplete','dimensionsMatch')}}
+        self.assertEqual(hosted_browser.validate_navigation_progress({'navigationProgress':row}),{'navigationProgress':row})
+        for bad in ({**row,'url':'secret'},{**row,'routeIndex':True},{**row,'stage':'secret'},{**row,'readiness':{**row['readiness'],'pathMatches':1}}):
+            with self.assertRaises(ValueError):hosted_browser.validate_navigation_progress({'navigationProgress':bad})
+    def test_progress_preserves_receipt_deadline_and_partial_evidence(self):
+        value=HostedBrowser.__new__(HostedBrowser);value.process=Mock();value.diagnostic_output=None
+        value.record_navigation_progress=Mock()
+        row={'navigationProgress':{'routeIndex':1,'stage':'navigate','readiness':None}}
+        payload=(json.dumps(row)+'\n').encode();clock=[0]
+        def read(*_):
+            byte=bytes([payload[clock[0]]]);clock[0]+=1;return byte
+        # Receipt progress consumes the original budget; no new deadline is made.
+        def now():return 0 if clock[0]<len(payload) else 16
+        selector=Mock();selector.select.return_value=[1]
+        with patch.object(hosted_browser.selectors,'DefaultSelector') as factory,patch.object(hosted_browser.os,'read',side_effect=read),patch.object(hosted_browser.time,'monotonic',side_effect=now):
+            factory.return_value.__enter__.return_value=selector
+            with self.assertRaises(TimeoutError):value._read_receipt(15)
+        value.record_navigation_progress.assert_called_once_with(row['navigationProgress'])
+    def test_progress_flood_is_bounded(self):
+        value=HostedBrowser.__new__(HostedBrowser);value.process=Mock();value.diagnostic_output=None;value.record_navigation_progress=Mock()
+        payload=iter((json.dumps({'navigationProgress':{'routeIndex':1,'stage':'navigate','readiness':None}})+'\n').encode()*65)
+        selector=Mock();selector.select.return_value=[1]
+        with patch.object(hosted_browser.selectors,'DefaultSelector') as factory,patch.object(hosted_browser.os,'read',side_effect=lambda *_:bytes([next(payload)])),patch.object(hosted_browser.time,'monotonic',return_value=0):
+            factory.return_value.__enter__.return_value=selector
+            with self.assertRaisesRegex(ValueError,'count bound'):value._read_receipt(15)
+        self.assertEqual(value.record_navigation_progress.call_count,64)
     def test_failure_receipt_category_is_strict_nonsecret_enum(self):
         row={'browserFailed':True,'phase':'chrome-launch','launchFailureCategory':'sandbox-unavailable'}
         self.assertEqual(hosted_browser.validate_failure_receipt(row),row)

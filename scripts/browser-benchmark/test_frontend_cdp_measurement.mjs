@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import {BoundedCdp,allowRequest,validateLoginCredentials,loginFocusExpression,routeExpression,sanitizeMetrics,coverHashMatches,launchRuntime,RUNTIME_ENABLED} from './frontend_cdp_measurement.mjs';
 test('runtime disabled; external origins and production destinations denied',()=>{
   assert.equal(RUNTIME_ENABLED,false);assert.throws(launchRuntime);
@@ -16,6 +17,15 @@ test('normal UI login expression stays private; exact fixture DOM and cover chec
   assert.throws(()=>routeExpression('/game/2055',1));
   assert.match(routeExpression('/game/33000',7),/image\.decode\(\)/);
   assert.match(routeExpression('/library/27003',7),/\/images\/cover\/7/);
+});
+test('route readiness distinguishes absent image path without returning page text or URLs',async()=>{
+  const location={pathname:'/library/27003',origin:'http://127.0.0.1:53123',href:'http://127.0.0.1:53123/library/27003'};
+  const document={querySelector:()=>({}),images:[{alt:'Synthetic game 33000',src:'data:private'}]};
+  const value=await vm.runInNewContext(routeExpression('/library/27003',7),{location,document,URL});
+  assert.equal(value.ready,false);assert.deepEqual(JSON.parse(JSON.stringify(value.diagnostic)),{pathMatches:true,contentReady:true,coverTitlePresent:true,coverPresent:false,coverComplete:false,dimensionsMatch:false});
+  assert(!JSON.stringify(value).includes('private'));assert(!JSON.stringify(value).includes('Synthetic'));
+  location.pathname='/login';const wrong=await vm.runInNewContext(routeExpression('/library/27003',7),{location,document,URL});
+  assert.equal(wrong.diagnostic.pathMatches,false);
 });
 test('strict sanitized schema never silently emits credentials or arbitrary error text',()=>{
   assert.deepEqual(sanitizeMetrics({loadMs:42,coverSha256Matches:true}),{loadMs:42,coverSha256Matches:true});

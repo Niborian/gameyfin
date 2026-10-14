@@ -1,11 +1,20 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import vm from 'node:vm';
-import {FixtureUiDriver,connectAndMeasure,navigationProgress,authReadiness,safeAuthDiagnostics,loginResultHeader,fixtureProfileExpression,fixtureIdentityMenuExpression,profileReadiness,profileDiagnostic,classifyUserInfoBody,cookieDiagnostics,requestCookieProjection,responseCookieProjection} from './frontend_ui_driver.mjs';
+import {FixtureUiDriver,connectAndMeasure,navigationProgress,authReadiness,safeAuthDiagnostics,loginResultHeader,fixtureProfileExpression,fixtureIdentityMenuExpression,profileReadiness,profileDiagnostic,classifyUserInfoBody,cookieDiagnostics,requestCookieProjection,responseCookieProjection,loginFormExpression} from './frontend_ui_driver.mjs';
 const config={origin:'http://127.0.0.1:53123',coverId:7,coverSha256:'0'.repeat(64)};
 const readyAuth={originMatches:true,loginPath:false,usernamePresent:false,passwordPresent:false,submitPresent:false,submitDisabled:false,invalidCredentialsDisplayed:false,documentReady:'complete'};
 const unknownCookies={loginSetCookieSeen:null,loginSessionCookieSetSeen:null,loginSessionCookieBlocked:null,profileCookieHeaderSeen:null,profileSessionCookieAssociated:null,profileSessionCookieBlocked:null,loginSubmittedWithPendingRpc:null,otherSessionCookieSetAfterLogin:null};
 const readyProfile={originMatches:true,profilePath:true,loginPath:false,myProfileHeading:true,usernamePresent:true,emailPresent:true,newPasswordPresent:true,passwordRepeatPresent:true,baseRootMatches:true,identityRow:true,adminItem:true,signOutItem:true,navPresent:true,navbarAvatarPresent:true,navbarSignInPresent:false,navTriggerPresent:true,navTriggerVisible:true,menuAriaPresent:true,menuAriaVisible:true,menuAriaOutsideNav:false,profileTriggerUnique:true,triggerCount:'one'};
+test('normal login form waits for original enabled submit control before typing',()=>{
+  let button={disabled:true},password={};
+  const username={closest:selector=>{assert.equal(selector,'form');return {querySelector:selector=>{assert.equal(selector,'button[type="submit"]');return button;}};}};
+  const document={querySelector:selector=>selector==='input[name="username"]'?username:password};
+  const evaluate=()=>vm.runInNewContext(loginFormExpression(),{document,location:{pathname:'/login'}}).ready;
+  assert.equal(evaluate(),false);button.disabled=false;assert.equal(evaluate(),true);
+  button=null;assert.equal(evaluate(),false);button={disabled:false};password=null;assert.equal(evaluate(),false);
+  assert(!loginFormExpression().includes('.click('));assert(!loginFormExpression().includes('.value'));
+});
 test('authentication diagnostics expose only status, length matches and fixed readiness',()=>{
   const row={loginPostObserved:true,loginPostStatus:401,submittedUsernameLengthMatches:true,submittedPasswordLengthMatches:true,cdpFailure:'none',cdpMethod:'none',loginResultHeader:'missing',userInfoStatus:null,userInfoIdentity:'not-observed',cookieDiagnostics:unknownCookies,readiness:readyAuth,profile:{stage:'not-started',readiness:null}};
   assert.deepEqual(safeAuthDiagnostics(row),row);

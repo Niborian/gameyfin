@@ -46,18 +46,40 @@ execution gate, not a test result.
 
 ## Paired source inputs
 
-Control: `792a8aaacbc410e6f716ff23c1e38d77f14ba17e`.
-Candidate: `f0c2870ef17d02b4d71bc9fe0170bb89a098a25f`.
+Control: `344de32e7939d8223c8e023781b3cb8738610cea`.
+Candidate: `a567d5e6e682fe6236b7908e8b1ef06722584caa`.
+
+These are the historical control (`792a8aa`) and candidate (`f0c2870`)
+with the identical reviewed #154 authentication-startup lifecycle patch applied
+to each. Both therefore use the same corrected original Gameyfin UI; this is
+not a comparison of the auth fix against the old UI. The benchmark still
+requires byte-identical UI, configuration, and dependency entries in both
+independently built JARs. Source inspection alone does not establish that build
+parity or resolve the earlier anonymous-session runtime failure.
 
 Both complete original Gameyfin applications are built separately. The only
-scientific build input override is the identical recorded candidate commit
-instant, `2026-10-11T18:51:55Z`, supplied to Spring Boot 4.0.3's build-info task
+scientific build input override is the identical recorded historical candidate
+(`f0c2870`) commit instant, `2026-10-11T18:51:55Z`, supplied to Spring Boot 4.0.3's build-info task
 by the CI-only init script. Its SHA is retained. No JAR/source/resource bytes are
 rewritten and no resource differences are silently excluded. Every non-code
 resource and nested dependency entry is hashed; disagreement fails before any
 runtime. ZIP timestamp differences are not resource bytes.
+The workflow verifies that historical timestamp separately from both new exact
+source commit IDs; it does not claim the auth-fix commits have the old date.
 
 ## Isolation and budgets
+
+The whole sequential suite has a 9,000-second outer process limit and a
+180-minute hosted-job envelope, including builds and cleanup. The previous
+3,300-second limit could not cover the roughly 190-second per-app
+startup/bootstrap estimate from run #38563298028 across seven app instances plus
+six matched 60-second idle and 300-second recovery windows, scans, and browser
+work. Seven existing 1,200-second app watchdogs account for up to 8,400 seconds
+before orchestration
+overhead. This is an overall execution envelope, not a performance result or
+permission to extend an individual operation: all three balanced pairs, the
+held case, recovery windows, app/browser watchdogs, and resource limits remain
+unchanged. No network-idle or artificial pre-login sleep is added.
 
 One app at a time: 0.5 CPU, 1 GiB memory/swap ceiling, 320 MiB G1 heap, PID256,
 private cgroup, nonroot1337, capabilities dropped, internal private network and

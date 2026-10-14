@@ -38,11 +38,11 @@ jobs:
         github.event.label.name == format('bench-ok-{0}', github.event.pull_request.head.sha) &&
         github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 180
     env:
       GAMEYFIN_BENCHMARK_BUILD_TIME: '2026-10-11T18:51:55Z'
-      CONTROL_SOURCE: '792a8aaacbc410e6f716ff23c1e38d77f14ba17e'
-      CANDIDATE_SOURCE: 'f0c2870ef17d02b4d71bc9fe0170bb89a098a25f'
+      CONTROL_SOURCE: '344de32e7939d8223c8e023781b3cb8738610cea'
+      CANDIDATE_SOURCE: 'a567d5e6e682fe6236b7908e8b1ef06722584caa'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -79,7 +79,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .benchmark/sources .benchmark/reports
-          test "$(git show -s --format=%cI "$CANDIDATE_SOURCE")" = '2026-10-11T20:51:55+02:00'
+          # Preserve the recorded historical build input, not the new auth-fix commit date.
+          test "$(git show -s --format=%cI f0c2870ef17d02b4d71bc9fe0170bb89a098a25f)" = '2026-10-11T20:51:55+02:00'
+          test "$(git rev-parse "$CONTROL_SOURCE^{commit}")" = "$CONTROL_SOURCE"
+          test "$(git rev-parse "$CANDIDATE_SOURCE^{commit}")" = "$CANDIDATE_SOURCE"
           init_script="$GITHUB_WORKSPACE/scripts/browser-benchmark/fixed_build_time.init.gradle"
           sha256sum "$init_script" > .benchmark/reports/build-input.sha256
           printf '%s\n' "$GAMEYFIN_BENCHMARK_BUILD_TIME" > .benchmark/reports/build-time.txt
@@ -108,7 +111,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          timeout --signal=TERM --kill-after=15s 3300s python3 -B scripts/browser-benchmark/run_benchmark.py \
+          timeout --signal=TERM --kill-after=15s 9000s python3 -B scripts/browser-benchmark/run_benchmark.py \
             --control-image "$(cat .benchmark/control-image.id)" \
             --candidate-image "$(cat .benchmark/candidate-image.id)" \
             --browser-image "$(cat .benchmark/browser-image.id)" \

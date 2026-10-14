@@ -4,9 +4,22 @@ import fs from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {LoopbackProxy} from './frontend_loopback_proxy.mjs';
 import {chromeProxyFlags} from './frontend_proxy_policy.mjs';
-import {FixtureUiDriver} from './frontend_ui_driver.mjs';
-let currentPhase='arguments',failurePhase=null,failureEmitted=false,launchFailureCategory=null,launchDiagnostics=null,authStage=null,failureCounters=null;
+import {FixtureUiDriver,safeAuthDiagnostics} from './frontend_ui_driver.mjs';
+let currentPhase='arguments',failurePhase=null,failureEmitted=false,launchFailureCategory=null,launchDiagnostics=null,authStage=null,failureCounters=null,authDiagnostics=null;
 export const authStages=Object.freeze(['interception','login-navigation','login-form','submit','redirect','complete']);
+export function classifyCdpFailure(error){
+  const text=typeof error?.message==='string'?error.message.slice(0,8192):'';
+  if(/Execution context was destroyed/.test(text))return 'execution-context-destroyed';
+  if(/Cannot find context with (?:specified )?id|Cannot find execution context/.test(text))return 'execution-context-missing';
+  if(/Target closed|Session closed|Connection closed/.test(text))return 'target-closed';
+  if(/timed out|timeout|deadline/i.test(text))return 'protocol-timeout';
+  return 'other';
+}
+export function recordFirstAuthCdpFailure(diagnostics,method,error){
+  if(diagnostics.cdpFailure!=='none')return;
+  diagnostics.cdpFailure=classifyCdpFailure(error);
+  diagnostics.cdpMethod=method==='Page.navigate'?'page-navigation':method==='Runtime.evaluate'?'runtime-evaluate':method==='Input.insertText'?'input-insert':['Fetch.continueRequest','Fetch.failRequest'].includes(method)?'request-interception':['Page.enable','Runtime.enable','Network.enable','Fetch.enable','Page.addScriptToEvaluateOnNewDocument'].includes(method)?'setup':'other';
+}
 export async function browserFailureCounters(read=fs.readFile){
   const result={};
   for(const [file,keys] of [['pids.events',['max']],['memory.events',['max','oom','oom_kill']]]){
@@ -60,14 +73,15 @@ export function classifyLaunchFailure(error){
   if(/Timed out after .*waiting for the WS endpoint URL|Timeout of .* exceeded/.test(text))return 'launch-timeout';
   return 'other';
 }
-export function failureReceipt(phase,category=null,diagnostics=null,stage=null,counters=null){
+export function failureReceipt(phase,category=null,diagnostics=null,stage=null,counters=null,auth=null){
   if(!['arguments','input','bridge','profile','chrome-launch','sandbox','authentication','navigation','logout','cleanup'].includes(phase))throw new Error('Failure phase enum boundary');
   if(category!==null&&(phase!=='chrome-launch'||!launchFailureCategories.includes(category)))throw new Error('Launch failure category boundary');
   if(diagnostics!==null&&phase!=='chrome-launch')throw new Error('Launch diagnostics phase boundary');
   if(stage!==null&&(phase!=='authentication'||!authStages.includes(stage)))throw new Error('Authentication stage boundary');
-  return {browserFailed:true,phase,...(category===null?{}:{launchFailureCategory:category}),...(diagnostics===null?{}:{launchDiagnostics:diagnostics}),...(stage===null?{}:{authStage:stage}),...(counters===null?{}:{failureCounters:counters})};
+  if(auth!==null&&phase!=='authentication')throw new Error('Authentication diagnostic phase boundary');
+  return {browserFailed:true,phase,...(category===null?{}:{launchFailureCategory:category}),...(diagnostics===null?{}:{launchDiagnostics:diagnostics}),...(stage===null?{}:{authStage:stage}),...(counters===null?{}:{failureCounters:counters}),...(auth===null?{}:{authDiagnostics:safeAuthDiagnostics(auth)})};
 }
-function emitFailure(phase){if(!failureEmitted){failureEmitted=true;process.stdout.write(JSON.stringify(failureReceipt(phase,launchFailureCategory,launchDiagnostics,authStage,failureCounters))+'\n');}}
+function emitFailure(phase){if(!failureEmitted){failureEmitted=true;process.stdout.write(JSON.stringify(failureReceipt(phase,launchFailureCategory,launchDiagnostics,authStage,failureCounters,authDiagnostics))+'\n');}}
 
 export function validateArguments(argv){
   if(argv.length!==3||!/^172\.(1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3}$/.test(argv[0])||argv[0].split('.').some(x=>Number(x)>255)||!/^\d{1,10}$/.test(argv[1])||Number(argv[1])<1||! /^[a-f0-9]{64}$/.test(argv[2]))throw new Error('Fixture identity boundary');
@@ -121,10 +135,10 @@ export async function main(argv){
     const sandbox=await page.$eval('#evaluation',e=>e.textContent.trim()==='You are adequately sandboxed.');
     if(!sandbox)throw new Error('Actual Chrome sandbox gate');
     const session=await page.createCDPSession();const cdp={onEvent:null,request:(m,p,timeoutMs=15000)=>new Promise((resolve,reject)=>{
-      const deadline=setTimeout(()=>reject(new Error('Private CDP deadline')),Math.min(15000,timeoutMs));
-      session.send(m,p).then(value=>{clearTimeout(deadline);resolve(value);},()=>{clearTimeout(deadline);reject(new Error('Private CDP operation failed'));});
+      const deadline=setTimeout(()=>{if(currentPhase==='authentication'&&driver)recordFirstAuthCdpFailure(driver.authDiagnostics,m,new Error('Private CDP deadline'));reject(new Error('Private CDP deadline'));},Math.min(15000,timeoutMs));
+      session.send(m,p).then(value=>{clearTimeout(deadline);resolve(value);},error=>{clearTimeout(deadline);if(currentPhase==='authentication'&&driver)recordFirstAuthCdpFailure(driver.authDiagnostics,m,error);reject(new Error('Private CDP operation failed'));});
     })};
-    for(const name of ['Fetch.requestPaused','Network.responseReceived','Network.loadingFinished'])session.on(name,p=>cdp.onEvent?.(name,p));
+    for(const name of ['Fetch.requestPaused','Network.requestWillBeSent','Network.responseReceived','Network.loadingFinished'])session.on(name,p=>cdp.onEvent?.(name,p));
     driver=new FixtureUiDriver(cdp,{origin,...identity,onProgress:progress=>process.stdout.write(JSON.stringify({navigationProgress:progress})+'\n')});
     currentPhase='input';let username=await readLine(),password=await readLine();
     if(username.length<1||username.length>128||password.length<16||password.length>256||/[\x00-\x1f\x7f]/.test(username+password))throw new Error('Private credentials boundary');
@@ -144,7 +158,7 @@ export async function main(argv){
     currentPhase='logout';const loggedOut=await driver.logout();
     if(loggedOut?.loggedOut!==true)throw new Error('Normal UI logout gate');
     process.stdout.write(JSON.stringify({loggedOut:true})+'\n');
-  }catch(error){failurePhase=currentPhase;failureCounters=await browserFailureCounters();if(failurePhase==='authentication'&&authStages.includes(driver?.authStage))authStage=driver.authStage;if(failurePhase==='chrome-launch'){launchFailureCategory=classifyLaunchFailure(error);launchDiagnostics=launchFailureDiagnostics(error,preflight);}emitFailure(failurePhase);throw new Error('Hosted browser operation failed');}finally{
+  }catch(error){failurePhase=currentPhase;failureCounters=await browserFailureCounters();if(failurePhase==='authentication'){if(authStages.includes(driver?.authStage))authStage=driver.authStage;authDiagnostics=driver?.authDiagnostics||null;}if(failurePhase==='chrome-launch'){launchFailureCategory=classifyLaunchFailure(error);launchDiagnostics=launchFailureDiagnostics(error,preflight);}emitFailure(failurePhase);throw new Error('Hosted browser operation failed');}finally{
     currentPhase='cleanup';
     clearTimeout(timer);process.stdin.destroy();proxy?.close();for(const s of sockets)s.destroy();bridge?.close();
     // Container removal is the independent descendant fence. Never claim the

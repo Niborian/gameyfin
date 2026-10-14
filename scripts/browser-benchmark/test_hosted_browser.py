@@ -9,6 +9,20 @@ def sample_receipt():
     return {'originalUiContentReady':True,'coverDecoded':True,'coverSha256Matches':True,'navigations':[row]*3,'browserResources':{'before':snapshot,'after':snapshot}}
 
 class CreationTests(unittest.TestCase):
+    def test_auth_diagnostics_exact_nonsecret_schema(self):
+        readiness={k:False for k in ('originMatches','loginPath','usernamePresent','passwordPresent','submitPresent','submitDisabled','invalidCredentialsDisplayed')};readiness['documentReady']='complete'
+        data={'loginPostObserved':True,'loginPostStatus':302,'submittedUsernameLengthMatches':True,'submittedPasswordLengthMatches':True,'readiness':readiness,'cdpFailure':'none','cdpMethod':'none'}
+        row={'browserFailed':True,'phase':'authentication','authDiagnostics':data}
+        self.assertEqual(hosted_browser.validate_failure_receipt(row),row)
+        for mutation in ({'url':'private'},{'loginPostObserved':1},{'loginPostStatus':True},{'loginPostStatus':600},{'submittedUsernameLengthMatches':1},{'submittedPasswordLengthMatches':'private'},{'readiness':{**readiness,'rawText':'secret'}},{'readiness':{**readiness,'documentReady':'private'}},{'readiness':{**readiness,'loginPath':1}}):
+            with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,'authDiagnostics':{**data,**mutation}})
+        with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,'phase':'navigation'})
+        for private_length in ('submittedUsernameLength','submittedPasswordLength'):
+            with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,'authDiagnostics':{**data,private_length:32}})
+        for invalid in ('raw private error',None,True,[]):
+            with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,'authDiagnostics':{**data,'cdpFailure':invalid}})
+            with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,'authDiagnostics':{**data,'cdpMethod':invalid}})
+        self.assertEqual(hosted_browser.validate_failure_receipt({**row,'authDiagnostics':dict.fromkeys(data)|{'loginPostObserved':False,'cdpFailure':'none','cdpMethod':'none'}})['authDiagnostics']['readiness'],None)
     def test_progress_schema_rejects_private_fields_and_integer_flags(self):
         row={'routeIndex':1,'stage':'content','readiness':{k:False for k in ('pathMatches','contentReady','coverTitlePresent','coverPresent','coverComplete','dimensionsMatch')}}
         self.assertEqual(hosted_browser.validate_navigation_progress({'navigationProgress':row}),{'navigationProgress':row})

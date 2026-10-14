@@ -6,21 +6,43 @@ export function navigationProgress(routeIndex,stage,readiness=null){
   if(readiness!==null&&(typeof readiness!=='object'||Array.isArray(readiness)||Object.keys(readiness).length!==keys.length||!keys.every(key=>typeof readiness[key]==='boolean')))throw new Error('Readiness boolean boundary');
   return {routeIndex,stage,readiness:readiness===null?null:Object.fromEntries(keys.map(key=>[key,readiness[key]]))};
 }
+export function authReadiness(value){
+  const flags=['originMatches','loginPath','usernamePresent','passwordPresent','submitPresent','submitDisabled','invalidCredentialsDisplayed'];
+  if(!value||typeof value!=='object'||Object.keys(value).length!==flags.length+1||!flags.every(key=>typeof value[key]==='boolean')||!['loading','interactive','complete'].includes(value.documentReady))throw new Error('Auth readiness boundary');
+  return {...Object.fromEntries(flags.map(key=>[key,value[key]])),documentReady:value.documentReady};
+}
+export function safeAuthDiagnostics(value){
+  const keys=['loginPostObserved','loginPostStatus','submittedUsernameLengthMatches','submittedPasswordLengthMatches','cdpFailure','cdpMethod','readiness'];
+  if(!value||typeof value!=='object'||Object.keys(value).length!==keys.length||!keys.every(key=>Object.hasOwn(value,key))||typeof value.loginPostObserved!=='boolean')throw new Error('Auth diagnostic schema');
+  if(value.loginPostStatus!==null&&(!Number.isInteger(value.loginPostStatus)||value.loginPostStatus<100||value.loginPostStatus>599))throw new Error('Auth numeric boundary');
+  for(const key of ['submittedUsernameLengthMatches','submittedPasswordLengthMatches'])if(value[key]!==null&&typeof value[key]!=='boolean')throw new Error('Auth length-match boundary');
+  if(!['none','execution-context-destroyed','execution-context-missing','target-closed','protocol-timeout','other'].includes(value.cdpFailure))throw new Error('Auth CDP failure boundary');
+  if(!['none','page-navigation','runtime-evaluate','input-insert','request-interception','setup','other'].includes(value.cdpMethod))throw new Error('Auth CDP method boundary');
+  return {...Object.fromEntries(keys.slice(0,6).map(key=>[key,value[key]])),readiness:value.readiness===null?null:authReadiness(value.readiness)};
+}
 export class FixtureUiDriver {
   constructor(cdp,{origin,coverId,coverSha256,onProgress=()=>{}}){
     if(!allowRequest(origin,origin)||!Number.isSafeInteger(coverId)||coverId<1||!/^[a-f0-9]{64}$/.test(coverSha256))throw new Error('Fixture identity boundary');
     this.cdp=cdp;this.origin=origin;this.coverId=coverId;this.coverSha256=coverSha256;this.cover=null;this.failure=false;this.navigations=0;
     this.totalDeadline=performance.now()+90000;
     if(typeof onProgress!=='function')throw new Error('Progress callback boundary');this.onProgress=onProgress;
+    this.loginRequestIds=new Set();this.authDiagnostics={loginPostObserved:false,loginPostStatus:null,submittedUsernameLengthMatches:null,submittedPasswordLengthMatches:null,cdpFailure:'none',cdpMethod:'none',readiness:null};
     cdp.onEvent=(method,params)=>this.event(method,params);
   }
   event(method,params){
     if(method==='Fetch.requestPaused'){
       const permitted=allowRequest(params.request?.url||'',this.origin);
+      try{const u=new URL(params.request?.url);if(u.origin===this.origin&&u.pathname==='/login'&&params.request.method==='POST')this.authDiagnostics.loginPostObserved=true;}catch{}
       // Never retain headers/postData/cookies/console bodies in evidence.
       this.request(permitted?'Fetch.continueRequest':'Fetch.failRequest',permitted?{requestId:params.requestId}:{requestId:params.requestId,errorReason:'BlockedByClient'}).catch(()=>{this.failure=true;});
+    }else if(method==='Network.requestWillBeSent'){
+      if(this.loginRequestIds.has(params.requestId)&&params.redirectResponse){
+        this.recordLoginStatus(params.redirectResponse);this.loginRequestIds.delete(params.requestId);
+      }
+      try{const u=new URL(params.request?.url);if(u.origin===this.origin&&u.pathname==='/login'&&params.request.method==='POST'&&typeof params.requestId==='string'&&params.requestId.length<=128&&this.loginRequestIds.size<4)this.loginRequestIds.add(params.requestId);}catch{}
     }else if(method==='Network.responseReceived'){
       const response=params.response;let parsed;try{parsed=new URL(response.url);}catch{return;}
+      if(this.loginRequestIds.has(params.requestId)){this.recordLoginStatus(response);this.loginRequestIds.delete(params.requestId);}
       if(parsed.origin===this.origin&&parsed.pathname===`/images/cover/${this.coverId}`){
         if(typeof params.requestId!=='string'||params.requestId.length>128||!Number.isInteger(response.status))return;
         this.cover={requestId:params.requestId,coverResponseStatus:response.status,fromDiskCache:response.fromDiskCache===true,fromServiceWorker:response.fromServiceWorker===true};
@@ -28,6 +50,9 @@ export class FixtureUiDriver {
     }else if(method==='Network.loadingFinished'&&this.cover?.requestId===params.requestId){
       this.cover.encodedDataLength=params.encodedDataLength;
     }
+  }
+  recordLoginStatus(response){
+    try{const u=new URL(response.url);if(u.origin===this.origin&&u.pathname==='/login'&&Number.isInteger(response.status)&&response.status>=100&&response.status<=599)this.authDiagnostics.loginPostStatus=response.status;}catch{}
   }
   async request(method,params={},deadline=this.totalDeadline){
     const remaining=Math.floor(Math.min(15000,deadline-performance.now(),this.totalDeadline-performance.now()));
@@ -71,9 +96,11 @@ export class FixtureUiDriver {
       await this.request('Input.insertText',{text});
       await this.evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))`);
     }
-    if(await this.evaluate(`(()=>{const u=document.querySelector('input[name="username"]');const b=u?.closest('form')?.querySelector('button[type="submit"]');if(location.pathname!=='/login'||!b||b.disabled)return false;b.click();return true;})()`)!==true)throw new Error('Normal UI login unavailable');
+    const submitted=await this.evaluate(`(()=>{const u=document.querySelector('input[name="username"]'),p=document.querySelector('input[name="password"]');const b=u?.closest('form')?.querySelector('button[type="submit"]');if(location.pathname!=='/login'||!p||!b||b.disabled)return {clicked:false};const result={clicked:true,usernameLength:u.value.length,passwordLength:p.value.length};b.click();return result;})()`);
+    if(!submitted||submitted.clicked!==true||!Number.isInteger(submitted.usernameLength)||submitted.usernameLength<0||submitted.usernameLength>128||!Number.isInteger(submitted.passwordLength)||submitted.passwordLength<0||submitted.passwordLength>256)throw new Error('Normal UI login unavailable');
+    this.authDiagnostics.submittedUsernameLengthMatches=submitted.usernameLength===username.length;this.authDiagnostics.submittedPasswordLengthMatches=submitted.passwordLength===password.length;
     // Normal Hilla login redirects; a protected target then proves fixture route content.
-    this.authStage='redirect';await this.poll(`(()=>({ready:location.origin===${JSON.stringify(this.origin)}&&location.pathname!=='/login'}))()`);this.authStage='complete';
+    this.authStage='redirect';await this.poll(`(()=>{const u=document.querySelector('input[name="username"]'),p=document.querySelector('input[name="password"]'),b=u?.closest('form')?.querySelector('button[type="submit"]');const diagnostic={originMatches:location.origin===${JSON.stringify(this.origin)},loginPath:location.pathname==='/login',usernamePresent:!!u,passwordPresent:!!p,submitPresent:!!b,submitDisabled:!!b?.disabled,invalidCredentialsDisplayed:document.body?.textContent?.includes('Invalid username and/or password.')===true,documentReady:document.readyState};return {ready:diagnostic.originMatches&&!diagnostic.loginPath,diagnostic};})()`,value=>{this.authDiagnostics.readiness=authReadiness(value?.diagnostic);});this.authStage='complete';
   }
   async logout(){
     // MainLayout renders one ProfileMenu dropdown in the navbar; its original

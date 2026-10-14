@@ -1,3 +1,4 @@
+import {startupIsCurrent, ownStartupState} from "Frontend/util/startupLifecycle";
 import {Subscription} from "@vaadin/hilla-frontend";
 import {proxy} from "valtio/index";
 import {GameEndpoint} from "Frontend/generated/endpoints";
@@ -135,29 +136,37 @@ export const gameState = proxy<GameState>({
 });
 
 /** Subscribe to and process state updates from backend **/
-export async function initializeGameState() {
-    if (gameState.isLoaded) return;
+export async function initializeGameState(signal?: AbortSignal) {
+    if (!startupIsCurrent(signal) || gameState.isLoaded) return;
+    ownStartupState(gameState, signal, () => { gameState.state = {}; });
 
-    // Fetch initial library list
-    const initialEntries = await GameEndpoint.getAll();
-    initialEntries.forEach((game: GameDto) => {
-        gameState.state[game.id] = game;
-    });
+    try {
+        // Fetch initial library list
+        const initialEntries = await GameEndpoint.getAll(signal ? {signal} : undefined);
+        if (!startupIsCurrent(signal)) return;
+        initialEntries.forEach((game: GameDto) => {
+            gameState.state[game.id] = game;
+        });
 
-    // Subscribe to real-time updates
-    gameState.subscription = GameEndpoint.subscribe().onNext((gameEvents: GameEvent[]) => {
-        gameEvents.forEach((gameEvent: GameEvent) => {
-            switch (gameEvent.type) {
-                case "created":
-                case "updated":
-                    //@ts-ignore
-                    gameState.state[gameEvent.game.id] = gameEvent.game;
-                    break;
-                case "deleted":
-                    //@ts-ignore
-                    delete gameState.state[gameEvent.gameId];
-                    break;
-            }
-        })
-    });
+        // Subscribe to real-time updates
+        gameState.subscription = GameEndpoint.subscribe().onNext((gameEvents: GameEvent[]) => {
+            if (!startupIsCurrent(signal)) return;
+            gameEvents.forEach((gameEvent: GameEvent) => {
+                switch (gameEvent.type) {
+                    case "created":
+                    case "updated":
+                        //@ts-ignore
+                        gameState.state[gameEvent.game.id] = gameEvent.game;
+                        break;
+                    case "deleted":
+                        //@ts-ignore
+                        delete gameState.state[gameEvent.gameId];
+                        break;
+                }
+            })
+        });
+    } catch (error) {
+        if (!startupIsCurrent(signal)) return;
+        throw error;
+    }
 }

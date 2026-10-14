@@ -20,7 +20,19 @@ public final class FixtureRendezvousTest {
                 while (!Files.exists(root.resolve("entered")) && System.nanoTime() < end) Thread.sleep(5);
                 if (!Files.exists(root.resolve("entered")) || task.isDone()) throw new AssertionError("Not held");
                 // A caller can perform browser work here; this test does not claim browser integration.
-                Files.writeString(root.resolve("release"), "release\n", StandardOpenOption.CREATE_NEW);
+                // Publish only complete bytes, exactly like the real controller.
+                // CREATE_NEW on the public name exposes an empty/partial marker
+                // to the provider while writeString is still writing.
+                Path pending = root.resolve("release.pending");
+                Files.writeString(pending, "rel", StandardOpenOption.CREATE_NEW);
+                // Deterministic partial-write regression: incomplete private bytes
+                // must remain invisible to the running strict marker validator.
+                Thread.sleep(30);
+                if (Files.exists(root.resolve("release")) || task.isDone())
+                    throw new AssertionError("Partial release exposed");
+                Files.writeString(pending, "ease\n", StandardOpenOption.APPEND);
+                try { Files.createLink(root.resolve("release"), pending); }
+                finally { Files.delete(pending); }
                 if (!task.get(2, TimeUnit.SECONDS) || !Files.exists(root.resolve("released"))
                         || !Files.exists(root.resolve("exited"))) throw new AssertionError("Release failed");
             }

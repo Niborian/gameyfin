@@ -1,12 +1,13 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import vm from 'node:vm';
-import {FixtureUiDriver,connectAndMeasure,navigationProgress,authReadiness,safeAuthDiagnostics,loginResultHeader,fixtureProfileExpression,fixtureIdentityMenuExpression,profileReadiness,profileDiagnostic,classifyUserInfoBody} from './frontend_ui_driver.mjs';
+import {FixtureUiDriver,connectAndMeasure,navigationProgress,authReadiness,safeAuthDiagnostics,loginResultHeader,fixtureProfileExpression,fixtureIdentityMenuExpression,profileReadiness,profileDiagnostic,classifyUserInfoBody,cookieDiagnostics,requestCookieProjection,responseCookieProjection} from './frontend_ui_driver.mjs';
 const config={origin:'http://127.0.0.1:53123',coverId:7,coverSha256:'0'.repeat(64)};
 const readyAuth={originMatches:true,loginPath:false,usernamePresent:false,passwordPresent:false,submitPresent:false,submitDisabled:false,invalidCredentialsDisplayed:false,documentReady:'complete'};
+const unknownCookies={loginSetCookieSeen:null,loginSessionCookieSetSeen:null,loginSessionCookieBlocked:null,profileCookieHeaderSeen:null,profileSessionCookieAssociated:null,profileSessionCookieBlocked:null,loginSubmittedWithPendingRpc:null,otherSessionCookieSetAfterLogin:null};
 const readyProfile={originMatches:true,profilePath:true,loginPath:false,myProfileHeading:true,usernamePresent:true,emailPresent:true,newPasswordPresent:true,passwordRepeatPresent:true,baseRootMatches:true,identityRow:true,adminItem:true,signOutItem:true,navPresent:true,navbarAvatarPresent:true,navbarSignInPresent:false,navTriggerPresent:true,navTriggerVisible:true,menuAriaPresent:true,menuAriaVisible:true,menuAriaOutsideNav:false,profileTriggerUnique:true,triggerCount:'one'};
 test('authentication diagnostics expose only status, length matches and fixed readiness',()=>{
-  const row={loginPostObserved:true,loginPostStatus:401,submittedUsernameLengthMatches:true,submittedPasswordLengthMatches:true,cdpFailure:'none',cdpMethod:'none',loginResultHeader:'missing',userInfoStatus:null,userInfoIdentity:'not-observed',readiness:readyAuth,profile:{stage:'not-started',readiness:null}};
+  const row={loginPostObserved:true,loginPostStatus:401,submittedUsernameLengthMatches:true,submittedPasswordLengthMatches:true,cdpFailure:'none',cdpMethod:'none',loginResultHeader:'missing',userInfoStatus:null,userInfoIdentity:'not-observed',cookieDiagnostics:unknownCookies,readiness:readyAuth,profile:{stage:'not-started',readiness:null}};
   assert.deepEqual(safeAuthDiagnostics(row),row);
   for(const bad of [{...row,cookie:'secret'},{...row,loginPostStatus:'secret'},{...row,submittedPasswordLengthMatches:43},{...row,readiness:{...readyAuth,documentReady:'secret'}},{...row,readiness:{...readyAuth,text:'secret'}}])assert.throws(()=>safeAuthDiagnostics(bad));
   assert.throws(()=>authReadiness({...readyAuth,loginPath:1}));
@@ -33,6 +34,73 @@ test('private user info reduces only bounded JSON to a fixed identity enum',()=>
   for(const value of [[],{},'PRIVATE', {...fixture,roles:[{}]}])assert.equal(classifyUserInfoBody(body(value)),'invalid');
   for(const response of [{body:'PRIVATE',base64Encoded:false},{body:'!PRIVATE',base64Encoded:true},{body:' '.repeat(16385),base64Encoded:false}])assert.equal(classifyUserInfoBody(response),'invalid');
   assert.equal(classifyUserInfoBody({body:Buffer.from(JSON.stringify(fixture)).toString('base64'),base64Encoded:true}),'fixture-user');
+});
+test('cookie projections emit only nullable booleans and reject malformed/oversized inputs',()=>{
+  const request={headers:{Cookie:'JSESSIONID=PRIVATE'},associatedCookies:[{cookie:{name:'JSESSIONID',value:'PRIVATE'},blockedReasons:[]}]};
+  const response={statusCode:200,headers:{'Set-Cookie':'other=PRIVATE\nJSESSIONID=PRIVATE; HttpOnly'},blockedCookies:[]};
+  assert.deepEqual(requestCookieProjection(request),{profileCookieHeaderSeen:true,profileSessionCookieAssociated:true,profileSessionCookieBlocked:false});
+  assert.deepEqual(responseCookieProjection(response),{loginSetCookieSeen:true,loginSessionCookieSetSeen:true,loginSessionCookieBlocked:false});
+  assert.equal(responseCookieProjection({...response,blockedCookies:[{cookieLine:'JSESSIONID=PRIVATE',blockedReasons:['SecureOnly']}]}).loginSessionCookieBlocked,true);
+  assert.equal(requestCookieProjection({...request,associatedCookies:[{cookie:{name:'JSESSIONID',value:'PRIVATE'},blockedReasons:['SecureOnly']}]}).profileSessionCookieBlocked,true);
+  assert.equal(responseCookieProjection({...response,statusCode:302}),null);
+  for(const value of [{...request,associatedCookies:{}},{...request,associatedCookies:Array(65).fill({})},{...request,headers:{Cookie:'P'.repeat(16385)}},{...request,associatedCookies:[{cookie:{name:'JSESSIONID',value:'PRIVATE'},blockedReasons:'private'}]}])assert.equal(requestCookieProjection(value),null);
+  for(const value of [{...response,headers:{} ,blockedCookies:[{}]},{...response,headers:{'Set-Cookie':34}}])assert.equal(responseCookieProjection(value),null);
+  assert.deepEqual(cookieDiagnostics(unknownCookies),unknownCookies);
+  for(const value of [{...unknownCookies,raw:'PRIVATE'},{...unknownCookies,profileCookieHeaderSeen:1}])assert.throws(()=>cookieDiagnostics(value));
+});
+test('cookie ExtraInfo correlates early and late projections without retaining secrets',()=>{
+  const driver=new FixtureUiDriver({request:async()=>({})},config);
+  const login={requestId:'login',statusCode:200,headers:{'Set-Cookie':'JSESSIONID=PRIVATE'},blockedCookies:[]};
+  driver.event('Network.responseReceivedExtraInfo',login);
+  driver.event('Network.requestWillBeSent',{requestId:'login',request:{url:config.origin+'/login',method:'POST'}});
+  assert.equal(driver.authDiagnostics.cookieDiagnostics.loginSessionCookieSetSeen,true);
+  driver.event('Network.responseReceivedExtraInfo',{...login,headers:{'Set-Cookie':34}});
+  assert.equal(driver.authDiagnostics.cookieDiagnostics.loginSessionCookieSetSeen,null);
+  driver.authStage='profile-proof';driver.authDiagnostics.loginPostStatus=200;driver.authDiagnostics.loginResultHeader='success';
+  driver.event('Network.requestWillBeSent',{requestId:'profile',request:{url:config.origin+'/connect/UserEndpoint/getUserInfo',method:'POST'}});
+  driver.event('Network.requestWillBeSentExtraInfo',{requestId:'profile',headers:{Cookie:'JSESSIONID=PRIVATE'},associatedCookies:[{cookie:{name:'JSESSIONID',value:'PRIVATE'},blockedReasons:[]}]});
+  assert.equal(driver.authDiagnostics.cookieDiagnostics.profileSessionCookieAssociated,true);
+  assert(!JSON.stringify(driver.cookieObservation).includes('PRIVATE'));assert(!JSON.stringify(safeAuthDiagnostics(driver.authDiagnostics)).includes('PRIVATE'));
+  driver.event('Network.requestWillBeSentExtraInfo',{requestId:'profile',headers:{Cookie:34},associatedCookies:[]});
+  assert.equal(driver.authDiagnostics.cookieDiagnostics.profileCookieHeaderSeen,null);
+  driver.event('Network.requestWillBeSent',{requestId:'next-profile',request:{url:config.origin+'/connect/UserEndpoint/getUserInfo',method:'POST'}});
+  assert.equal(driver.authDiagnostics.cookieDiagnostics.profileSessionCookieAssociated,null);
+});
+test('pending RPC snapshot and later session-cookie projection use source timestamps not arrival order',()=>{
+  const driver=new FixtureUiDriver({request:async()=>({})},config);
+  const main=(id,path)=>driver.event('Network.requestWillBeSent',{requestId:id,request:{url:config.origin+path,method:'POST'}});
+  const response=(id,path,timestamp)=>driver.event('Network.responseReceived',{requestId:id,timestamp,response:{url:config.origin+path,status:200,headers:{Result:'success'}}});
+  const extra=id=>driver.event('Network.responseReceivedExtraInfo',{requestId:id,statusCode:200,headers:{'Set-Cookie':'JSESSIONID=PRIVATE'},blockedCookies:[]});
+  main('rpc','/connect/Test/a');driver.cookieObservation.snapshotPending();assert.equal(driver.authDiagnostics.cookieDiagnostics.loginSubmittedWithPendingRpc,true);
+  main('login','/login');response('login','/login',10);extra('login');
+  response('rpc','/connect/Test/a',9);extra('rpc');assert.equal(driver.authDiagnostics.cookieDiagnostics.otherSessionCookieSetAfterLogin,false); // Late event, earlier network response.
+  driver.event('Network.loadingFinished',{requestId:'rpc',encodedDataLength:0});driver.cookieObservation.snapshotPending();assert.equal(driver.authDiagnostics.cookieDiagnostics.loginSubmittedWithPendingRpc,false);
+  main('later','/connect/Test/b');response('later','/connect/Test/b',11);
+  assert.equal(driver.authDiagnostics.cookieDiagnostics.otherSessionCookieSetAfterLogin,null);extra('later');assert.equal(driver.authDiagnostics.cookieDiagnostics.otherSessionCookieSetAfterLogin,true);
+  driver.event('Network.responseReceivedExtraInfo',{requestId:'later',statusCode:200,headers:{'Set-Cookie':34},blockedCookies:[]});
+  assert.equal(driver.authDiagnostics.cookieDiagnostics.otherSessionCookieSetAfterLogin,null);
+  assert(!JSON.stringify([...driver.cookieObservation.metadata.values()]).includes('PRIVATE'));
+  for(let i=0;i<256;i++)driver.cookieObservation.pendingRpc.add('pending'+i);
+  driver.cookieObservation.output.otherSessionCookieSetAfterLogin=false;
+  driver.cookieObservation.main('overflow','profile',false,true);
+  assert.equal(driver.authDiagnostics.cookieDiagnostics.otherSessionCookieSetAfterLogin,null);
+  driver.cookieObservation.snapshotPending();assert.equal(driver.authDiagnostics.cookieDiagnostics.loginSubmittedWithPendingRpc,null);
+});
+test('cookie projections ignore anonymous/external requests and bounded overflow stays unknown',()=>{
+  const driver=new FixtureUiDriver({request:async()=>({})},config);
+  for(let i=0;i<300;i++)driver.event('Network.requestWillBeSent',{requestId:'asset'+i,request:{url:config.origin+'/asset'+i,method:'GET'}});
+  for(let i=0;i<300;i++)driver.event('Network.requestWillBeSentExtraInfo',{requestId:'asset'+i,headers:{Cookie:'PRIVATE'},associatedCookies:[]});
+  assert(driver.cookieObservation.ignored.size<=256);assert(driver.cookieObservation.earlyRequest.size<=4);
+  for(let i=0;i<8;i++)driver.event('Network.responseReceivedExtraInfo',{requestId:'unknown'+i,statusCode:200,headers:{'Set-Cookie':'JSESSIONID=PRIVATE'},blockedCookies:[]});
+  driver.event('Network.requestWillBeSent',{requestId:'unknown7',request:{url:config.origin+'/login',method:'POST'}});
+  assert.deepEqual(driver.authDiagnostics.cookieDiagnostics,unknownCookies);
+  driver.event('Network.requestWillBeSent',{requestId:'external',request:{url:'https://external.invalid/login',method:'POST'}});
+  driver.event('Network.responseReceivedExtraInfo',{requestId:'external',statusCode:200,headers:{'Set-Cookie':'JSESSIONID=PRIVATE'},blockedCookies:[]});
+  assert.deepEqual(driver.authDiagnostics.cookieDiagnostics,unknownCookies);
+  driver.event('Network.requestWillBeSent',{requestId:'redirect',request:{url:config.origin+'/login',method:'POST'}});
+  driver.event('Network.requestWillBeSent',{requestId:'redirect',redirectResponse:{url:config.origin+'/login',status:302},request:{url:config.origin+'/',method:'GET'}});
+  driver.event('Network.responseReceivedExtraInfo',{requestId:'redirect',statusCode:200,headers:{'Set-Cookie':'JSESSIONID=PRIVATE'},blockedCookies:[]});
+  assert.deepEqual(driver.authDiagnostics.cookieDiagnostics,unknownCookies);
 });
 test('userinfo body diagnostic is one correlated post-login completed response under original deadline',async()=>{
   const calls=[];const cdp={request:async(method,params,timeout)=>{calls.push({method,params,timeout});return {body:'null',base64Encoded:false};}};

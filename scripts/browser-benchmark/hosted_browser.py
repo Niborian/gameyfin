@@ -224,9 +224,11 @@ def validate_failure_receipt(value):
     if 'authStage' in value and (value['phase']!='authentication' or value['authStage'] not in ('interception','login-navigation','login-form','submit','redirect','complete')):raise ValueError('Auth stage boundary')
     if 'authDiagnostics' in value:
         data=value['authDiagnostics']
-        keys={'loginPostObserved','loginPostStatus','submittedUsernameLengthMatches','submittedPasswordLengthMatches','readiness','cdpFailure','cdpMethod'}
+        keys={'loginPostObserved','loginPostStatus','submittedUsernameLengthMatches','submittedPasswordLengthMatches','readiness','cdpFailure','cdpMethod','loginResultHeader','userInfoStatus'}
         if value['phase']!='authentication' or not isinstance(data,dict) or set(data)!=keys or type(data['loginPostObserved']) is not bool:raise ValueError('Auth diagnostics schema')
         if data['loginPostStatus'] is not None and (type(data['loginPostStatus']) is not int or not 100<=data['loginPostStatus']<=599):raise ValueError('Auth diagnostic numeric boundary')
+        if data['userInfoStatus'] is not None and (type(data['userInfoStatus']) is not int or not 100<=data['userInfoStatus']<=599):raise ValueError('Auth user-info status boundary')
+        if data['loginResultHeader'] not in ('success','failure','missing','other'):raise ValueError('Auth result enum')
         if any(data[k] is not None and type(data[k]) is not bool for k in ('submittedUsernameLengthMatches','submittedPasswordLengthMatches')):raise ValueError('Auth diagnostic match boundary')
         if data['cdpFailure'] not in ('none','execution-context-destroyed','execution-context-missing','target-closed','protocol-timeout','other'):raise ValueError('Auth CDP failure enum')
         if data['cdpMethod'] not in ('none','page-navigation','runtime-evaluate','input-insert','request-interception','setup','other'):raise ValueError('Auth CDP method enum')

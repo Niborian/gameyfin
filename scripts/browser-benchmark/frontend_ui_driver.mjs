@@ -12,13 +12,21 @@ export function authReadiness(value){
   return {...Object.fromEntries(flags.map(key=>[key,value[key]])),documentReady:value.documentReady};
 }
 export function safeAuthDiagnostics(value){
-  const keys=['loginPostObserved','loginPostStatus','submittedUsernameLengthMatches','submittedPasswordLengthMatches','cdpFailure','cdpMethod','readiness'];
+  const keys=['loginPostObserved','loginPostStatus','submittedUsernameLengthMatches','submittedPasswordLengthMatches','cdpFailure','cdpMethod','loginResultHeader','userInfoStatus','readiness'];
   if(!value||typeof value!=='object'||Object.keys(value).length!==keys.length||!keys.every(key=>Object.hasOwn(value,key))||typeof value.loginPostObserved!=='boolean')throw new Error('Auth diagnostic schema');
   if(value.loginPostStatus!==null&&(!Number.isInteger(value.loginPostStatus)||value.loginPostStatus<100||value.loginPostStatus>599))throw new Error('Auth numeric boundary');
   for(const key of ['submittedUsernameLengthMatches','submittedPasswordLengthMatches'])if(value[key]!==null&&typeof value[key]!=='boolean')throw new Error('Auth length-match boundary');
   if(!['none','execution-context-destroyed','execution-context-missing','target-closed','protocol-timeout','other'].includes(value.cdpFailure))throw new Error('Auth CDP failure boundary');
   if(!['none','page-navigation','runtime-evaluate','input-insert','request-interception','setup','other'].includes(value.cdpMethod))throw new Error('Auth CDP method boundary');
-  return {...Object.fromEntries(keys.slice(0,6).map(key=>[key,value[key]])),readiness:value.readiness===null?null:authReadiness(value.readiness)};
+  if(!['success','failure','missing','other'].includes(value.loginResultHeader))throw new Error('Auth protocol header boundary');
+  if(value.userInfoStatus!==null&&(!Number.isInteger(value.userInfoStatus)||value.userInfoStatus<100||value.userInfoStatus>599))throw new Error('Auth user-info status boundary');
+  return {...Object.fromEntries(keys.slice(0,8).map(key=>[key,value[key]])),readiness:value.readiness===null?null:authReadiness(value.readiness)};
+}
+export function loginResultHeader(headers){
+  if(!headers||typeof headers!=='object')return 'missing';
+  const rows=Object.entries(headers).filter(([name])=>name.toLowerCase()==='result');
+  if(rows.length===0)return 'missing';
+  return rows.length===1&&['success','failure'].includes(rows[0][1])?rows[0][1]:'other';
 }
 export class FixtureUiDriver {
   constructor(cdp,{origin,coverId,coverSha256,onProgress=()=>{}}){
@@ -26,7 +34,7 @@ export class FixtureUiDriver {
     this.cdp=cdp;this.origin=origin;this.coverId=coverId;this.coverSha256=coverSha256;this.cover=null;this.failure=false;this.navigations=0;
     this.totalDeadline=performance.now()+90000;
     if(typeof onProgress!=='function')throw new Error('Progress callback boundary');this.onProgress=onProgress;
-    this.loginRequestIds=new Set();this.authDiagnostics={loginPostObserved:false,loginPostStatus:null,submittedUsernameLengthMatches:null,submittedPasswordLengthMatches:null,cdpFailure:'none',cdpMethod:'none',readiness:null};
+    this.loginRequestIds=new Set();this.userInfoRequestIds=new Set();this.authDiagnostics={loginPostObserved:false,loginPostStatus:null,submittedUsernameLengthMatches:null,submittedPasswordLengthMatches:null,cdpFailure:'none',cdpMethod:'none',loginResultHeader:'missing',userInfoStatus:null,readiness:null};
     cdp.onEvent=(method,params)=>this.event(method,params);
   }
   event(method,params){
@@ -40,9 +48,14 @@ export class FixtureUiDriver {
         this.recordLoginStatus(params.redirectResponse);this.loginRequestIds.delete(params.requestId);
       }
       try{const u=new URL(params.request?.url);if(u.origin===this.origin&&u.pathname==='/login'&&params.request.method==='POST'&&typeof params.requestId==='string'&&params.requestId.length<=128&&this.loginRequestIds.size<4)this.loginRequestIds.add(params.requestId);}catch{}
+      try{const u=new URL(params.request?.url);if(u.origin===this.origin&&u.pathname==='/connect/UserEndpoint/getUserInfo'&&params.request.method==='POST'&&typeof params.requestId==='string'&&params.requestId.length<=128&&this.userInfoRequestIds.size<4)this.userInfoRequestIds.add(params.requestId);}catch{}
     }else if(method==='Network.responseReceived'){
       const response=params.response;let parsed;try{parsed=new URL(response.url);}catch{return;}
       if(this.loginRequestIds.has(params.requestId)){this.recordLoginStatus(response);this.loginRequestIds.delete(params.requestId);}
+      if(this.userInfoRequestIds.has(params.requestId)){
+        if(parsed.origin===this.origin&&parsed.pathname==='/connect/UserEndpoint/getUserInfo'&&Number.isInteger(response.status)&&response.status>=100&&response.status<=599)this.authDiagnostics.userInfoStatus=response.status;
+        this.userInfoRequestIds.delete(params.requestId);
+      }
       if(parsed.origin===this.origin&&parsed.pathname===`/images/cover/${this.coverId}`){
         if(typeof params.requestId!=='string'||params.requestId.length>128||!Number.isInteger(response.status))return;
         this.cover={requestId:params.requestId,coverResponseStatus:response.status,fromDiskCache:response.fromDiskCache===true,fromServiceWorker:response.fromServiceWorker===true};
@@ -52,7 +65,7 @@ export class FixtureUiDriver {
     }
   }
   recordLoginStatus(response){
-    try{const u=new URL(response.url);if(u.origin===this.origin&&u.pathname==='/login'&&Number.isInteger(response.status)&&response.status>=100&&response.status<=599)this.authDiagnostics.loginPostStatus=response.status;}catch{}
+    try{const u=new URL(response.url);if(u.origin===this.origin&&u.pathname==='/login'&&Number.isInteger(response.status)&&response.status>=100&&response.status<=599){this.authDiagnostics.loginPostStatus=response.status;this.authDiagnostics.loginResultHeader=loginResultHeader(response.headers);}}catch{}
   }
   async request(method,params={},deadline=this.totalDeadline){
     const remaining=Math.floor(Math.min(15000,deadline-performance.now(),this.totalDeadline-performance.now()));

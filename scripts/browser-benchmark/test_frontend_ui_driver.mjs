@@ -1,13 +1,18 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {FixtureUiDriver,connectAndMeasure,navigationProgress,authReadiness,safeAuthDiagnostics} from './frontend_ui_driver.mjs';
+import {FixtureUiDriver,connectAndMeasure,navigationProgress,authReadiness,safeAuthDiagnostics,loginResultHeader} from './frontend_ui_driver.mjs';
 const config={origin:'http://127.0.0.1:53123',coverId:7,coverSha256:'0'.repeat(64)};
 const readyAuth={originMatches:true,loginPath:false,usernamePresent:false,passwordPresent:false,submitPresent:false,submitDisabled:false,invalidCredentialsDisplayed:false,documentReady:'complete'};
 test('authentication diagnostics expose only status, length matches and fixed readiness',()=>{
-  const row={loginPostObserved:true,loginPostStatus:401,submittedUsernameLengthMatches:true,submittedPasswordLengthMatches:true,cdpFailure:'none',cdpMethod:'none',readiness:readyAuth};
+  const row={loginPostObserved:true,loginPostStatus:401,submittedUsernameLengthMatches:true,submittedPasswordLengthMatches:true,cdpFailure:'none',cdpMethod:'none',loginResultHeader:'missing',userInfoStatus:null,readiness:readyAuth};
   assert.deepEqual(safeAuthDiagnostics(row),row);
   for(const bad of [{...row,cookie:'secret'},{...row,loginPostStatus:'secret'},{...row,submittedPasswordLengthMatches:43},{...row,readiness:{...readyAuth,documentReady:'secret'}},{...row,readiness:{...readyAuth,text:'secret'}}])assert.throws(()=>safeAuthDiagnostics(bad));
   assert.throws(()=>authReadiness({...readyAuth,loginPath:1}));
+});
+test('Hilla Result header is a fixed protocol classification, never a raw header',()=>{
+  assert.equal(loginResultHeader({Result:'success','Spring-CSRF-token':'private'}),'success');assert.equal(loginResultHeader({result:'failure'}),'failure');
+  assert.equal(loginResultHeader({'Set-Cookie':'private'}),'missing');assert.equal(loginResultHeader({Result:'private'}),'other');
+  assert.equal(loginResultHeader({Result:'success',result:'private'}),'other');
 });
 test('only correlated same-origin login POST status survives response and redirect events',()=>{
   const driver=new FixtureUiDriver({request:async()=>({})},config);
@@ -19,6 +24,9 @@ test('only correlated same-origin login POST status survives response and redire
   driver.event('Network.responseReceived',{requestId:'post',response:{url:config.origin+'/',status:200}});
   assert.equal(driver.authDiagnostics.loginPostObserved,true);assert.equal(driver.authDiagnostics.loginPostStatus,302);assert.equal(driver.loginRequestIds.size,0);
   assert(!JSON.stringify(safeAuthDiagnostics(driver.authDiagnostics)).includes('secret'));
+  driver.event('Network.requestWillBeSent',{requestId:'user',request:{url:config.origin+'/connect/UserEndpoint/getUserInfo',method:'POST',postData:'secret'}});
+  driver.event('Network.responseReceived',{requestId:'user',response:{url:config.origin+'/connect/UserEndpoint/getUserInfo',status:401,headers:{'Set-Cookie':'secret'}}});
+  assert.equal(driver.authDiagnostics.userInfoStatus,401);assert.equal(driver.userInfoRequestIds.size,0);
 });
 test('navigation progress retains only fixed route indexes, stages and boolean gates',()=>{
   const flags=Object.fromEntries(['pathMatches','contentReady','coverTitlePresent','coverPresent','coverComplete','dimensionsMatch'].map(key=>[key,false]));

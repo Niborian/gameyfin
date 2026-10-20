@@ -2,6 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import vm from 'node:vm';
 import {FixtureUiDriver,connectAndMeasure,navigationProgress,authReadiness,safeAuthDiagnostics,loginResultHeader,fixtureProfileExpression,fixtureIdentityMenuExpression,profileReadiness,profileDiagnostic,classifyUserInfoBody,cookieDiagnostics,requestCookieProjection,responseCookieProjection,loginFormExpression} from './frontend_ui_driver.mjs';
+import {recordFirstAuthCdpFailure} from './browser_entry.mjs';
 const config={origin:'http://127.0.0.1:53123',coverId:7,coverSha256:'0'.repeat(64)};
 const readyAuth={originMatches:true,loginPath:false,usernamePresent:false,passwordPresent:false,submitPresent:false,submitDisabled:false,invalidCredentialsDisplayed:false,documentReady:'complete'};
 const unknownCookies={loginSetCookieSeen:null,loginSessionCookieSetSeen:null,loginSessionCookieBlocked:null,profileCookieHeaderSeen:null,profileSessionCookieAssociated:null,profileSessionCookieBlocked:null,loginSubmittedWithPendingRpc:null,otherSessionCookieSetAfterLogin:null};
@@ -286,4 +287,26 @@ test('all commands share the remaining total budget and expiry prevents forwardi
   await assert.rejects(driver.request('Page.navigate'),/deadline/);
   driver.event('Fetch.requestPaused',{requestId:'owned',request:{url:config.origin+'/'}});
   await new Promise(resolve=>setImmediate(resolve));assert.equal(driver.failure,true);assert.equal(calls.length,7);
+});
+
+test('classified continuation and denial failures stay blocking with exactly one attempt and sanitized evidence',async()=>{
+ for(const allowed of [true,false]){
+  const calls=[];let driver;
+  const cdp={request:async(method,params)=>{
+   calls.push({method,params});const failure=new Error('Invalid InterceptionId. PRIVATE_COOKIE=secret');
+   recordFirstAuthCdpFailure(driver.authDiagnostics,method,failure);throw failure;
+  }};
+  driver=new FixtureUiDriver(cdp,config);
+  driver.event('Fetch.requestPaused',{requestId:'owned-request',request:{url:allowed?config.origin+'/login':'https://external.invalid/',headers:{Cookie:'PRIVATE_COOKIE=secret'},postData:'secret'}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(driver.failure,true);assert.equal(calls.length,1);
+  assert.equal(calls[0].method,allowed?'Fetch.continueRequest':'Fetch.failRequest');
+  await assert.rejects(driver.poll('fixed expression'),/Origin interception failed/);
+  assert.equal(calls.length,1); // no automatic retry, bypass, or extra CDP request
+  const evidence=safeAuthDiagnostics(driver.authDiagnostics);
+  assert.equal(evidence.cdpFailure,'interception-invalid-id');assert.equal(evidence.cdpMethod,'request-interception');
+  assert(!JSON.stringify(evidence).includes('PRIVATE'));assert(!JSON.stringify(evidence).includes('secret'));
+  assert(!JSON.stringify(calls).includes('PRIVATE'));assert(!JSON.stringify(calls).includes('secret'));
+  assert.throws(()=>safeAuthDiagnostics({...driver.authDiagnostics,cdpFailure:'arbitrary-private-message'}));
+ }
 });

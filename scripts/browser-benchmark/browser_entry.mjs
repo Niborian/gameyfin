@@ -12,8 +12,10 @@ export function authenticationReady(proof){
   if(!proof||typeof proof!=='object'||Object.keys(proof).length!==2||typeof proof.normalLoginAutoRedirectObserved!=='boolean'||proof.fixtureProfileVerified!==true)throw new Error('Fixture authentication proof boundary');
   return {authenticated:true,sandboxVerified:true,normalLoginAutoRedirectObserved:proof.normalLoginAutoRedirectObserved,fixtureProfileVerified:true};
 }
-export function classifyCdpFailure(error){
+export function classifyCdpFailure(error,method=null){
   const text=typeof error?.message==='string'?error.message.slice(0,8192):'';
+  // Diagnostic only: this cause never authorizes retry or ignoring interception.
+  if(['Fetch.continueRequest','Fetch.failRequest'].includes(method)&&/(?:^|\s)Invalid InterceptionId\.(?:\s|$)/.test(text))return 'interception-invalid-id';
   if(/Execution context was destroyed/.test(text))return 'execution-context-destroyed';
   if(/Cannot find context with (?:specified )?id|Cannot find execution context/.test(text))return 'execution-context-missing';
   if(/Target closed|Session closed|Connection closed/.test(text))return 'target-closed';
@@ -22,7 +24,7 @@ export function classifyCdpFailure(error){
 }
 export function recordFirstAuthCdpFailure(diagnostics,method,error){
   if(diagnostics.cdpFailure!=='none')return;
-  diagnostics.cdpFailure=classifyCdpFailure(error);
+  diagnostics.cdpFailure=classifyCdpFailure(error,method);
   diagnostics.cdpMethod=method==='Page.navigate'?'page-navigation':method==='Runtime.evaluate'?'runtime-evaluate':method==='Input.insertText'?'input-insert':['Fetch.continueRequest','Fetch.failRequest'].includes(method)?'request-interception':['Page.enable','Runtime.enable','Network.enable','Fetch.enable','Page.addScriptToEvaluateOnNewDocument'].includes(method)?'setup':'other';
 }
 export async function browserFailureCounters(read=fs.readFile){

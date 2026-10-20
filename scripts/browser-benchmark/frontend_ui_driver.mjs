@@ -25,7 +25,7 @@ export function safeAuthDiagnostics(value){
   if(!value||typeof value!=='object'||Object.keys(value).length!==keys.length||!keys.every(key=>Object.hasOwn(value,key))||typeof value.loginPostObserved!=='boolean')throw new Error('Auth diagnostic schema');
   if(value.loginPostStatus!==null&&(!Number.isInteger(value.loginPostStatus)||value.loginPostStatus<100||value.loginPostStatus>599))throw new Error('Auth numeric boundary');
   for(const key of ['submittedUsernameLengthMatches','submittedPasswordLengthMatches'])if(value[key]!==null&&typeof value[key]!=='boolean')throw new Error('Auth length-match boundary');
-  if(!['none','execution-context-destroyed','execution-context-missing','target-closed','protocol-timeout','other'].includes(value.cdpFailure))throw new Error('Auth CDP failure boundary');
+  if(!['none','interception-invalid-id','execution-context-destroyed','execution-context-missing','target-closed','protocol-timeout','other'].includes(value.cdpFailure))throw new Error('Auth CDP failure boundary');
   if(!['none','page-navigation','runtime-evaluate','input-insert','request-interception','setup','other'].includes(value.cdpMethod))throw new Error('Auth CDP method boundary');
   if(!['success','failure','missing','other'].includes(value.loginResultHeader))throw new Error('Auth protocol header boundary');
   if(value.userInfoStatus!==null&&(!Number.isInteger(value.userInfoStatus)||value.userInfoStatus<100||value.userInfoStatus>599))throw new Error('Auth user-info status boundary');

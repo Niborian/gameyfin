@@ -28,6 +28,18 @@ test('authentication failure stage and cgroup evidence are fixed enum and numeri
  assert.throws(()=>failureReceipt('navigation',null,null,'submit'));
  assert.deepEqual(Object.values(await browserFailureCounters(async()=>{throw new Error('private');})),[null,null,null,null]);
 });
+
+test('bounded method-specific invalid interception hint does not disclose raw text or replace first cause',()=>{
+ const error=new Error('Protocol error (Fetch.continueRequest): Invalid InterceptionId. PRIVATE_COOKIE=secret');
+ for(const method of ['Fetch.continueRequest','Fetch.failRequest'])assert.equal(classifyCdpFailure(error,method),'interception-invalid-id');
+ for(const method of [null,'Runtime.evaluate','Page.navigate','Fetch.enable'])assert.equal(classifyCdpFailure(error,method),'other');
+ for(const message of ['Invalid InterceptionId private','prefixInvalid InterceptionId.','Invalid InterceptionId.x','x'.repeat(8192)+' Invalid InterceptionId.'])assert.equal(classifyCdpFailure(new Error(message),'Fetch.continueRequest'),'other');
+ const diagnostic={cdpFailure:'none',cdpMethod:'none'};
+ recordFirstAuthCdpFailure(diagnostic,'Fetch.continueRequest',error);
+ recordFirstAuthCdpFailure(diagnostic,'Runtime.evaluate',new Error('Target closed PRIVATE'));
+ assert.deepEqual(diagnostic,{cdpFailure:'interception-invalid-id',cdpMethod:'request-interception'});
+ assert(!JSON.stringify(diagnostic).includes('PRIVATE'));assert(!JSON.stringify(diagnostic).includes('secret'));
+});
 test('observational preflight awaits asynchronous resolver and never exposes paths or blocks launch',async()=>{
   const fake={launch(){},executablePath:async()=>'/private/chrome'};
   const io={stat:async path=>{assert.equal(path,'/private/chrome');return {isFile:()=>true};},access:async path=>assert.equal(path,'/private/chrome')};

@@ -320,7 +320,7 @@ test('interception lifecycle counters are bounded observations, never retry auth
  }
  await new Promise(resolve=>setImmediate(resolve));
  const diagnostic=safeAuthDiagnostics(driver.authDiagnostics).interceptionDiagnostics;
- assert.deepEqual(diagnostic,{failedOperation:'none',failedRequestCanceled:null,pausedEvents:256,duplicatePausedIds:256,canceledNetworkEvents:256,truncated:true});
+ assert.deepEqual(diagnostic,{failedOperation:'none',failedRequestCanceled:null,pausedEvents:256,duplicatePausedIds:256,canceledNetworkEvents:256,verifiedCanceledImageContinuations:0,truncated:true});
  assert.equal(calls.length,260); // observation never suppresses/deduplicates a paused event
  assert(!JSON.stringify(diagnostic).includes('PRIVATE'));
  for(const mutation of [{failedOperation:'PRIVATE'}, {pausedEvents:257}, {duplicatePausedIds:-1},{canceledNetworkEvents:true},{truncated:1},{rawId:'PRIVATE'}])

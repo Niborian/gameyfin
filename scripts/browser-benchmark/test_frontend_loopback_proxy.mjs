@@ -1,5 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import http from 'node:http';import net from 'node:net';
 import {LoopbackProxy} from './frontend_loopback_proxy.mjs';
+import {fixedFixtureTransports} from './frontend_fixture_transport.mjs';
 import {EventEmitter} from 'node:events';
 function fakeHttp(url='http://127.0.0.1:54321/connect/GameEndpoint/getAll'){
  const req=Object.assign(new EventEmitter(),{method:'POST',url,headers:{host:'127.0.0.1:54321'},rawHeaders:['Host','127.0.0.1:54321'],pause(){this.paused=true;},resume(){this.paused=false;},pipe(){},destroy(){this.aborted=true;this.emit('aborted');}});
@@ -7,6 +8,17 @@ function fakeHttp(url='http://127.0.0.1:54321/connect/GameEndpoint/getAll'){
  return {req,res};
 }
 function fakeSocket(){return Object.assign(new EventEmitter(),{destroyed:false,setTimeout(){return this;},pipe(){return this;},write(){},destroy(){if(!this.destroyed){this.destroyed=true;this.emit('close');}}});}
+test('all protocols share eight app slots including closing and reserved ownership until actual close',()=>{
+ for(const kind of ['connect','upgrade','http'])for(const reserved of [false,true]){
+  let calls=0;const proxy=new LoopbackProxy('http://127.0.0.1:54321',{dial:()=>{calls++;return fakeSocket();},request:()=>{calls++;throw new Error('Unexpected upstream');}});
+  const owned=[];for(let i=0;i<(reserved?7:8);i++){const s=fakeSocket();s.destroy=function(){this.destroyed=true;};proxy.track(s,true);owned.push(s);}if(reserved)proxy.reservedSockets=1;
+  owned[0].destroy();assert.equal(proxy.outboundRoom(),false);
+  try{if(kind==='http'){const h=fakeHttp();proxy.handle(h.req,h.res);assert.equal(proxy.queue.length,1);assert.equal(h.res.status,undefined);}
+   else{const socket=fakeSocket(),req={method:kind==='connect'?'CONNECT':'GET',url:kind==='connect'?'127.0.0.1:54321':'ws://127.0.0.1:54321/HILLA/push',headers:{host:'127.0.0.1:54321',...(kind==='upgrade'?{upgrade:'websocket'}:{})},rawHeaders:['Host','127.0.0.1:54321']};proxy[kind](req,socket,Buffer.alloc(0));assert.equal(socket.destroyed,true);assert.equal(proxy.denials.capacity,1);}
+   assert.equal(calls,0);assert.equal(proxy.outboundSockets.size+proxy.reservedSockets,8);assert.equal(proxy.active,0);assert.equal(proxy.diagnostics().peakOutboundSockets,8-(reserved?1:0));
+  }finally{proxy.close();for(const s of owned)s.emit('close');proxy.reservedSockets=0;assert.equal(proxy.outboundSockets.size,0);assert.equal(proxy.queue.length,0);}
+ }
+});
 test('actual owned loopback listener rejects HTTP/WS/CONNECT without any upstream dial',async()=>{
   let calls=0;const proxy=new LoopbackProxy('http://127.0.0.1:54321',{dial:()=>{calls++;throw new Error();},request:()=>{calls++;throw new Error();}});
   const port=await proxy.listen();try{
@@ -54,7 +66,7 @@ test('eight held permitted requests queue ninth FIFO without rejecting or exceed
  const held=[];let admitted;const ready=new Promise(resolve=>{admitted=resolve;});
  const upstream=http.createServer((req,res)=>{req.resume();held.push(res);if(held.length===8)admitted();});
  await new Promise(resolve=>upstream.listen(0,'127.0.0.1',resolve));
- const origin='http://127.0.0.1:54321';const proxy=new LoopbackProxy(origin,{deadlineMs:5000,request:(options,reply)=>http.request({...options,port:upstream.address().port},reply)});
+ const origin='http://127.0.0.1:54321';const fixed=fixedFixtureTransports(origin,'172.18.0.2',{request:(options,reply)=>{assert.equal(options.hostname,'172.18.0.2');assert.equal(options.port,8080);return http.request({...options,hostname:'127.0.0.1',port:upstream.address().port},reply);}});const proxy=new LoopbackProxy(origin,{...fixed,deadlineMs:5000});
  const port=await proxy.listen();const clients=[];
  const request=()=>new Promise((resolve,reject)=>{const req=http.request({host:'127.0.0.1',port,path:origin+'/connect/GameEndpoint/getAll',method:'POST',headers:{Host:'127.0.0.1:54321'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});clients.push(req);req.setTimeout(2000,()=>req.destroy(new Error('Synthetic deadline')));req.on('error',reject);req.end('{}');});
  let pending=[];let timer;
@@ -68,7 +80,7 @@ test('eight held permitted requests queue ninth FIFO without rejecting or exceed
   const admittedNinth=new Promise(resolve=>upstream.once('request',()=>resolve()));
   await admittedNinth;assert.equal(held.length,9);assert(proxy.active<=8);
   held[8].end('null');assert.equal(await ninth,200);
-  for(const res of held)res.end('null');assert.deepEqual(await Promise.all(pending),Array(8).fill(200));
+  for(const res of held)res.end('null');assert.deepEqual(await Promise.all(pending),Array(8).fill(200));assert.equal(proxy.diagnostics().peakOutboundSockets,8);assert(proxy.diagnostics().peakSockets<=32);assert.equal(proxy.diagnostics().deniedCapacity,0);
  }finally{clearTimeout(timer);for(const res of held)res.destroy();for(const req of clients)req.destroy();proxy.close();await Promise.allSettled(pending);await new Promise(resolve=>upstream.close(resolve));}
 });
 
@@ -142,12 +154,12 @@ test('late upstream response after canceled client cannot write or revive work',
 
 test('CONNECT and upgrade socket-capacity or closed tracking refusal releases once without crash',()=>{
  for(const kind of ['connect','upgrade'])for(const closed of [false,true]){
-  const upstream=fakeSocket();let proxy;let drained=0;
-  proxy=new LoopbackProxy('http://127.0.0.1:54321',{dial:()=>{if(closed)proxy.close();return upstream;}});proxy.active=7;
+  const upstream=fakeSocket();let proxy;let drained=0,dials=0;
+  proxy=new LoopbackProxy('http://127.0.0.1:54321',{dial:()=>{dials++;if(closed)proxy.close();return upstream;}});proxy.active=7;
   if(!closed){for(let i=0;i<32;i++)proxy.sockets.add(fakeSocket());proxy.queue.push({queued:true,req:{aborted:false},res:{destroyed:false},deadline:performance.now()+1000});proxy.forward=()=>{drained++;};}
   const socket=fakeSocket();const req={method:kind==='connect'?'CONNECT':'GET',url:kind==='connect'?'127.0.0.1:54321':'ws://127.0.0.1:54321/HILLA/push',headers:{host:'127.0.0.1:54321',...(kind==='upgrade'?{upgrade:'websocket'}:{})},rawHeaders:['Host','127.0.0.1:54321']};
   try{assert.doesNotThrow(()=>proxy[kind](req,socket,Buffer.alloc(0)));
-   assert.equal(socket.destroyed,true);assert.equal(upstream.destroyed,true);assert.equal(proxy.active,7);assert.equal(drained,0);assert.equal(proxy.denials[closed?'closed':'capacity'],1);
+   assert.equal(socket.destroyed,true);assert.equal(upstream.destroyed,closed);assert.equal(dials,closed?1:0);assert.equal(proxy.active,7);assert.equal(drained,0);assert.equal(proxy.reservedSockets,0);assert.equal(proxy.denials[closed?'closed':'capacity'],1);
    if(!closed){const first=proxy.sockets.values().next().value;proxy.sockets.delete(first);first.destroy();proxy.drain();assert.equal(drained,1);}
    upstream.emit('close');assert.equal(proxy.active,7);
   }finally{proxy.queue=[];proxy.close();}
@@ -194,6 +206,14 @@ test('socket reservations protect admission and count closing late assignments u
   calls[0].emit('close');assert.equal(proxy.reservedSockets,2); // No double release of an assigned reservation.
  }finally{for(const pair of pairs)pair.res.destroy();for(const call of calls)call.emit('close');proxy.close();}
  assert.equal(proxy.reservedSockets,0);assert.equal(proxy.httpEntries.size,0);
+});
+test('eight app reservations retain canceled late socket and queue until its actual close',()=>{
+ const calls=[];const proxy=new LoopbackProxy('http://127.0.0.1:54321',{request:()=>{const h=Object.assign(new EventEmitter(),{setTimeout(){},destroy(){this.destroyed=true;}});calls.push(h);return h;}});const pairs=[];
+ try{for(let i=0;i<9;i++){const p=fakeHttp();pairs.push(p);proxy.handle(p.req,p.res);}assert.equal(calls.length,8);assert.equal(proxy.reservedSockets,8);assert.equal(proxy.queue.length,1);
+  pairs[0].res.destroy();assert.equal(calls.length,8);assert.equal(proxy.reservedSockets,8);
+  const late=Object.assign(fakeSocket(),{destroy(){this.destroyed=true;}});calls[0].emit('socket',late);assert.equal(late.destroyed,true);assert.equal(proxy.outboundSockets.has(late),true);assert.equal(proxy.outboundSockets.size+proxy.reservedSockets,8);assert.equal(calls.length,8);
+  late.emit('close');assert.equal(calls.length,9);assert.equal(proxy.queue.length,0);assert.equal(proxy.outboundSockets.size+proxy.reservedSockets,8);assert.equal(proxy.diagnostics().peakOutboundSockets,8);
+ }finally{for(const p of pairs)p.res.destroy();for(const h of calls)h.emit('close');proxy.close();assert.equal(proxy.reservedSockets,0);assert.equal(proxy.outboundSockets.size,0);}
 });
 
 test('synchronous dial failure and proxy close release pending HTTP reservations without retry',()=>{

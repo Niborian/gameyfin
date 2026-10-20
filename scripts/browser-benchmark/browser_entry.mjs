@@ -1,5 +1,5 @@
 // Hosted-container only. Normal UI login; private stdin, sanitized stdout.
-import net from 'node:net';
+import {fixedFixtureTransports} from './frontend_fixture_transport.mjs';
 import fs from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {LoopbackProxy} from './frontend_loopback_proxy.mjs';
@@ -102,8 +102,8 @@ export async function main(argv){
   if(process.getuid?.()===0||process.env.GAMEYFIN_HOSTED_BROWSER!=='reviewed-fixture-only')throw new Error('Hosted nonroot boundary');
   const require=createRequire('/home/pptruser/package.json');
   const puppeteer=require('puppeteer');
-  const sockets=new Set();let browser,proxy,bridge,profile,driver,preflight={launchCallable:typeof puppeteer.launch==='function'};
-  let timedOut=false;const timer=setTimeout(()=>{timedOut=true;browser?.close().catch(()=>{});proxy?.close();for(const s of sockets)s.destroy();},90000);
+  let browser,proxy,profile,driver,preflight={launchCallable:typeof puppeteer.launch==='function'};
+  let timedOut=false;const timer=setTimeout(()=>{timedOut=true;browser?.close().catch(()=>{});proxy?.close();},90000);
   const lines=[];let pending,buffer='',bytes=0,inputEnded=false;
   process.stdin.setEncoding('utf8');process.stdin.on('data',chunk=>{
     bytes+=Buffer.byteLength(chunk);if(bytes>2048){process.stdin.destroy();pending?.reject(new Error('Private input boundary'));return;}
@@ -113,9 +113,7 @@ export async function main(argv){
   const readLine=()=>lines.length?Promise.resolve(lines.shift()):inputEnded?Promise.reject(new Error('Private input unavailable')):new Promise((resolve,reject)=>{const t=setTimeout(()=>{pending=null;reject(new Error('Private input deadline'));},15000);pending={resolve:x=>{clearTimeout(t);resolve(x);},reject:x=>{clearTimeout(t);reject(x);}};});
   try{
     currentPhase='bridge';
-    bridge=net.createServer(client=>{if(sockets.size>=16){client.destroy();return;}const upstream=net.connect({host:identity.appIp,port:8080});for(const s of [client,upstream]){sockets.add(s);s.setTimeout(15000,()=>s.destroy());s.on('error',()=>{});s.on('close',()=>{sockets.delete(s);client.destroy();upstream.destroy();});}client.pipe(upstream);upstream.pipe(client);});
-    await new Promise((resolve,reject)=>{bridge.once('error',reject);bridge.listen(55201,'127.0.0.1',resolve);});
-    const origin='http://127.0.0.1:55201';proxy=new LoopbackProxy(origin);await proxy.listen(55202);
+    const origin='http://127.0.0.1:55201';proxy=new LoopbackProxy(origin,fixedFixtureTransports(origin,identity.appIp));await proxy.listen(55202);
     currentPhase='profile';
     profile=await fs.mkdtemp('/tmp/gameyfin-browser-');
     await fs.mkdir(profile+'/xdg-config',{mode:0o700});await fs.mkdir(profile+'/xdg-cache',{mode:0o700});
@@ -154,7 +152,7 @@ export async function main(argv){
     process.stdout.write(JSON.stringify({loggedOut:true})+'\n');
   }catch(error){failurePhase=currentPhase;failureCounters=await browserFailureCounters();if(failurePhase==='authentication'){if(authStages.includes(driver?.authStage))authStage=driver.authStage;authDiagnostics=driver?.authDiagnostics||null;}if(failurePhase==='chrome-launch'){launchFailureCategory=classifyLaunchFailure(error);launchDiagnostics=launchFailureDiagnostics(error,preflight);}emitFailure(failurePhase);throw new Error('Hosted browser operation failed');}finally{
     currentPhase='cleanup';
-    clearTimeout(timer);process.stdin.destroy();proxy?.close();for(const s of sockets)s.destroy();bridge?.close();
+    clearTimeout(timer);process.stdin.destroy();proxy?.close();
     // Container removal is the independent descendant fence. Never claim the
     // profile clean from browser.close alone; tmpfs is destroyed with container.
     await browser?.close();

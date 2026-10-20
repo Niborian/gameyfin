@@ -46,12 +46,14 @@ execution gate, not a test result.
 
 ## Paired source inputs
 
-Control: `344de32e7939d8223c8e023781b3cb8738610cea`.
-Candidate: `a567d5e6e682fe6236b7908e8b1ef06722584caa`.
+Control: `5a6f51442157fd4bcd1041997fb5560f665f7278`.
+Candidate: `81f85eb4c5c9cfe5e0c4b4cb0b9420ea9e04f798`.
 
 These are the historical control (`792a8aa`) and candidate (`f0c2870`)
-with the identical reviewed #154 authentication-startup lifecycle patch applied
-to each. Both therefore use the same corrected original Gameyfin UI; this is
+with the identical reviewed #154 authentication-startup lifecycle patch and
+single-flight initialization correction applied to each. The control includes
+the exact candidate correction cherry-picked onto its separate backend source.
+Both therefore use the same corrected original Gameyfin UI; this is
 not a comparison of the auth fix against the old UI. The benchmark still
 requires byte-identical UI, configuration, and dependency entries in both
 independently built JARs. Source inspection alone does not establish that build

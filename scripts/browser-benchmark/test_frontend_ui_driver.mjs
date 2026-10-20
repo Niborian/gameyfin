@@ -391,8 +391,8 @@ test('navigation observations classify exact RPC lifecycle and exceptions withou
 });
 
 test('proxy observations accept bounded counters only, never raw denial text',()=>{
- const value={requests:256,active:8,queued:8,peakActive:8,peakQueued:8,sockets:24,reservedSockets:8,peakSockets:32,idleSocketsReclaimed:0,socketRefusals:0,deniedCapacity:1,deniedRequestBudget:0,deniedPolicy:0,deniedDeadline:0,deniedClosed:0};
+ const value={requests:256,active:8,queued:8,peakActive:8,peakQueued:8,sockets:24,reservedSockets:8,peakSockets:32,outboundSockets:0,peakOutboundSockets:8,idleSocketsReclaimed:0,socketRefusals:0,deniedCapacity:1,deniedRequestBudget:0,deniedPolicy:0,deniedDeadline:0,deniedClosed:0};
  assert.deepEqual(safeProxyDiagnostics(value),value);
- for(const bad of [{requests:257},{active:9},{queued:9},{sockets:25},{peakSockets:33},{reservedSockets:9},{idleSocketsReclaimed:257},{socketRefusals:true},{deniedPolicy:true},{raw:'secret'}])assert.throws(()=>safeProxyDiagnostics({...value,...bad}));
+ for(const bad of [{requests:257},{active:9},{queued:9},{sockets:25},{peakSockets:33},{reservedSockets:9},{outboundSockets:1},{outboundSockets:9},{peakOutboundSockets:9},{peakOutboundSockets:true},{idleSocketsReclaimed:257},{socketRefusals:true},{deniedPolicy:true},{raw:'secret'}])assert.throws(()=>safeProxyDiagnostics({...value,...bad}));
  const inherited=Object.assign(Object.create({requests:1}),value);delete inherited.requests;inherited.raw='PRIVATE';assert.throws(()=>safeProxyDiagnostics(inherited));
 });

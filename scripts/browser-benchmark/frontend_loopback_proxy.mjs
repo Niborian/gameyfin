@@ -8,7 +8,7 @@ export class LoopbackProxy {
     if(!Number.isInteger(requestDeadlineMs)||requestDeadlineMs<1||requestDeadlineMs>15000)throw new Error('Request deadline boundary');
     this.origin=origin;this.dial=dial;this.request=request;this.sockets=new Set();this.closed=false;this.active=0;this.count=0;this.bytes=0;this.budgetExceeded=false;this.fixtureConnectDenied=0;this.upgrades=0;
     this.queue=[];this.requestDeadlineMs=requestDeadlineMs;this.peakActive=0;this.peakQueued=0;this.denials=Object.fromEntries(['capacity','request-budget','policy','deadline','closed'].map(k=>[k,0]));
-    this.inbound=new Map();this.httpEntries=new Set();this.reservedSockets=0;this.peakSockets=0;this.idleSocketsReclaimed=0;this.socketRefusals=0;
+    this.inbound=new Map();this.httpEntries=new Set();this.outboundSockets=new Set();this.reservedSockets=0;this.peakSockets=0;this.peakOutboundSockets=0;this.idleSocketsReclaimed=0;this.socketRefusals=0;
     this.server=http.createServer({maxHeaderSize:16384},(req,res)=>this.handle(req,res));
     this.server.requestTimeout=15000;this.server.headersTimeout=15000;
     this.server.on('connection',s=>this.accept(s));
@@ -18,7 +18,9 @@ export class LoopbackProxy {
     this.timer=setTimeout(()=>this.close(),deadlineMs);
   }
   socketRoom(){return this.sockets.size+this.reservedSockets<32;}
-  track(socket){if(this.closed||!this.socketRoom()){this.socketRefusals=Math.min(256,this.socketRefusals+1);socket.destroy();return;}this.sockets.add(socket);this.peakSockets=Math.max(this.peakSockets,this.sockets.size+this.reservedSockets);socket.setTimeout(15000,()=>socket.destroy());socket.on('close',()=>{this.sockets.delete(socket);this.drain();});socket.on('error',()=>{});return socket;}
+  outboundRoom(){return this.socketRoom()&&this.outboundSockets.size+this.reservedSockets<8;}
+  track(socket,outbound=false,closingAllowed=false){if(this.closed&&!closingAllowed||!this.socketRoom()||outbound&&this.outboundSockets.size+this.reservedSockets>=8){this.socketRefusals=Math.min(256,this.socketRefusals+1);socket.destroy();return;}this.sockets.add(socket);if(outbound)this.outboundSockets.add(socket);this.peakSockets=Math.max(this.peakSockets,this.sockets.size+this.reservedSockets);this.peakOutboundSockets=Math.max(this.peakOutboundSockets,this.outboundSockets.size+this.reservedSockets);socket.setTimeout(15000,()=>socket.destroy());socket.on('close',()=>{this.sockets.delete(socket);this.outboundSockets.delete(socket);this.drain();});socket.on('error',()=>{});return socket;}
+  assignOutbound(entry,socket){const reserved=entry.reserved;this.releaseReservation(entry);if(!reserved||socket.closed===true){socket.destroy();return;}const tracked=this.track(socket,true,true);if(this.closed){socket.destroy();return;}return tracked;}
   accept(socket){if(!this.track(socket))return;this.inbound.set(socket,{busy:0,started:false,tunnel:false,retiring:false});socket.on('close',()=>this.inbound.delete(socket));}
   markHttp(req,res){const state=this.inbound.get(req.socket);if(!state)return;state.busy++;state.started=true;let ended=false;res.once('close',()=>{if(!ended){ended=true;state.busy--;}});}
   markTunnel(socket){const state=this.inbound.get(socket);if(state)state.tunnel=true;}
@@ -33,10 +35,10 @@ export class LoopbackProxy {
   rejection(reason){const error=new Error('Proxy bound');error.proxyReason=reason;return error;}
   recordDenial(reason){if(!Object.hasOwn(this.denials,reason))reason='policy';this.denials[reason]=Math.min(256,this.denials[reason]+1);return reason;}
   deny(res,reason){reason=this.recordDenial(reason);if(!res.destroyed&&!res.headersSent){res.writeHead(403,{'X-Gameyfin-Fixture-Proxy-Deny':reason});res.end();}else res.destroy();}
-  diagnostics(){return {requests:this.count,active:this.active,queued:this.queue.length,peakActive:this.peakActive,peakQueued:this.peakQueued,sockets:this.sockets.size,reservedSockets:this.reservedSockets,peakSockets:this.peakSockets,idleSocketsReclaimed:this.idleSocketsReclaimed,socketRefusals:this.socketRefusals,...Object.fromEntries(Object.entries(this.denials).map(([k,v])=>['denied'+k.split('-').map(x=>x[0].toUpperCase()+x.slice(1)).join(''),v]))};}
+  diagnostics(){return {requests:this.count,active:this.active,queued:this.queue.length,peakActive:this.peakActive,peakQueued:this.peakQueued,sockets:this.sockets.size,reservedSockets:this.reservedSockets,peakSockets:this.peakSockets,outboundSockets:this.outboundSockets.size,peakOutboundSockets:this.peakOutboundSockets,idleSocketsReclaimed:this.idleSocketsReclaimed,socketRefusals:this.socketRefusals,...Object.fromEntries(Object.entries(this.denials).map(([k,v])=>['denied'+k.split('-').map(x=>x[0].toUpperCase()+x.slice(1)).join(''),v]))};}
   entered(){this.active++;this.peakActive=Math.max(this.peakActive,this.active);}
   released(){this.active--;this.drain();}
-  drain(){while(!this.closed&&this.active<8&&this.queue.length){if(!this.socketRoom()){this.reclaimIdle();return;}const entry=this.queue.shift();entry.queued=false;if(entry.res.destroyed||entry.req.aborted||performance.now()>=entry.deadline){entry.finish('deadline');continue;}this.forward(entry);}}
+  drain(){while(!this.closed&&this.active<8&&this.queue.length){if(!this.socketRoom()){this.reclaimIdle();return;}if(!this.outboundRoom())return;const entry=this.queue.shift();entry.queued=false;if(entry.res.destroyed||entry.req.aborted||performance.now()>=entry.deadline){entry.finish('deadline');continue;}this.forward(entry);}}
   target(req){
     if(this.closed)throw this.rejection('closed');if(this.count>=256)throw this.rejection('request-budget');this.count++;
     try{if(req.rawHeaders.filter((v,i)=>i%2===0&&v.toLowerCase()==='host').length!==1)throw new Error();return fixtureTarget({method:req.method,url:req.url,host:req.headers.host,upgrade:req.headers.upgrade},this.origin);}catch{throw this.rejection('policy');}
@@ -46,11 +48,12 @@ export class LoopbackProxy {
     this.markTunnel(socket);
     let target;try{
       if(this.closed)throw this.rejection('closed');if(this.count>=256)throw this.rejection('request-budget');this.count++;
-      if(this.active>=8)throw this.rejection('capacity');if(head.length>16384||req.rawHeaders.filter((v,i)=>i%2===0&&v.toLowerCase()==='host').length!==1)throw this.rejection('policy');
+      if(this.active>=8||!this.outboundRoom())throw this.rejection('capacity');if(head.length>16384||req.rawHeaders.filter((v,i)=>i%2===0&&v.toLowerCase()==='host').length!==1)throw this.rejection('policy');
       target=fixtureConnectTarget({method:req.method,url:req.url,host:req.headers.host},this.origin);
     }catch(error){this.recordDenial(error.proxyReason);if(req.url===new URL(this.origin).host)this.fixtureConnectDenied++;socket.destroy();return;}
     this.entered();let ended=false;const done=()=>{if(!ended){ended=true;this.released();}};
-    let upstream;try{upstream=this.track(this.dial(target));}catch{socket.destroy();done();return;}
+    const reservation={reserved:true};this.reservedSockets++;this.peakSockets=Math.max(this.peakSockets,this.sockets.size+this.reservedSockets);this.peakOutboundSockets=Math.max(this.peakOutboundSockets,this.outboundSockets.size+this.reservedSockets);
+    let upstream;try{upstream=this.assignOutbound(reservation,this.dial(target));}catch{this.releaseReservation(reservation);socket.destroy();done();return;}
     if(!upstream){this.recordDenial(this.closed?'closed':'capacity');socket.destroy();done();return;}upstream.setTimeout(15000,()=>upstream.destroy());
     upstream.on('connect',()=>{socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');if(head.length){if(!this.consume(head.length)){upstream.destroy();return;}upstream.write(head);}socket.pipe(upstream);upstream.pipe(socket);});
     let total=head.length;for(const s of [socket,upstream]){s.on('data',chunk=>{total+=chunk.length;if(!this.consume(chunk.length)||total>16*1024*1024){socket.destroy();upstream.destroy();}});s.on('close',()=>{socket.destroy();upstream.destroy();done();});}
@@ -64,11 +67,11 @@ export class LoopbackProxy {
     this.httpEntries.add(entry);
     entry.timer=setTimeout(()=>entry.finish('deadline'),Math.max(1,deadline-performance.now()));
     res.on('close',()=>entry.finish(null));req.on('aborted',()=>{entry.finish(null);res.destroy();});
-    if(this.active>=8||!this.socketRoom()||this.queue.length){if(this.queue.length>=8){entry.finish('capacity');return;}entry.queued=true;req.pause();this.queue.push(entry);this.peakQueued=Math.max(this.peakQueued,this.queue.length);this.drain();return;}
+    if(this.active>=8||!this.outboundRoom()||this.queue.length){if(this.queue.length>=8){entry.finish('capacity');return;}entry.queued=true;req.pause();this.queue.push(entry);this.peakQueued=Math.max(this.peakQueued,this.queue.length);this.drain();return;}
     this.forward(entry);
   }
   forward(entry){
-    const {req,res,target}=entry;if(entry.ended)return;if(!this.socketRoom()){entry.finish('capacity');return;}entry.reserved=true;this.reservedSockets++;this.peakSockets=Math.max(this.peakSockets,this.sockets.size+this.reservedSockets);entry.started=true;this.entered();
+    const {req,res,target}=entry;if(entry.ended)return;if(!this.outboundRoom()){entry.finish('capacity');return;}entry.reserved=true;this.reservedSockets++;this.peakSockets=Math.max(this.peakSockets,this.sockets.size+this.reservedSockets);this.peakOutboundSockets=Math.max(this.peakOutboundSockets,this.outboundSockets.size+this.reservedSockets);entry.started=true;this.entered();
     // Target is always literal loopback; no caller hostname ever enters DNS/dial.
     let upstream;try{upstream=this.request({...target,method:req.method,headers:this.headers(req),agent:false},reply=>{
       if(entry.ended||res.destroyed){reply.destroy?.();return;}
@@ -80,7 +83,7 @@ export class LoopbackProxy {
     });}catch{if(!res.headersSent)res.writeHead(502);res.end();entry.finish(null);return;}
     entry.upstream=upstream;
     upstream.on('close',()=>{this.releaseReservation(entry);this.drain();});
-    upstream.on('socket',s=>{this.releaseReservation(entry);if(entry.ended){if(!this.closed)this.track(s);s.destroy();return;}if(!this.track(s))entry.finish(this.closed?'closed':'capacity');});
+    upstream.on('socket',s=>{const tracked=this.assignOutbound(entry,s);if(entry.ended){s.destroy();return;}if(!tracked)entry.finish(this.closed?'closed':'capacity');});
     if(entry.ended){upstream.destroy();return;}
     upstream.setTimeout(Math.max(1,Math.ceil(entry.deadline-performance.now())),()=>entry.finish('deadline'));
     upstream.on('error',()=>{if(entry.ended)return;if(!res.headersSent&&!res.destroyed)res.writeHead(502);res.end();entry.finish(null);});let bytes=0;
@@ -90,9 +93,10 @@ export class LoopbackProxy {
   upgrade(req,socket,head){
     this.markTunnel(socket);
     this.upgrades++;
-    let target;try{target=this.target(req);if(!target.websocket||head.length>16384)throw this.rejection('policy');if(this.active>=8)throw this.rejection('capacity');}catch(error){this.recordDenial(error.proxyReason);socket.destroy();return;}
+    let target;try{target=this.target(req);if(!target.websocket||head.length>16384)throw this.rejection('policy');if(this.active>=8||!this.outboundRoom())throw this.rejection('capacity');}catch(error){this.recordDenial(error.proxyReason);socket.destroy();return;}
     this.entered();let ended=false;const done=()=>{if(!ended){ended=true;this.released();}};
-    let upstream;try{upstream=this.track(this.dial({host:'127.0.0.1',port:target.port}));}catch{socket.destroy();done();return;}
+    const reservation={reserved:true};this.reservedSockets++;this.peakSockets=Math.max(this.peakSockets,this.sockets.size+this.reservedSockets);this.peakOutboundSockets=Math.max(this.peakOutboundSockets,this.outboundSockets.size+this.reservedSockets);
+    let upstream;try{upstream=this.assignOutbound(reservation,this.dial({host:'127.0.0.1',port:target.port}));}catch{this.releaseReservation(reservation);socket.destroy();done();return;}
     if(!upstream){this.recordDenial(this.closed?'closed':'capacity');socket.destroy();done();return;}
     upstream.setTimeout(15000,()=>upstream.destroy());
     upstream.on('connect',()=>{

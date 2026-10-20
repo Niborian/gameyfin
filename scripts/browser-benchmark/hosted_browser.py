@@ -31,11 +31,17 @@ REQUIRED = {'domContentLoadedMs','loadMs','routeContentReadyMs','coverDecodedMs'
 def validate_navigation_progress(value):
     if not isinstance(value,dict) or set(value)!={'navigationProgress'}:raise ValueError('Browser progress schema')
     row=value['navigationProgress']
-    if not isinstance(row,dict) or set(row)!={'routeIndex','stage','readiness'}:raise ValueError('Browser progress schema')
+    if not isinstance(row,dict) or set(row) not in ({'routeIndex','stage','readiness'},{'routeIndex','stage','readiness','observation'}):raise ValueError('Browser progress schema')
     if type(row['routeIndex']) is not int or not 1<=row['routeIndex']<=3 or row['stage'] not in ('navigate','content','cover-body','complete'):raise ValueError('Browser progress value')
     readiness=row['readiness']
     keys={'pathMatches','contentReady','coverTitlePresent','coverPresent','coverComplete','dimensionsMatch'}
     if readiness is not None and (not isinstance(readiness,dict) or set(readiness)!=keys or any(type(v) is not bool for v in readiness.values())):raise ValueError('Browser readiness schema')
+    if 'observation' in row:
+        observation=row['observation'];flags={'domRootPresent','navPresent','signInPresent','staticErrorViewPresent','uncaughtExceptionSeen','truncated'};rpcs={'library','game','profile'}
+        if not isinstance(observation,dict) or set(observation)!=flags|rpcs or any(type(observation[k]) is not bool for k in flags):raise ValueError('Browser navigation observation schema')
+        for kind in rpcs:
+            rpc=observation[kind]
+            if not isinstance(rpc,dict) or set(rpc)!={'status','completion'} or rpc['status'] not in ('not-observed','1xx','2xx','3xx','4xx','5xx','invalid') or rpc['completion'] not in ('not-observed','pending','finished','failed'):raise ValueError('Browser navigation RPC enum')
     return value
 
 def validate_auth_ready(value):
@@ -230,7 +236,10 @@ def validate_failure_receipt(value):
     if 'authDiagnostics' in value:
         data=value['authDiagnostics']
         keys={'loginPostObserved','loginPostStatus','submittedUsernameLengthMatches','submittedPasswordLengthMatches','readiness','cdpFailure','cdpMethod','loginResultHeader','userInfoStatus','profile','userInfoIdentity','cookieDiagnostics'}
-        if value['phase']!='authentication' or not isinstance(data,dict) or set(data)!=keys or type(data['loginPostObserved']) is not bool:raise ValueError('Auth diagnostics schema')
+        if value['phase']!='authentication' or not isinstance(data,dict) or set(data) not in (keys,keys|{'interceptionDiagnostics'}) or type(data['loginPostObserved']) is not bool:raise ValueError('Auth diagnostics schema')
+        if 'interceptionDiagnostics' in data:
+            diagnostic=data['interceptionDiagnostics'];counters={'pausedEvents','duplicatePausedIds','canceledNetworkEvents'}
+            if not isinstance(diagnostic,dict) or set(diagnostic)!=counters|{'failedOperation','failedRequestCanceled','truncated'} or diagnostic['failedOperation'] not in ('none','continue','deny') or (diagnostic['failedRequestCanceled'] is not None and type(diagnostic['failedRequestCanceled']) is not bool) or type(diagnostic['truncated']) is not bool or any(type(diagnostic[k]) is not int or not 0<=diagnostic[k]<=256 for k in counters):raise ValueError('Auth interception diagnostic boundary')
         if data['loginPostStatus'] is not None and (type(data['loginPostStatus']) is not int or not 100<=data['loginPostStatus']<=599):raise ValueError('Auth diagnostic numeric boundary')
         if data['userInfoStatus'] is not None and (type(data['userInfoStatus']) is not int or not 100<=data['userInfoStatus']<=599):raise ValueError('Auth user-info status boundary')
         if data['loginResultHeader'] not in ('success','failure','missing','other'):raise ValueError('Auth result enum')

@@ -2,8 +2,8 @@ import test from 'node:test';import assert from 'node:assert/strict';
 import {validateArguments,renderingConfiguration,browserResources,failureReceipt,launchEnvironment,classifyLaunchFailure,launchFailureDiagnostics,observeExecutable,browserFailureCounters,classifyCdpFailure,recordFirstAuthCdpFailure,authenticationReady,observedNetworkEvents} from './browser_entry.mjs';
 
 test('observational cookie events are subscribed without requesting cookie APIs',()=>{
- assert.deepEqual(observedNetworkEvents,['Fetch.requestPaused','Network.requestWillBeSent','Network.responseReceived','Network.loadingFinished','Network.loadingFailed','Network.requestWillBeSentExtraInfo','Network.responseReceivedExtraInfo']);
- assert.equal(new Set(observedNetworkEvents).size,7);
+ assert.deepEqual(observedNetworkEvents,['Fetch.requestPaused','Network.requestWillBeSent','Network.responseReceived','Network.loadingFinished','Network.loadingFailed','Network.requestWillBeSentExtraInfo','Network.responseReceivedExtraInfo','Runtime.exceptionThrown']);
+ assert.equal(new Set(observedNetworkEvents).size,8);
 });
 
 test('diagnostic profile proof preserves blocking automatic-redirect false',()=>{

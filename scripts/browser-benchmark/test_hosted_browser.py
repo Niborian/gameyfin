@@ -28,6 +28,9 @@ process.stdout.write(JSON.stringify(rows));
             self.assertEqual(row['authDiagnostics']['cdpFailure'],'interception-invalid-id')
             self.assertEqual(row['authDiagnostics']['cdpMethod'],'request-interception')
             self.assertEqual(hosted_browser.validate_failure_receipt(row),row)
+            diagnostic=row['authDiagnostics']['interceptionDiagnostics']
+            for mutation in ({'failedOperation':'raw-secret'},{'failedRequestCanceled':1},{'failedRequestCanceled':'raw-secret'},{'pausedEvents':257},{'duplicatePausedIds':-1},{'canceledNetworkEvents':True},{'truncated':1},{'rawId':'secret'}):
+                with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,'authDiagnostics':{**row['authDiagnostics'],'interceptionDiagnostics':{**diagnostic,**mutation}}})
             for mutation in ({'cdpFailure':'unknown-enum'},{'cdpFailure':'synthetic-secret-sentinel'},{'cdpMethod':'runtime-evaluate'}):
                 with self.assertRaises(ValueError):
                     hosted_browser.validate_failure_receipt({**row,'authDiagnostics':{**row['authDiagnostics'],**mutation}})
@@ -75,6 +78,18 @@ process.stdout.write(JSON.stringify(rows));
         self.assertEqual(hosted_browser.validate_navigation_progress({'navigationProgress':row}),{'navigationProgress':row})
         for bad in ({**row,'url':'secret'},{**row,'routeIndex':True},{**row,'stage':'secret'},{**row,'readiness':{**row['readiness'],'pathMatches':1}}):
             with self.assertRaises(ValueError):hosted_browser.validate_navigation_progress({'navigationProgress':bad})
+    def test_node_navigation_observation_roundtrip_is_strict_and_nonsecret(self):
+        program="""
+import {navigationProgress} from './frontend_ui_driver.mjs';
+const observation={domRootPresent:true,navPresent:true,signInPresent:false,staticErrorViewPresent:false,uncaughtExceptionSeen:true,truncated:false,...Object.fromEntries(['library','game','profile'].map(k=>[k,{status:'2xx',completion:'finished'}]))};
+process.stdout.write(JSON.stringify({navigationProgress:navigationProgress(2,'content',null,observation)}));
+"""
+        result=subprocess.run(['node','--input-type=module','-e',program],cwd=Path(__file__).resolve().parent,capture_output=True,timeout=10,check=True)
+        self.assertLess(len(result.stdout),4096);row=json.loads(result.stdout)
+        self.assertEqual(hosted_browser.validate_navigation_progress(row),row)
+        progress=row['navigationProgress'];observation=progress['observation']
+        for mutation in ({'domRootPresent':1},{'uncaughtExceptionSeen':'secret'},{'raw':'secret'},{'game':{'status':403,'completion':'finished'}},{'game':{'status':'2xx','completion':'secret'}}):
+            with self.assertRaises(ValueError):hosted_browser.validate_navigation_progress({'navigationProgress':{**progress,'observation':{**observation,**mutation}}})
     def test_progress_preserves_receipt_deadline_and_partial_evidence(self):
         value=HostedBrowser.__new__(HostedBrowser);value.process=Mock();value.diagnostic_output=None
         value.record_navigation_progress=Mock()

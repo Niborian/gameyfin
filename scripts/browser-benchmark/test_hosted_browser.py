@@ -116,7 +116,7 @@ process.stdout.write(JSON.stringify({navigationProgress:{...navigationProgress(2
             with self.assertRaises(ValueError):hosted_browser.validate_navigation_progress({'navigationProgress':{**progress,'observation':{**observation,**mutation}}})
         for mutation in ({'httpStatus':True},{'httpStatus':'secret'},{'proxyDeny':'secret'},{'raw':'secret'}):
             with self.assertRaises(ValueError):hosted_browser.validate_navigation_progress({'navigationProgress':{**progress,'observation':{**observation,'game':{**observation['game'],**mutation}}}})
-        for mutation in ({'active':9},{'queued':9},{'requests':257},{'sockets':33},{'reservedSockets':9},{'sockets':32,'reservedSockets':1},{'idleSocketsReclaimed':257},{'socketRefusals':True},{'deniedPolicy':True},{'raw':'secret'}):
+        for mutation in ({'active':9},{'queued':9},{'requests':257},{'sockets':33},{'reservedSockets':9},{'sockets':32,'reservedSockets':1},{'outboundSockets':9},{'outboundSockets':8,'reservedSockets':1},{'peakOutboundSockets':9},{'outboundSockets':True},{'idleSocketsReclaimed':257},{'socketRefusals':True},{'deniedPolicy':True},{'raw':'secret'}):
             with self.assertRaises(ValueError):hosted_browser.validate_navigation_progress({'navigationProgress':{**progress,'proxyDiagnostics':{**progress['proxyDiagnostics'],**mutation}}})
     def test_progress_preserves_receipt_deadline_and_partial_evidence(self):
         value=HostedBrowser.__new__(HostedBrowser);value.process=Mock();value.diagnostic_output=None

@@ -32,7 +32,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_exact_pair_and_recorded_build_input(self):
         text=(ROOT/'.github/workflows/browser-scan-benchmark.yml').read_text()
-        for required in ['344de32e7939d8223c8e023781b3cb8738610cea','a567d5e6e682fe6236b7908e8b1ef06722584caa','2026-10-11T18:51:55Z','fixed_build_time.init.gradle','source-pair.json','--no-daemon --max-workers=2']:
+        for required in ['5a6f51442157fd4bcd1041997fb5560f665f7278','81f85eb4c5c9cfe5e0c4b4cb0b9420ea9e04f798','2026-10-11T18:51:55Z','fixed_build_time.init.gradle','source-pair.json','--no-daemon --max-workers=2']:
             self.assertIn(required,text)
         script=(ROOT/'scripts/browser-benchmark/fixed_build_time.init.gradle').read_text()
         self.assertIn('task.getProperties().getTime().set(fixed)',script)

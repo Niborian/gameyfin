@@ -15,8 +15,8 @@ export function navigationObservation(value){
   return {...Object.fromEntries(flags.map(k=>[k,value[k]])),...Object.fromEntries(rpcs.map(k=>[k,{status:value[k].status,completion:value[k].completion,...(Object.hasOwn(value[k],'httpStatus')?{httpStatus:value[k].httpStatus,proxyDeny:value[k].proxyDeny}:{})}]))};
 }
 export function safeProxyDiagnostics(value){
-  const keys=['requests','active','queued','peakActive','peakQueued','sockets','reservedSockets','peakSockets','idleSocketsReclaimed','socketRefusals','deniedCapacity','deniedRequestBudget','deniedPolicy','deniedDeadline','deniedClosed'];
-  if(!value||typeof value!=='object'||Object.keys(value).length!==keys.length||!keys.every(k=>Object.hasOwn(value,k)&&Number.isInteger(value[k])&&value[k]>=0&&value[k]<=(['active','queued','peakActive','peakQueued','reservedSockets'].includes(k)?8:['sockets','peakSockets'].includes(k)?32:256))||value.sockets+value.reservedSockets>32)throw new Error('Proxy diagnostic boundary');
+  const keys=['requests','active','queued','peakActive','peakQueued','sockets','reservedSockets','peakSockets','outboundSockets','peakOutboundSockets','idleSocketsReclaimed','socketRefusals','deniedCapacity','deniedRequestBudget','deniedPolicy','deniedDeadline','deniedClosed'];
+  if(!value||typeof value!=='object'||Object.keys(value).length!==keys.length||!keys.every(k=>Object.hasOwn(value,k)&&Number.isInteger(value[k])&&value[k]>=0&&value[k]<=(['active','queued','peakActive','peakQueued','reservedSockets','outboundSockets','peakOutboundSockets'].includes(k)?8:['sockets','peakSockets'].includes(k)?32:256))||value.sockets+value.reservedSockets>32||value.outboundSockets+value.reservedSockets>8)throw new Error('Proxy diagnostic boundary');
   return Object.fromEntries(keys.map(k=>[k,value[k]]));
 }
 export function observedRouteExpression(path,coverId){

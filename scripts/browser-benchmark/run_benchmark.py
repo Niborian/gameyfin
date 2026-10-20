@@ -7,8 +7,8 @@ from hosted_browser import HostedBrowser
 from owned_app import OwnedApp,command,hosted_only
 from throughput_case import balanced_pairs,metrics,run_case
 
-CONTROL='344de32e7939d8223c8e023781b3cb8738610cea'
-CANDIDATE='a567d5e6e682fe6236b7908e8b1ef06722584caa'
+CONTROL='5a6f51442157fd4bcd1041997fb5560f665f7278'
+CANDIDATE='81f85eb4c5c9cfe5e0c4b4cb0b9420ea9e04f798'
 
 def responsiveness_accepted(reports,waiting_authentication):
     return (len(reports)==6 and all(row['report'].get('cleanAcceptance') is True for row in reports)

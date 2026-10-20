@@ -1,10 +1,20 @@
 // Injectable/mock-tested original-UI adapter only; no SSH/browser/transport creation.
 import {allowRequest,validateLoginCredentials,loginFocusExpression,routeExpression,sanitizeMetrics,coverHashMatches,RUNTIME_ENABLED} from './frontend_cdp_measurement.mjs';
-export function navigationProgress(routeIndex,stage,readiness=null){
+export function navigationProgress(routeIndex,stage,readiness=null,observation=null){
   if(!Number.isInteger(routeIndex)||routeIndex<1||routeIndex>3||!['navigate','content','cover-body','complete'].includes(stage))throw new Error('Navigation progress boundary');
   const keys=['pathMatches','contentReady','coverTitlePresent','coverPresent','coverComplete','dimensionsMatch'];
   if(readiness!==null&&(typeof readiness!=='object'||Array.isArray(readiness)||Object.keys(readiness).length!==keys.length||!keys.every(key=>typeof readiness[key]==='boolean')))throw new Error('Readiness boolean boundary');
-  return {routeIndex,stage,readiness:readiness===null?null:Object.fromEntries(keys.map(key=>[key,readiness[key]]))};
+  return {routeIndex,stage,readiness:readiness===null?null:Object.fromEntries(keys.map(key=>[key,readiness[key]])),...(observation===null?{}:{observation:navigationObservation(observation)})};
+}
+export function navigationObservation(value){
+  const flags=['domRootPresent','navPresent','signInPresent','staticErrorViewPresent','uncaughtExceptionSeen','truncated'];
+  const rpcs=['library','game','profile'];
+  if(!value||typeof value!=='object'||Object.keys(value).length!==9||!flags.every(k=>typeof value[k]==='boolean')||!rpcs.every(k=>value[k]&&Object.keys(value[k]).length===2&&['not-observed','1xx','2xx','3xx','4xx','5xx','invalid'].includes(value[k].status)&&['not-observed','pending','finished','failed'].includes(value[k].completion)))throw new Error('Navigation observation boundary');
+  return {...Object.fromEntries(flags.map(k=>[k,value[k]])),...Object.fromEntries(rpcs.map(k=>[k,{status:value[k].status,completion:value[k].completion}]))};
+}
+export function observedRouteExpression(path,coverId){
+  // Shell/error observations never substitute for route content or decoded cover.
+  return `(async()=>{const value=await ${routeExpression(path,coverId)};value.observation={domRootPresent:!!document.querySelector('#outlet'),navPresent:!!document.querySelector('nav'),signInPresent:!!document.querySelector('nav button.gradient-primary:not(.size-8)'),staticErrorViewPresent:[...document.querySelectorAll('h1')].some(e=>e.textContent.trim().startsWith('404 – '))};return value;})()`;
 }
 export function authReadiness(value){
   const flags=['originMatches','loginPath','usernamePresent','passwordPresent','submitPresent','submitDisabled','invalidCredentialsDisplayed'];
@@ -22,7 +32,7 @@ export function profileDiagnostic(value){
 }
 export function safeAuthDiagnostics(value){
   const keys=['loginPostObserved','loginPostStatus','submittedUsernameLengthMatches','submittedPasswordLengthMatches','cdpFailure','cdpMethod','loginResultHeader','userInfoStatus','userInfoIdentity','cookieDiagnostics','readiness','profile'];
-  if(!value||typeof value!=='object'||Object.keys(value).length!==keys.length||!keys.every(key=>Object.hasOwn(value,key))||typeof value.loginPostObserved!=='boolean')throw new Error('Auth diagnostic schema');
+  if(!value||typeof value!=='object'||Object.keys(value).length!==keys.length+(Object.hasOwn(value,'interceptionDiagnostics')?1:0)||!keys.every(key=>Object.hasOwn(value,key))||typeof value.loginPostObserved!=='boolean')throw new Error('Auth diagnostic schema');
   if(value.loginPostStatus!==null&&(!Number.isInteger(value.loginPostStatus)||value.loginPostStatus<100||value.loginPostStatus>599))throw new Error('Auth numeric boundary');
   for(const key of ['submittedUsernameLengthMatches','submittedPasswordLengthMatches'])if(value[key]!==null&&typeof value[key]!=='boolean')throw new Error('Auth length-match boundary');
   if(!['none','interception-invalid-id','execution-context-destroyed','execution-context-missing','target-closed','protocol-timeout','other'].includes(value.cdpFailure))throw new Error('Auth CDP failure boundary');
@@ -30,7 +40,12 @@ export function safeAuthDiagnostics(value){
   if(!['success','failure','missing','other'].includes(value.loginResultHeader))throw new Error('Auth protocol header boundary');
   if(value.userInfoStatus!==null&&(!Number.isInteger(value.userInfoStatus)||value.userInfoStatus<100||value.userInfoStatus>599))throw new Error('Auth user-info status boundary');
   if(!['not-observed','null','fixture-user','other','invalid','failed'].includes(value.userInfoIdentity))throw new Error('Auth user-info identity boundary');
-  return {...Object.fromEntries(keys.slice(0,9).map(key=>[key,value[key]])),cookieDiagnostics:cookieDiagnostics(value.cookieDiagnostics),readiness:value.readiness===null?null:authReadiness(value.readiness),profile:profileDiagnostic(value.profile)};
+  return {...Object.fromEntries(keys.slice(0,9).map(key=>[key,value[key]])),cookieDiagnostics:cookieDiagnostics(value.cookieDiagnostics),readiness:value.readiness===null?null:authReadiness(value.readiness),profile:profileDiagnostic(value.profile),...(Object.hasOwn(value,'interceptionDiagnostics')?{interceptionDiagnostics:interceptionDiagnostics(value.interceptionDiagnostics)}:{})};
+}
+export function interceptionDiagnostics(value){
+  const counters=['pausedEvents','duplicatePausedIds','canceledNetworkEvents'];
+  if(!value||typeof value!=='object'||Object.keys(value).length!==6||!['none','continue','deny'].includes(value.failedOperation)||!(value.failedRequestCanceled===null||typeof value.failedRequestCanceled==='boolean')||typeof value.truncated!=='boolean'||!counters.every(k=>Number.isInteger(value[k])&&value[k]>=0&&value[k]<=256))throw new Error('Interception diagnostic boundary');
+  return {failedOperation:value.failedOperation,failedRequestCanceled:value.failedRequestCanceled,...Object.fromEntries(counters.map(k=>[k,value[k]])),truncated:value.truncated};
 }
 const cookieFlags=['loginSetCookieSeen','loginSessionCookieSetSeen','loginSessionCookieBlocked','profileCookieHeaderSeen','profileSessionCookieAssociated','profileSessionCookieBlocked','loginSubmittedWithPendingRpc','otherSessionCookieSetAfterLogin'];
 export function cookieDiagnostics(value){
@@ -146,16 +161,36 @@ export class FixtureUiDriver {
     if(typeof onProgress!=='function')throw new Error('Progress callback boundary');this.onProgress=onProgress;
     this.loginRequestIds=new Set();this.userInfoRequestIds=new Set();this.postLoginUserInfoIds=new Set();this.userInfoBodyRequestId=null;this.userInfoBodyAttempted=false;this.authDiagnostics={loginPostObserved:false,loginPostStatus:null,submittedUsernameLengthMatches:null,submittedPasswordLengthMatches:null,cdpFailure:'none',cdpMethod:'none',loginResultHeader:'missing',userInfoStatus:null,userInfoIdentity:'not-observed',cookieDiagnostics:Object.fromEntries(cookieFlags.map(key=>[key,null])),readiness:null,profile:{stage:'not-started',readiness:null}};
     this.cookieObservation=new CookieObservation(this.authDiagnostics.cookieDiagnostics);
+    // IDs stay in bounded process memory only; receipts contain counts, never IDs.
+    this.pausedIds=new Set();this.canceledNetworkIds=new Set();this.authDiagnostics.interceptionDiagnostics={failedOperation:'none',failedRequestCanceled:null,pausedEvents:0,duplicatePausedIds:0,canceledNetworkEvents:0,truncated:false};
+    this.navigationRequests=new Map();this.navigationLast=new Map();this.navigationRequestCount=0;this.navigationState=null;
     cdp.onEvent=(method,params)=>this.event(method,params);
   }
   event(method,params){
+    if(this.navigationState){
+      if(method==='Runtime.exceptionThrown')this.navigationState.uncaughtExceptionSeen=true;
+      if(method==='Network.requestWillBeSent'){
+        try{const u=new URL(params.request?.url);const kind=u.origin===this.origin&&params.request?.method==='POST'?({'/connect/LibraryEndpoint/getAll':'library','/connect/GameEndpoint/getAll':'game','/connect/UserEndpoint/getUserInfo':'profile'})[u.pathname]:null;
+          if(kind){if(typeof params.requestId==='string'&&params.requestId.length<=256&&this.navigationRequestCount<32){this.navigationRequestCount++;this.navigationRequests.set(params.requestId,kind);this.navigationLast.set(kind,params.requestId);this.navigationState[kind]={status:'not-observed',completion:'pending'};}else this.navigationState.truncated=true;}
+        }catch{}
+      }
+      const kind=this.navigationRequests.get(params.requestId);
+      // Per family, report the latest observed request, not an older response race.
+      if(kind&&this.navigationLast.get(kind)===params.requestId&&method==='Network.responseReceived'){const status=params.response?.status;this.navigationState[kind].status=Number.isInteger(status)&&status>=100&&status<=599?Math.floor(status/100)+'xx':'invalid';}
+      if(kind&&['Network.loadingFinished','Network.loadingFailed'].includes(method)){if(this.navigationLast.get(kind)===params.requestId)this.navigationState[kind].completion=method==='Network.loadingFinished'?'finished':'failed';this.navigationRequests.delete(params.requestId);}
+    }
     if(method==='Network.requestWillBeSentExtraInfo'||method==='Network.responseReceivedExtraInfo'){
       this.cookieObservation.extra(method==='Network.requestWillBeSentExtraInfo'?'request':'response',params);
     }else if(method==='Fetch.requestPaused'){
+      const diagnostic=this.authDiagnostics.interceptionDiagnostics;
+      if(diagnostic.pausedEvents<256)diagnostic.pausedEvents++;else diagnostic.truncated=true;
+      const id=params.requestId;
+      if(typeof id==='string'&&id.length<=256){if(this.pausedIds.has(id)){if(diagnostic.duplicatePausedIds<256)diagnostic.duplicatePausedIds++;else diagnostic.truncated=true;}else if(this.pausedIds.size<256)this.pausedIds.add(id);else diagnostic.truncated=true;}else diagnostic.truncated=true;
       const permitted=allowRequest(params.request?.url||'',this.origin);
       try{const u=new URL(params.request?.url);if(u.origin===this.origin&&u.pathname==='/login'&&params.request.method==='POST')this.authDiagnostics.loginPostObserved=true;}catch{}
       // Never retain headers/postData/cookies/console bodies in evidence.
-      this.request(permitted?'Fetch.continueRequest':'Fetch.failRequest',permitted?{requestId:params.requestId}:{requestId:params.requestId,errorReason:'BlockedByClient'}).catch(()=>{this.failure=true;});
+      const networkId=typeof params.networkId==='string'&&params.networkId.length<=256?params.networkId:null;
+      this.request(permitted?'Fetch.continueRequest':'Fetch.failRequest',permitted?{requestId:params.requestId}:{requestId:params.requestId,errorReason:'BlockedByClient'}).catch(()=>{if(diagnostic.failedOperation==='none'){diagnostic.failedOperation=permitted?'continue':'deny';diagnostic.failedRequestCanceled=networkId!==null&&this.canceledNetworkIds.has(networkId)?true:null;}this.failure=true;});
     }else if(method==='Network.requestWillBeSent'){
       let cookieKind=null,sameOrigin=false,rpc=false;try{const u=new URL(params.request?.url);sameOrigin=u.origin===this.origin;rpc=sameOrigin&&u.pathname.startsWith('/connect/')&&params.request?.method==='POST';if(sameOrigin&&params.request?.method==='POST'){if(u.pathname==='/login')cookieKind='login';else if(u.pathname==='/connect/UserEndpoint/getUserInfo'&&this.authStage==='profile-proof'&&this.authDiagnostics.loginPostStatus===200&&this.authDiagnostics.loginResultHeader==='success')cookieKind='profile';}}catch{}
       this.cookieObservation.main(params.requestId,cookieKind,sameOrigin,rpc);
@@ -186,7 +221,10 @@ export class FixtureUiDriver {
         if(!Number.isFinite(params.encodedDataLength)||params.encodedDataLength<0||params.encodedDataLength>16384){this.authDiagnostics.userInfoIdentity='invalid';return;}
         this.request('Network.getResponseBody',{requestId:params.requestId},this.postSubmitDeadline??0).then(response=>{this.authDiagnostics.userInfoIdentity=classifyUserInfoBody(response);}).catch(()=>{this.authDiagnostics.userInfoIdentity='failed';});
       }
-    }else if(method==='Network.loadingFailed')this.cookieObservation.finished(params.requestId);
+    }else if(method==='Network.loadingFailed'){
+      this.cookieObservation.finished(params.requestId);
+      if(params.canceled===true){const d=this.authDiagnostics.interceptionDiagnostics;if(d.canceledNetworkEvents<256)d.canceledNetworkEvents++;else d.truncated=true;if(typeof params.requestId==='string'&&params.requestId.length<=256&&this.canceledNetworkIds.size<256)this.canceledNetworkIds.add(params.requestId);else d.truncated=true;}
+    }
   }
   recordLoginStatus(response){
     try{const u=new URL(response.url);if(u.origin===this.origin&&u.pathname==='/login'&&Number.isInteger(response.status)&&response.status>=100&&response.status<=599){this.authDiagnostics.loginPostStatus=response.status;this.authDiagnostics.loginResultHeader=loginResultHeader(response.headers);}}catch{}
@@ -284,17 +322,18 @@ export class FixtureUiDriver {
   async navigate(path){
     if(!['/library/27003','/game/33000'].includes(path)||++this.navigations>3)throw new Error('Navigation bound');
     this.onProgress(navigationProgress(this.navigations,'navigate'));
+    this.navigationRequests.clear();this.navigationLast.clear();this.navigationRequestCount=0;this.navigationState={uncaughtExceptionSeen:false,truncated:false,...Object.fromEntries(['library','game','profile'].map(k=>[k,{status:'not-observed',completion:'not-observed'}]))};
     this.cover=null;await this.request('Page.navigate',{url:this.origin+path});
     let lastProgress=-Infinity;
-    const value=await this.poll(routeExpression(path,this.coverId),value=>{
-      if(performance.now()-lastProgress>=1000||value?.ready===true){this.onProgress(navigationProgress(this.navigations,'content',value?.diagnostic));lastProgress=performance.now();}
+    const value=await this.poll(observedRouteExpression(path,this.coverId),value=>{
+      if(performance.now()-lastProgress>=1000||value?.ready===true){this.onProgress(navigationProgress(this.navigations,'content',value?.diagnostic,value?.observation?{...value.observation,...this.navigationState}:null));lastProgress=performance.now();}
     });
     if(!this.cover||![200,304].includes(this.cover.coverResponseStatus))throw new Error('Normal cover response absent');
     this.onProgress(navigationProgress(this.navigations,'cover-body'));
     const body=await this.request('Network.getResponseBody',{requestId:this.cover.requestId});
     const matches=coverHashMatches(body.body,body.base64Encoded,this.coverSha256);
     if(!matches)throw new Error('Normal cover body identity failed');
-    const {ready,diagnostic,...metrics}=value;const {requestId,...response}=this.cover;
+    const {ready,diagnostic,observation,...metrics}=value;const {requestId,...response}=this.cover;
     this.onProgress(navigationProgress(this.navigations,'complete'));
     return sanitizeMetrics({...metrics,...response,coverSha256Matches:matches});
   }

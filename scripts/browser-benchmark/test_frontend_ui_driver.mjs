@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import vm from 'node:vm';
-import {FixtureUiDriver,connectAndMeasure,navigationProgress,authReadiness,safeAuthDiagnostics,loginResultHeader,fixtureProfileExpression,fixtureIdentityMenuExpression,profileReadiness,profileDiagnostic,classifyUserInfoBody,cookieDiagnostics,requestCookieProjection,responseCookieProjection,loginFormExpression} from './frontend_ui_driver.mjs';
+import {FixtureUiDriver,connectAndMeasure,navigationProgress,navigationObservation,observedRouteExpression,authReadiness,safeAuthDiagnostics,loginResultHeader,fixtureProfileExpression,fixtureIdentityMenuExpression,profileReadiness,profileDiagnostic,classifyUserInfoBody,cookieDiagnostics,requestCookieProjection,responseCookieProjection,loginFormExpression} from './frontend_ui_driver.mjs';
 import {recordFirstAuthCdpFailure} from './browser_entry.mjs';
 const config={origin:'http://127.0.0.1:53123',coverId:7,coverSha256:'0'.repeat(64)};
 const readyAuth={originMatches:true,loginPath:false,usernamePresent:false,passwordPresent:false,submitPresent:false,submitDisabled:false,invalidCredentialsDisplayed:false,documentReady:'complete'};
@@ -304,9 +304,84 @@ test('classified continuation and denial failures stay blocking with exactly one
   await assert.rejects(driver.poll('fixed expression'),/Origin interception failed/);
   assert.equal(calls.length,1); // no automatic retry, bypass, or extra CDP request
   const evidence=safeAuthDiagnostics(driver.authDiagnostics);
+  assert.equal(evidence.interceptionDiagnostics.failedOperation,allowed?'continue':'deny');
   assert.equal(evidence.cdpFailure,'interception-invalid-id');assert.equal(evidence.cdpMethod,'request-interception');
   assert(!JSON.stringify(evidence).includes('PRIVATE'));assert(!JSON.stringify(evidence).includes('secret'));
   assert(!JSON.stringify(calls).includes('PRIVATE'));assert(!JSON.stringify(calls).includes('secret'));
   assert.throws(()=>safeAuthDiagnostics({...driver.authDiagnostics,cdpFailure:'arbitrary-private-message'}));
  }
+});
+
+test('interception lifecycle counters are bounded observations, never retry authority or raw IDs',async()=>{
+ const calls=[];const driver=new FixtureUiDriver({request:async(method)=>{calls.push(method);}},config);
+ for(let i=0;i<260;i++){
+  driver.event('Fetch.requestPaused',{requestId:'PRIVATE-ID',request:{url:config.origin+'/'}});
+  driver.event('Network.loadingFailed',{requestId:'PRIVATE-ID',canceled:true,errorText:'PRIVATE-TEXT'});
+ }
+ await new Promise(resolve=>setImmediate(resolve));
+ const diagnostic=safeAuthDiagnostics(driver.authDiagnostics).interceptionDiagnostics;
+ assert.deepEqual(diagnostic,{failedOperation:'none',failedRequestCanceled:null,pausedEvents:256,duplicatePausedIds:256,canceledNetworkEvents:256,truncated:true});
+ assert.equal(calls.length,260); // observation never suppresses/deduplicates a paused event
+ assert(!JSON.stringify(diagnostic).includes('PRIVATE'));
+ for(const mutation of [{failedOperation:'PRIVATE'}, {pausedEvents:257}, {duplicatePausedIds:-1},{canceledNetworkEvents:true},{truncated:1},{rawId:'PRIVATE'}])
+  assert.throws(()=>safeAuthDiagnostics({...driver.authDiagnostics,interceptionDiagnostics:{...diagnostic,...mutation}}));
+});
+
+test('failed paused request cancellation correlation is specific, bounded, and does not permit retry',async()=>{
+ for(const canceled of [true,false]){
+  let reject;const driver=new FixtureUiDriver({request:()=>new Promise((_,r)=>{reject=r;})},config);
+  driver.event('Fetch.requestPaused',{requestId:'PRIVATE-FETCH',networkId:'PRIVATE-NETWORK',request:{url:config.origin+'/'}});
+  driver.event('Network.loadingFailed',{requestId:canceled?'PRIVATE-NETWORK':'UNRELATED',canceled:true});
+  reject(new Error('Invalid InterceptionId.'));await new Promise(resolve=>setImmediate(resolve));
+  const d=safeAuthDiagnostics(driver.authDiagnostics).interceptionDiagnostics;
+  assert.equal(d.failedRequestCanceled,canceled?true:null);assert.equal(d.failedOperation,'continue');assert.equal(driver.failure,true);
+  assert(!JSON.stringify(d).includes('PRIVATE'));
+ }
+});
+
+test('truncated or missing cancellation correlation stays unknown rather than false',async()=>{
+ let reject;const driver=new FixtureUiDriver({request:()=>new Promise((_,r)=>{reject=r;})},config);
+ for(let i=0;i<257;i++)driver.event('Network.loadingFailed',{requestId:'unrelated-'+i,canceled:true});
+ driver.event('Fetch.requestPaused',{requestId:'PRIVATE',networkId:'unobserved',request:{url:config.origin+'/'}});
+ reject(new Error('Invalid InterceptionId.'));await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(safeAuthDiagnostics(driver.authDiagnostics).interceptionDiagnostics.failedRequestCanceled,null);
+ for(const bad of [1,'raw-secret'])assert.throws(()=>safeAuthDiagnostics({...driver.authDiagnostics,interceptionDiagnostics:{...driver.authDiagnostics.interceptionDiagnostics,failedRequestCanceled:bad}}));
+});
+
+test('route shell and static error observations never satisfy actual content readiness',async()=>{
+ const location={pathname:'/game/33000',origin:config.origin,href:config.origin+'/game/33000'};
+ const document={images:[],querySelector:()=>({}),querySelectorAll:selector=>selector==='h1'?[{textContent:'404 – Quest Failed'}]:[]};
+ const value=await vm.runInNewContext(observedRouteExpression('/game/33000',7),{location,document,URL});
+ assert.equal(value.ready,false);assert.equal(value.diagnostic.contentReady,false);
+ assert.deepEqual(JSON.parse(JSON.stringify(value.observation)),{domRootPresent:true,navPresent:true,signInPresent:true,staticErrorViewPresent:true});
+ assert(!JSON.stringify(value).includes('Quest'));
+});
+
+test('navigation observations classify exact RPC lifecycle and exceptions without bodies or raw identifiers',async()=>{
+ const progress=[];const driver=new FixtureUiDriver({request:async()=>({})},{...config,onProgress:v=>progress.push(v)});
+ driver.poll=async(expression,observe)=>{
+  for(const [i,path] of ['/connect/LibraryEndpoint/getAll','/connect/GameEndpoint/getAll','/connect/UserEndpoint/getUserInfo'].entries()){
+   driver.event('Network.requestWillBeSent',{requestId:'PRIVATE-'+i,request:{url:config.origin+path,method:'POST',postData:'PRIVATE-BODY'}});
+   driver.event('Network.responseReceived',{requestId:'PRIVATE-'+i,response:{url:config.origin+path,status:i===1?403:200}});
+   driver.event(i===2?'Network.loadingFailed':'Network.loadingFinished',{requestId:'PRIVATE-'+i});
+  }
+  driver.event('Runtime.exceptionThrown',{exceptionDetails:{text:'PRIVATE-ERROR'}});
+  for(const id of ['older','latest'])driver.event('Network.requestWillBeSent',{requestId:id,request:{url:config.origin+'/connect/LibraryEndpoint/getAll',method:'POST'}});
+  driver.event('Network.responseReceived',{requestId:'latest',response:{url:config.origin+'/connect/LibraryEndpoint/getAll',status:403}});
+  driver.event('Network.loadingFinished',{requestId:'latest'});
+  driver.event('Network.responseReceived',{requestId:'older',response:{url:config.origin+'/connect/LibraryEndpoint/getAll',status:200}});
+  driver.event('Network.loadingFinished',{requestId:'older'});
+  const diagnostic=Object.fromEntries(['pathMatches','contentReady','coverTitlePresent','coverPresent','coverComplete','dimensionsMatch'].map(k=>[k,k==='pathMatches']));
+  observe({ready:false,diagnostic,observation:{domRootPresent:true,navPresent:true,signInPresent:false,staticErrorViewPresent:false}});
+  throw new Error('bounded fixture stop');
+ };
+ await assert.rejects(driver.navigate('/game/33000'),/bounded fixture stop/);
+ const observation=progress.at(-1).observation;
+ assert.deepEqual(observation.library,{status:'4xx',completion:'finished'});
+ assert.deepEqual(observation.game,{status:'4xx',completion:'finished'});
+ assert.deepEqual(observation.profile,{status:'2xx',completion:'failed'});
+ assert.equal(observation.uncaughtExceptionSeen,true);assert(!JSON.stringify(progress).includes('PRIVATE'));
+ for(let i=0;i<40;i++)driver.event('Network.requestWillBeSent',{requestId:'bounded-'+i,request:{url:config.origin+'/connect/GameEndpoint/getAll',method:'POST'}});
+ assert.equal(driver.navigationRequestCount,32);assert(driver.navigationRequests.size<=32);assert.equal(driver.navigationState.truncated,true);
+ for(const bad of [{domRootPresent:1},{uncaughtExceptionSeen:'PRIVATE'},{raw:'PRIVATE'},{game:{status:403,completion:'finished'}},{game:{status:'2xx',completion:'PRIVATE'}}])assert.throws(()=>navigationObservation({...observation,...bad}));
 });

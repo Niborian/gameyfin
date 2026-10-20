@@ -1,4 +1,4 @@
-import {startupIsCurrent, ownStartupState} from "Frontend/util/startupLifecycle";
+import {runStartupState} from "Frontend/util/startupLifecycle";
 import {Subscription} from "@vaadin/hilla-frontend";
 import {proxy} from "valtio/index";
 import {CollectionEndpoint} from "Frontend/generated/endpoints";
@@ -43,37 +43,38 @@ export const collectionState = proxy<CollectionState>({
 
 /** Subscribe to and process state updates from backend **/
 export async function initializeCollectionState(signal?: AbortSignal) {
-    if (!startupIsCurrent(signal) || collectionState.isLoaded) return;
-    ownStartupState(collectionState, signal, () => { collectionState.state = {}; });
+    return runStartupState(collectionState, signal, () => { collectionState.state = {}; }, async current => {
+        if (!current() || collectionState.isLoaded) return;
 
-    try {
-        // Fetch initial collection list
-        const initialEntries = await CollectionEndpoint.getAll(signal ? {signal} : undefined);
-        if (!startupIsCurrent(signal)) return;
-        initialEntries.forEach((collection: CollectionDto) => {
-            collectionState.state[collection.id] = collection;
-        });
+        try {
+            // Fetch initial collection list
+            const initialEntries = await CollectionEndpoint.getAll(signal ? {signal} : undefined);
+            if (!current()) return;
+            initialEntries.forEach((collection: CollectionDto) => {
+                collectionState.state[collection.id] = collection;
+            });
 
-        // Subscribe to real-time updates
-        collectionState.subscription = CollectionEndpoint.subscribeToCollectionEvents().onNext((collectionEvents: CollectionEvent[]) => {
-            if (!startupIsCurrent(signal)) return;
-            collectionEvents.forEach((collectionEvent: CollectionEvent) => {
-                switch (collectionEvent.type) {
-                    case "created":
-                    case "updated":
-                        //@ts-ignore
-                        collectionState.state[collectionEvent.collection.id] = collectionEvent.collection;
-                        break;
-                    case "deleted":
-                        //@ts-ignore
-                        delete collectionState.state[collectionEvent.collectionId];
-                        break;
-                }
-            })
-        });
-    } catch (error) {
-        if (!startupIsCurrent(signal)) return;
-        throw error;
-    }
+            // Subscribe to real-time updates
+            collectionState.subscription = CollectionEndpoint.subscribeToCollectionEvents().onNext((collectionEvents: CollectionEvent[]) => {
+                if (!current()) return;
+                collectionEvents.forEach((collectionEvent: CollectionEvent) => {
+                    switch (collectionEvent.type) {
+                        case "created":
+                        case "updated":
+                            //@ts-ignore
+                            collectionState.state[collectionEvent.collection.id] = collectionEvent.collection;
+                            break;
+                        case "deleted":
+                            //@ts-ignore
+                            delete collectionState.state[collectionEvent.collectionId];
+                            break;
+                    }
+                })
+            });
+        } catch (error) {
+            if (!current()) return;
+            throw error;
+        }
+    });
 }
 

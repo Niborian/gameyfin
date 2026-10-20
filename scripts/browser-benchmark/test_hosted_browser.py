@@ -9,6 +9,30 @@ def sample_receipt():
     return {'originalUiContentReady':True,'coverDecoded':True,'coverSha256Matches':True,'navigations':[row]*3,'browserResources':{'before':snapshot,'after':snapshot}}
 
 class CreationTests(unittest.TestCase):
+    def test_node_interception_failure_roundtrip_and_strict_boundaries(self):
+        # Exercise the real producer, not a Python copy of its receipt schema.
+        program="""
+import {FixtureUiDriver} from './frontend_ui_driver.mjs';
+import {recordFirstAuthCdpFailure,failureReceipt} from './browser_entry.mjs';
+const rows=['Fetch.continueRequest','Fetch.failRequest'].map(method=>{
+  const driver=new FixtureUiDriver({request:async()=>{}},{origin:'http://127.0.0.1:53123',coverId:7,coverSha256:'0'.repeat(64)});
+  recordFirstAuthCdpFailure(driver.authDiagnostics,method,new Error('Invalid InterceptionId. synthetic-secret-sentinel'));
+  return failureReceipt('authentication',null,null,'profile-proof',null,driver.authDiagnostics);
+});
+process.stdout.write(JSON.stringify(rows));
+"""
+        result=subprocess.run(['node','--input-type=module','-e',program],cwd=Path(__file__).resolve().parent,capture_output=True,timeout=10,check=True)
+        self.assertLess(len(result.stdout),16384)
+        self.assertNotIn(b'synthetic-secret-sentinel',result.stdout)
+        for row in json.loads(result.stdout):
+            self.assertEqual(row['authDiagnostics']['cdpFailure'],'interception-invalid-id')
+            self.assertEqual(row['authDiagnostics']['cdpMethod'],'request-interception')
+            self.assertEqual(hosted_browser.validate_failure_receipt(row),row)
+            for mutation in ({'cdpFailure':'unknown-enum'},{'cdpFailure':'synthetic-secret-sentinel'},{'cdpMethod':'runtime-evaluate'}):
+                with self.assertRaises(ValueError):
+                    hosted_browser.validate_failure_receipt({**row,'authDiagnostics':{**row['authDiagnostics'],**mutation}})
+            for mutation in ({'phase':'navigation'},{'authStage':'synthetic-secret-sentinel'}):
+                with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,**mutation})
     def test_auth_ready_requires_exact_fixture_identity_proof_and_boolean_redirect(self):
         row={'authenticated':True,'sandboxVerified':True,'fixtureProfileVerified':True,'normalLoginAutoRedirectObserved':False}
         self.assertEqual(hosted_browser.validate_auth_ready(row),row)

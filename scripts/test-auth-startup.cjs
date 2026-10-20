@@ -25,6 +25,99 @@ const lifecycle = load('util/startupLifecycle.ts');
 function deferred() { let resolve; const promise = new Promise(r => {resolve = r;}); return {promise, resolve}; }
 const cases = ['Library', 'Collection', 'Platform', 'GameRequest', 'Plugin', 'Game', 'DownloadSession', 'User'];
 for (const name of cases) {
+    test(`${name}: failed current fetch clears ownership and same owner can retry`, async () => {
+        let requests = 0, attached = 0, cancelled = 0;
+        const failure = new Error('Fixed request failure');
+        const initial = name === 'Platform' ? {available: [], inUseByGames: [], inUseByLibraries: []} : [];
+        const endpoint = new Proxy({}, {get: (_, method) => method.startsWith('subscribe')
+            ? () => ({onNext() {attached++; return {cancel() {cancelled++;}};}})
+            : async () => {if (++requests === 1) throw failure; return initial;}});
+        const mod = load(`state/${name}State.ts`, {'Frontend/generated/endpoints': new Proxy({}, {get: () => endpoint})});
+        const owner = new AbortController();
+        if (name === 'User') await mod.initializeUserState(owner.signal);
+        else await assert.rejects(mod[`initialize${name}State`](owner.signal), error => error === failure);
+        await mod[`initialize${name}State`](owner.signal);
+        assert.equal(requests, 2); assert.equal(attached, name === 'User' ? 0 : 1);
+        owner.abort(); assert.equal(cancelled, attached);
+    });
+    test(`${name}: replacement abort before either fetch settles cannot resurrect old owner`, async () => {
+        const pending = [deferred(), deferred()]; let requests = 0, attached = 0;
+        const endpoint = new Proxy({}, {get: (_, method) => method.startsWith('subscribe')
+            ? () => ({onNext() {attached++; return {cancel() {}};}}) : () => pending[requests++].promise});
+        const mod = load(`state/${name}State.ts`, {'Frontend/generated/endpoints': new Proxy({}, {get: () => endpoint})});
+        const old = new AbortController(), current = new AbortController();
+        const first = mod[`initialize${name}State`](old.signal), second = mod[`initialize${name}State`](current.signal);
+        current.abort();
+        const initial = name === 'Platform' ? {available: [], inUseByGames: [], inUseByLibraries: []} : [];
+        pending[1].resolve(initial); await second;
+        pending[0].resolve(name === 'User' ? [{id: 99}] : initial); await first;
+        assert.equal(attached, 0); assert.equal(old.signal.aborted, false);
+        const state = mod[name[0].toLowerCase() + name.slice(1) + 'State'];
+        if (state.state) assert.equal(Object.keys(state.state).length, 0);
+        old.abort();
+    });
+    test(`${name}: concurrent same-owner initialization is single flight and abort leaves no orphan`, async () => {
+        const pending = deferred(); let requests = 0, attached = 0, cancelled = 0;
+        const endpoint = new Proxy({}, {get: (_, method) => method.startsWith('subscribe')
+            ? () => ({onNext() {attached++; return {cancel() {cancelled++;}};}})
+            : () => {requests++; return pending.promise;}});
+        const mod = load(`state/${name}State.ts`, {'Frontend/generated/endpoints': new Proxy({}, {get: () => endpoint})});
+        const owner = new AbortController();
+        const first = mod[`initialize${name}State`](owner.signal), second = mod[`initialize${name}State`](owner.signal);
+        pending.resolve(name === 'Platform' ? {available: [], inUseByGames: [], inUseByLibraries: []} : []);
+        await Promise.all([first, second]);
+        assert.equal(requests, 1); assert.equal(attached, name === 'User' ? 0 : 1);
+        owner.abort(); assert.equal(cancelled, attached);
+    });
+    test(`${name}: superseded unaborted owner cannot attach after replacement or clear it on abort`, async () => {
+        const pending = [deferred(), deferred()]; let requests = 0, attached = 0, cancelled = 0, callback;
+        const endpoint = new Proxy({}, {get: (_, method) => method.startsWith('subscribe')
+            ? () => ({onNext(fn) {callback = fn; attached++; return {cancel() {cancelled++;}};}})
+            : () => pending[requests++].promise});
+        const mod = load(`state/${name}State.ts`, {'Frontend/generated/endpoints': new Proxy({}, {get: () => endpoint})});
+        const old = new AbortController(), current = new AbortController();
+        const first = mod[`initialize${name}State`](old.signal), second = mod[`initialize${name}State`](current.signal);
+        const initial = name === 'Platform' ? {available: [], inUseByGames: [], inUseByLibraries: []} : [];
+        pending[1].resolve(name === 'User' ? [{id: 2}] : initial); await second;
+        pending[0].resolve(name === 'User' ? [{id: 1}] : initial); await first;
+        assert.equal(attached, name === 'User' ? 0 : 1);
+        if (name === 'User') assert.deepEqual(Object.keys(mod.userState.state), ['2']);
+        old.abort(); assert.equal(cancelled, 0);
+        if (callback) callback([]);
+        current.abort(); assert.equal(cancelled, attached);
+    });
+}
+
+test('startup helper synchronous failure cleans owner before same owner retry', async () => {
+    const owner = new AbortController(); let cleared = 0;
+    const state = {isLoaded: false};
+    await assert.rejects(lifecycle.runStartupState(state, owner.signal, () => {cleared++;}, () => {throw Error('Fixed sync failure');}), /Fixed sync failure/);
+    assert.equal(cleared, 1);
+    await lifecycle.runStartupState(state, owner.signal, () => {cleared++;}, async () => {state.isLoaded = true;});
+    owner.abort(); assert.equal(cleared, 2);
+});
+
+test('standalone library calls remain single flight without a signal', async () => {
+    let requests = 0, attached = 0;
+    const endpoint = {getAll: async () => {requests++; return [];}, subscribeToLibraryEvents: () => ({onNext() {attached++; return {cancel() {}};}})};
+    const mod = load('state/LibraryState.ts', {'Frontend/generated/endpoints': {LibraryEndpoint: endpoint}});
+    await Promise.all([mod.initializeLibraryState(), mod.initializeLibraryState()]);
+    assert.equal(requests, 1); assert.equal(attached, 1);
+});
+
+test('replacing attached owner cancels exactly old handle and ignores its unaborted queued callback', async () => {
+    const callbacks = []; let cancelled = 0;
+    const endpoint = {getAll: async () => [], subscribeToLibraryEvents: () => ({onNext(fn) {callbacks.push(fn); return {cancel() {cancelled++;}};}})};
+    const mod = load('state/LibraryState.ts', {'Frontend/generated/endpoints': {LibraryEndpoint: endpoint}});
+    const old = new AbortController(), current = new AbortController();
+    await mod.initializeLibraryState(old.signal); await mod.initializeLibraryState(current.signal);
+    assert.equal(cancelled, 1); assert.equal(old.signal.aborted, false);
+    callbacks[0]({forEach() {throw Error('Superseded callback processed');}});
+    const replacement = mod.libraryState.subscription;
+    old.abort(); assert.equal(cancelled, 1); assert.equal(mod.libraryState.subscription, replacement);
+    current.abort(); assert.equal(cancelled, 2);
+});
+for (const name of cases) {
     if (name !== 'User') test(`${name}: non-aborted request failure remains visible to caller`, async () => {
         const failure = new Error('Fixed test request failure');
         const endpoint = new Proxy({}, {get: () => async () => {throw failure;}});

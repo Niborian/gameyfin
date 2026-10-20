@@ -1,4 +1,4 @@
-import {startupIsCurrent, ownStartupState} from "Frontend/util/startupLifecycle";
+import {runStartupState} from "Frontend/util/startupLifecycle";
 import {Subscription} from "@vaadin/hilla-frontend";
 import {proxy} from "valtio/index";
 import {GameRequestEndpoint} from "Frontend/generated/endpoints";
@@ -24,38 +24,39 @@ export const gameRequestState = proxy<GameRequestState>({
 
 /** Subscribe to and process state updates from backend **/
 export async function initializeGameRequestState(signal?: AbortSignal) {
-    if (!startupIsCurrent(signal) || gameRequestState.isLoaded) return;
-    ownStartupState(gameRequestState, signal, () => { gameRequestState.state = {}; });
+    return runStartupState(gameRequestState, signal, () => { gameRequestState.state = {}; }, async current => {
+        if (!current() || gameRequestState.isLoaded) return;
 
-    try {
-        // Fetch initial game request list
-        const initialEntries = await GameRequestEndpoint.getAll(signal ? {signal} : undefined);
-        if (!startupIsCurrent(signal)) return;
-        initialEntries.forEach((gameRequest: GameRequestDto) => {
-            gameRequestState.state[gameRequest.id] = gameRequest;
-        });
+        try {
+            // Fetch initial game request list
+            const initialEntries = await GameRequestEndpoint.getAll(signal ? {signal} : undefined);
+            if (!current()) return;
+            initialEntries.forEach((gameRequest: GameRequestDto) => {
+                gameRequestState.state[gameRequest.id] = gameRequest;
+            });
 
-        // Subscribe to real-time updates
-        gameRequestState.subscription = GameRequestEndpoint.subscribe().onNext((gameRequestEvents: GameRequestEvent[]) => {
-            if (!startupIsCurrent(signal)) return;
-            gameRequestEvents.forEach((gameRequestEvent: GameRequestEvent) => {
-                switch (gameRequestEvent.type) {
-                    case "created":
-                    case "updated":
-                        //@ts-ignore
-                        gameRequestState.state[gameRequestEvent.gameRequest.id] = gameRequestEvent.gameRequest;
-                        break;
-                    case "deleted":
-                        //@ts-ignore
-                        delete gameRequestState.state[gameRequestEvent.gameRequestId];
-                        break;
-                }
-            })
-        });
-    } catch (error) {
-        if (!startupIsCurrent(signal)) return;
-        throw error;
-    }
+            // Subscribe to real-time updates
+            gameRequestState.subscription = GameRequestEndpoint.subscribe().onNext((gameRequestEvents: GameRequestEvent[]) => {
+                if (!current()) return;
+                gameRequestEvents.forEach((gameRequestEvent: GameRequestEvent) => {
+                    switch (gameRequestEvent.type) {
+                        case "created":
+                        case "updated":
+                            //@ts-ignore
+                            gameRequestState.state[gameRequestEvent.gameRequest.id] = gameRequestEvent.gameRequest;
+                            break;
+                        case "deleted":
+                            //@ts-ignore
+                            delete gameRequestState.state[gameRequestEvent.gameRequestId];
+                            break;
+                    }
+                })
+            });
+        } catch (error) {
+            if (!current()) return;
+            throw error;
+        }
+    });
 }
 
 

@@ -1,5 +1,7 @@
 // Injectable/mock-tested original-UI adapter only; no SSH/browser/transport creation.
 import {allowRequest,validateLoginCredentials,loginFocusExpression,routeExpression,sanitizeMetrics,coverHashMatches,RUNTIME_ENABLED} from './frontend_cdp_measurement.mjs';
+import {recordFirstAuthCdpFailure} from './frontend_cdp_failures.mjs';
+import {CoverCancellationLedger} from './frontend_cover_cancellation.mjs';
 export function navigationProgress(routeIndex,stage,readiness=null,observation=null){
   if(!Number.isInteger(routeIndex)||routeIndex<1||routeIndex>3||!['navigate','content','cover-body','complete'].includes(stage))throw new Error('Navigation progress boundary');
   const keys=['pathMatches','contentReady','coverTitlePresent','coverPresent','coverComplete','dimensionsMatch'];
@@ -48,8 +50,8 @@ export function safeAuthDiagnostics(value){
   return {...Object.fromEntries(keys.slice(0,9).map(key=>[key,value[key]])),cookieDiagnostics:cookieDiagnostics(value.cookieDiagnostics),readiness:value.readiness===null?null:authReadiness(value.readiness),profile:profileDiagnostic(value.profile),...(Object.hasOwn(value,'interceptionDiagnostics')?{interceptionDiagnostics:interceptionDiagnostics(value.interceptionDiagnostics)}:{})};
 }
 export function interceptionDiagnostics(value){
-  const counters=['pausedEvents','duplicatePausedIds','canceledNetworkEvents'];
-  if(!value||typeof value!=='object'||Object.keys(value).length!==6||!['none','continue','deny'].includes(value.failedOperation)||!(value.failedRequestCanceled===null||typeof value.failedRequestCanceled==='boolean')||typeof value.truncated!=='boolean'||!counters.every(k=>Number.isInteger(value[k])&&value[k]>=0&&value[k]<=256))throw new Error('Interception diagnostic boundary');
+  const counters=['pausedEvents','duplicatePausedIds','canceledNetworkEvents','verifiedCanceledImageContinuations'];
+  if(!value||typeof value!=='object'||Object.keys(value).length!==7||!['failedOperation','failedRequestCanceled','truncated',...counters].every(k=>Object.hasOwn(value,k))||!['none','continue','deny'].includes(value.failedOperation)||!(value.failedRequestCanceled===null||typeof value.failedRequestCanceled==='boolean')||typeof value.truncated!=='boolean'||!counters.every(k=>Number.isInteger(value[k])&&value[k]>=0&&value[k]<=256)||value.verifiedCanceledImageContinuations>value.pausedEvents)throw new Error('Interception diagnostic boundary');
   return {failedOperation:value.failedOperation,failedRequestCanceled:value.failedRequestCanceled,...Object.fromEntries(counters.map(k=>[k,value[k]])),truncated:value.truncated};
 }
 const cookieFlags=['loginSetCookieSeen','loginSessionCookieSetSeen','loginSessionCookieBlocked','profileCookieHeaderSeen','profileSessionCookieAssociated','profileSessionCookieBlocked','loginSubmittedWithPendingRpc','otherSessionCookieSetAfterLogin'];
@@ -167,11 +169,14 @@ export class FixtureUiDriver {
     this.loginRequestIds=new Set();this.userInfoRequestIds=new Set();this.postLoginUserInfoIds=new Set();this.userInfoBodyRequestId=null;this.userInfoBodyAttempted=false;this.authDiagnostics={loginPostObserved:false,loginPostStatus:null,submittedUsernameLengthMatches:null,submittedPasswordLengthMatches:null,cdpFailure:'none',cdpMethod:'none',loginResultHeader:'missing',userInfoStatus:null,userInfoIdentity:'not-observed',cookieDiagnostics:Object.fromEntries(cookieFlags.map(key=>[key,null])),readiness:null,profile:{stage:'not-started',readiness:null}};
     this.cookieObservation=new CookieObservation(this.authDiagnostics.cookieDiagnostics);
     // IDs stay in bounded process memory only; receipts contain counts, never IDs.
-    this.pausedIds=new Set();this.canceledNetworkIds=new Set();this.authDiagnostics.interceptionDiagnostics={failedOperation:'none',failedRequestCanceled:null,pausedEvents:0,duplicatePausedIds:0,canceledNetworkEvents:0,truncated:false};
+    this.pausedIds=new Set();this.canceledNetworkIds=new Set();this.authDiagnostics.interceptionDiagnostics={failedOperation:'none',failedRequestCanceled:null,pausedEvents:0,duplicatePausedIds:0,canceledNetworkEvents:0,verifiedCanceledImageContinuations:0,truncated:false};
+    this.coverCancellation=new CoverCancellationLedger(origin,coverId);
     this.navigationRequests=new Map();this.navigationLast=new Map();this.navigationRequestCount=0;this.navigationState=null;
     cdp.onEvent=(method,params)=>this.event(method,params);
   }
   event(method,params){
+    this.coverCancellation.observe(method,params);
+    if(this.coverCancellation.truncated)this.authDiagnostics.interceptionDiagnostics.truncated=true;
     if(this.navigationState){
       if(method==='Runtime.exceptionThrown')this.navigationState.uncaughtExceptionSeen=true;
       if(method==='Network.requestWillBeSent'){
@@ -190,12 +195,19 @@ export class FixtureUiDriver {
       const diagnostic=this.authDiagnostics.interceptionDiagnostics;
       if(diagnostic.pausedEvents<256)diagnostic.pausedEvents++;else diagnostic.truncated=true;
       const id=params.requestId;
+      const duplicate=this.pausedIds.has(id);
       if(typeof id==='string'&&id.length<=256){if(this.pausedIds.has(id)){if(diagnostic.duplicatePausedIds<256)diagnostic.duplicatePausedIds++;else diagnostic.truncated=true;}else if(this.pausedIds.size<256)this.pausedIds.add(id);else diagnostic.truncated=true;}else diagnostic.truncated=true;
       const permitted=allowRequest(params.request?.url||'',this.origin);
       try{const u=new URL(params.request?.url);if(u.origin===this.origin&&u.pathname==='/login'&&params.request.method==='POST')this.authDiagnostics.loginPostObserved=true;}catch{}
       // Never retain headers/postData/cookies/console bodies in evidence.
       const networkId=typeof params.networkId==='string'&&params.networkId.length<=256?params.networkId:null;
-      this.request(permitted?'Fetch.continueRequest':'Fetch.failRequest',permitted?{requestId:params.requestId}:{requestId:params.requestId,errorReason:'BlockedByClient'}).catch(()=>{if(diagnostic.failedOperation==='none'){diagnostic.failedOperation=permitted?'continue':'deny';diagnostic.failedRequestCanceled=networkId!==null&&this.canceledNetworkIds.has(networkId)?true:null;}this.failure=true;});
+      const cancellation=this.coverCancellation.pause(params,permitted,duplicate);
+      const operation=permitted?'Fetch.continueRequest':'Fetch.failRequest';
+      this.request(operation,permitted?{requestId:params.requestId}:{requestId:params.requestId,errorReason:'BlockedByClient'}).catch(error=>{
+        if(this.coverCancellation.terminal(cancellation,error,diagnostic.truncated)){diagnostic.verifiedCanceledImageContinuations++;return;}
+        recordFirstAuthCdpFailure(this.authDiagnostics,operation,error);
+        if(diagnostic.failedOperation==='none'){diagnostic.failedOperation=permitted?'continue':'deny';diagnostic.failedRequestCanceled=networkId!==null&&this.canceledNetworkIds.has(networkId)?true:null;}this.failure=true;
+      });
     }else if(method==='Network.requestWillBeSent'){
       let cookieKind=null,sameOrigin=false,rpc=false;try{const u=new URL(params.request?.url);sameOrigin=u.origin===this.origin;rpc=sameOrigin&&u.pathname.startsWith('/connect/')&&params.request?.method==='POST';if(sameOrigin&&params.request?.method==='POST'){if(u.pathname==='/login')cookieKind='login';else if(u.pathname==='/connect/UserEndpoint/getUserInfo'&&this.authStage==='profile-proof'&&this.authDiagnostics.loginPostStatus===200&&this.authDiagnostics.loginResultHeader==='success')cookieKind='profile';}}catch{}
       this.cookieObservation.main(params.requestId,cookieKind,sameOrigin,rpc);
@@ -237,8 +249,10 @@ export class FixtureUiDriver {
   async request(method,params={},deadline=this.totalDeadline){
     const remaining=Math.floor(Math.min(15000,deadline-performance.now(),this.totalDeadline-performance.now()));
     if(remaining<1)throw new Error('Controller deadline');
+    if(method==='Page.navigate')this.coverCancellation.navigationStarted();
     return this.cdp.request(method,params,remaining);
   }
+  captureInterceptionFailure(){return this.coverCancellation.stamp();}
   async enableBeforeAuth(){
     for(const method of ['Page.enable','Runtime.enable','Network.enable'])await this.request(method);
     await this.request('Fetch.enable',{patterns:[{urlPattern:'*',requestStage:'Request'}]});

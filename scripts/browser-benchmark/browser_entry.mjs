@@ -5,27 +5,14 @@ import {createRequire} from 'node:module';
 import {LoopbackProxy} from './frontend_loopback_proxy.mjs';
 import {chromeProxyFlags} from './frontend_proxy_policy.mjs';
 import {FixtureUiDriver,safeAuthDiagnostics,safeProxyDiagnostics} from './frontend_ui_driver.mjs';
+import {createCdpTransport,recordFirstAuthCdpFailure} from './frontend_cdp_failures.mjs';
+export {classifyCdpFailure,recordFirstAuthCdpFailure} from './frontend_cdp_failures.mjs';
 let currentPhase='arguments',failurePhase=null,failureEmitted=false,launchFailureCategory=null,launchDiagnostics=null,authStage=null,failureCounters=null,authDiagnostics=null;
 export const authStages=Object.freeze(['interception','login-navigation','login-form','submit','redirect','profile-proof','complete']);
 export const observedNetworkEvents=Object.freeze(['Fetch.requestPaused','Network.requestWillBeSent','Network.responseReceived','Network.loadingFinished','Network.loadingFailed','Network.requestWillBeSentExtraInfo','Network.responseReceivedExtraInfo','Runtime.exceptionThrown']);
 export function authenticationReady(proof){
   if(!proof||typeof proof!=='object'||Object.keys(proof).length!==2||typeof proof.normalLoginAutoRedirectObserved!=='boolean'||proof.fixtureProfileVerified!==true)throw new Error('Fixture authentication proof boundary');
   return {authenticated:true,sandboxVerified:true,normalLoginAutoRedirectObserved:proof.normalLoginAutoRedirectObserved,fixtureProfileVerified:true};
-}
-export function classifyCdpFailure(error,method=null){
-  const text=typeof error?.message==='string'?error.message.slice(0,8192):'';
-  // Diagnostic only: this cause never authorizes retry or ignoring interception.
-  if(['Fetch.continueRequest','Fetch.failRequest'].includes(method)&&/(?:^|\s)Invalid InterceptionId\.(?:\s|$)/.test(text))return 'interception-invalid-id';
-  if(/Execution context was destroyed/.test(text))return 'execution-context-destroyed';
-  if(/Cannot find context with (?:specified )?id|Cannot find execution context/.test(text))return 'execution-context-missing';
-  if(/Target closed|Session closed|Connection closed/.test(text))return 'target-closed';
-  if(/timed out|timeout|deadline/i.test(text))return 'protocol-timeout';
-  return 'other';
-}
-export function recordFirstAuthCdpFailure(diagnostics,method,error){
-  if(diagnostics.cdpFailure!=='none')return;
-  diagnostics.cdpFailure=classifyCdpFailure(error,method);
-  diagnostics.cdpMethod=method==='Page.navigate'?'page-navigation':method==='Runtime.evaluate'?'runtime-evaluate':method==='Input.insertText'?'input-insert':['Fetch.continueRequest','Fetch.failRequest'].includes(method)?'request-interception':['Page.enable','Runtime.enable','Network.enable','Fetch.enable','Page.addScriptToEvaluateOnNewDocument'].includes(method)?'setup':'other';
 }
 export async function browserFailureCounters(read=fs.readFile){
   const result={};
@@ -141,9 +128,9 @@ export async function main(argv){
     const page=await browser.newPage();await page.emulateTimezone('UTC');await page.setExtraHTTPHeaders({'Accept-Language':'en-US'});await page.goto('chrome://sandbox',{timeout:10000});
     const sandbox=await page.$eval('#evaluation',e=>e.textContent.trim()==='You are adequately sandboxed.');
     if(!sandbox)throw new Error('Actual Chrome sandbox gate');
-    const session=await page.createCDPSession();const cdp={onEvent:null,request:(m,p,timeoutMs=15000)=>new Promise((resolve,reject)=>{
-      const deadline=setTimeout(()=>{if(currentPhase==='authentication'&&driver)recordFirstAuthCdpFailure(driver.authDiagnostics,m,new Error('Private CDP deadline'));reject(new Error('Private CDP deadline'));},Math.min(15000,timeoutMs));
-      session.send(m,p).then(value=>{clearTimeout(deadline);resolve(value);},error=>{clearTimeout(deadline);if(currentPhase==='authentication'&&driver)recordFirstAuthCdpFailure(driver.authDiagnostics,m,error);reject(new Error('Private CDP operation failed'));});
+    const session=await page.createCDPSession();const cdp={onEvent:null,request:createCdpTransport(session,{
+      captureInterception:()=>driver?.captureInterceptionFailure(),
+      onFatal:(method,error)=>{if(currentPhase==='authentication'&&driver)recordFirstAuthCdpFailure(driver.authDiagnostics,method,error);},
     })};
     for(const name of observedNetworkEvents)session.on(name,p=>cdp.onEvent?.(name,p));
     driver=new FixtureUiDriver(cdp,{origin,...identity,onProgress:progress=>process.stdout.write(JSON.stringify({navigationProgress:{...progress,proxyDiagnostics:safeProxyDiagnostics(proxy.diagnostics())}})+'\n')});

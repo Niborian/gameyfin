@@ -29,13 +29,35 @@ process.stdout.write(JSON.stringify(rows));
             self.assertEqual(row['authDiagnostics']['cdpMethod'],'request-interception')
             self.assertEqual(hosted_browser.validate_failure_receipt(row),row)
             diagnostic=row['authDiagnostics']['interceptionDiagnostics']
-            for mutation in ({'failedOperation':'raw-secret'},{'failedRequestCanceled':1},{'failedRequestCanceled':'raw-secret'},{'pausedEvents':257},{'duplicatePausedIds':-1},{'canceledNetworkEvents':True},{'truncated':1},{'rawId':'secret'}):
+            for mutation in ({'failedOperation':'raw-secret'},{'failedRequestCanceled':1},{'failedRequestCanceled':'raw-secret'},{'pausedEvents':257},{'duplicatePausedIds':-1},{'canceledNetworkEvents':True},{'verifiedCanceledImageContinuations':257},{'verifiedCanceledImageContinuations':1},{'truncated':1},{'rawId':'secret'}):
                 with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,'authDiagnostics':{**row['authDiagnostics'],'interceptionDiagnostics':{**diagnostic,**mutation}}})
             for mutation in ({'cdpFailure':'unknown-enum'},{'cdpFailure':'synthetic-secret-sentinel'},{'cdpMethod':'runtime-evaluate'}):
                 with self.assertRaises(ValueError):
                     hosted_browser.validate_failure_receipt({**row,'authDiagnostics':{**row['authDiagnostics'],**mutation}})
             for mutation in ({'phase':'navigation'},{'authStage':'synthetic-secret-sentinel'}):
                 with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,**mutation})
+    def test_verified_canceled_image_counter_roundtrips_real_transport_without_success_claim(self):
+        program="""
+import {FixtureUiDriver} from './frontend_ui_driver.mjs';
+import {createCdpTransport,recordFirstAuthCdpFailure} from './frontend_cdp_failures.mjs';
+import {failureReceipt} from './browser_entry.mjs';
+const origin='http://127.0.0.1:53123';let driver,reject;
+const request=createCdpTransport({send:()=>new Promise((_,r)=>{reject=r;})},{captureInterception:()=>driver.captureInterceptionFailure()});
+driver=new FixtureUiDriver({request},{origin,coverId:7,coverSha256:'0'.repeat(64)});
+driver.event('Network.requestWillBeSent',{requestId:'PRIVATE-DOC',frameId:'PRIVATE-FRAME',loaderId:'PRIVATE-LOADER',type:'Document',request:{url:origin+'/',method:'GET'}});
+const image={url:origin+'/images/cover/7',method:'GET'};
+driver.event('Network.requestWillBeSent',{requestId:'PRIVATE-NET',frameId:'PRIVATE-FRAME',loaderId:'PRIVATE-LOADER',type:'Image',request:image});
+driver.event('Fetch.requestPaused',{requestId:'PRIVATE-FETCH',networkId:'PRIVATE-NET',frameId:'PRIVATE-FRAME',resourceType:'Image',request:image});
+driver.event('Network.loadingFailed',{requestId:'PRIVATE-NET',type:'Image',canceled:true});
+reject(new Error('Invalid InterceptionId. PRIVATE_COOKIE=secret'));await new Promise(resolve=>setImmediate(resolve));
+recordFirstAuthCdpFailure(driver.authDiagnostics,'Runtime.evaluate',new Error('Target closed PRIVATE'));
+process.stdout.write(JSON.stringify(failureReceipt('authentication',null,null,'profile-proof',null,driver.authDiagnostics)));
+"""
+        result=subprocess.run(['node','--input-type=module','-e',program],cwd=Path(__file__).resolve().parent,capture_output=True,timeout=10,check=True)
+        self.assertLess(len(result.stdout),4096);self.assertNotIn(b'PRIVATE',result.stdout);self.assertNotIn(b'secret',result.stdout)
+        row=json.loads(result.stdout);self.assertEqual(hosted_browser.validate_failure_receipt(row),row)
+        self.assertTrue(row['browserFailed']);self.assertEqual(row['authDiagnostics']['cdpFailure'],'target-closed')
+        self.assertEqual(row['authDiagnostics']['interceptionDiagnostics']['verifiedCanceledImageContinuations'],1)
     def test_auth_ready_requires_exact_fixture_identity_proof_and_boolean_redirect(self):
         row={'authenticated':True,'sandboxVerified':True,'fixtureProfileVerified':True,'normalLoginAutoRedirectObserved':False}
         self.assertEqual(hosted_browser.validate_auth_ready(row),row)

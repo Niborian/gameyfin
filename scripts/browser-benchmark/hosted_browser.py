@@ -33,8 +33,8 @@ def validate_navigation_progress(value):
     row=value['navigationProgress']
     if not isinstance(row,dict) or not {'routeIndex','stage','readiness'}<=set(row) or not set(row)<={'routeIndex','stage','readiness','observation','proxyDiagnostics'}:raise ValueError('Browser progress schema')
     if 'proxyDiagnostics' in row:
-        proxy=row['proxyDiagnostics'];keys={'requests','active','queued','peakActive','peakQueued','deniedCapacity','deniedRequestBudget','deniedPolicy','deniedDeadline','deniedClosed'}
-        if not isinstance(proxy,dict) or set(proxy)!=keys or any(type(proxy[k]) is not int or not 0<=proxy[k]<=(8 if k in ('active','queued','peakActive','peakQueued') else 256) for k in keys):raise ValueError('Browser proxy diagnostic schema')
+        proxy=row['proxyDiagnostics'];keys={'requests','active','queued','peakActive','peakQueued','sockets','reservedSockets','peakSockets','idleSocketsReclaimed','socketRefusals','deniedCapacity','deniedRequestBudget','deniedPolicy','deniedDeadline','deniedClosed'}
+        if not isinstance(proxy,dict) or set(proxy)!=keys or any(type(proxy[k]) is not int or not 0<=proxy[k]<=(8 if k in ('active','queued','peakActive','peakQueued','reservedSockets') else 32 if k in ('sockets','peakSockets') else 256) for k in keys) or proxy['sockets']+proxy['reservedSockets']>32:raise ValueError('Browser proxy diagnostic schema')
     if type(row['routeIndex']) is not int or not 1<=row['routeIndex']<=3 or row['stage'] not in ('navigate','content','cover-body','complete'):raise ValueError('Browser progress value')
     readiness=row['readiness']
     keys={'pathMatches','contentReady','coverTitlePresent','coverPresent','coverComplete','dimensionsMatch'}

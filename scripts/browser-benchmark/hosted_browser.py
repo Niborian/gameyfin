@@ -31,7 +31,10 @@ REQUIRED = {'domContentLoadedMs','loadMs','routeContentReadyMs','coverDecodedMs'
 def validate_navigation_progress(value):
     if not isinstance(value,dict) or set(value)!={'navigationProgress'}:raise ValueError('Browser progress schema')
     row=value['navigationProgress']
-    if not isinstance(row,dict) or set(row) not in ({'routeIndex','stage','readiness'},{'routeIndex','stage','readiness','observation'}):raise ValueError('Browser progress schema')
+    if not isinstance(row,dict) or not {'routeIndex','stage','readiness'}<=set(row) or not set(row)<={'routeIndex','stage','readiness','observation','proxyDiagnostics'}:raise ValueError('Browser progress schema')
+    if 'proxyDiagnostics' in row:
+        proxy=row['proxyDiagnostics'];keys={'requests','active','queued','peakActive','peakQueued','deniedCapacity','deniedRequestBudget','deniedPolicy','deniedDeadline','deniedClosed'}
+        if not isinstance(proxy,dict) or set(proxy)!=keys or any(type(proxy[k]) is not int or not 0<=proxy[k]<=(8 if k in ('active','queued','peakActive','peakQueued') else 256) for k in keys):raise ValueError('Browser proxy diagnostic schema')
     if type(row['routeIndex']) is not int or not 1<=row['routeIndex']<=3 or row['stage'] not in ('navigate','content','cover-body','complete'):raise ValueError('Browser progress value')
     readiness=row['readiness']
     keys={'pathMatches','contentReady','coverTitlePresent','coverPresent','coverComplete','dimensionsMatch'}
@@ -41,7 +44,8 @@ def validate_navigation_progress(value):
         if not isinstance(observation,dict) or set(observation)!=flags|rpcs or any(type(observation[k]) is not bool for k in flags):raise ValueError('Browser navigation observation schema')
         for kind in rpcs:
             rpc=observation[kind]
-            if not isinstance(rpc,dict) or set(rpc)!={'status','completion'} or rpc['status'] not in ('not-observed','1xx','2xx','3xx','4xx','5xx','invalid') or rpc['completion'] not in ('not-observed','pending','finished','failed'):raise ValueError('Browser navigation RPC enum')
+            if not isinstance(rpc,dict) or set(rpc) not in ({'status','completion'},{'status','completion','httpStatus','proxyDeny'}) or rpc['status'] not in ('not-observed','1xx','2xx','3xx','4xx','5xx','invalid') or rpc['completion'] not in ('not-observed','pending','finished','failed'):raise ValueError('Browser navigation RPC enum')
+            if 'httpStatus' in rpc and ((rpc['httpStatus'] is not None and (type(rpc['httpStatus']) is not int or not 100<=rpc['httpStatus']<=599)) or rpc['proxyDeny'] not in ('not-observed','none','capacity','request-budget','policy','deadline','closed','invalid')):raise ValueError('Browser navigation RPC status boundary')
     return value
 
 def validate_auth_ready(value):

@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import vm from 'node:vm';
-import {FixtureUiDriver,connectAndMeasure,navigationProgress,navigationObservation,observedRouteExpression,authReadiness,safeAuthDiagnostics,loginResultHeader,fixtureProfileExpression,fixtureIdentityMenuExpression,profileReadiness,profileDiagnostic,classifyUserInfoBody,cookieDiagnostics,requestCookieProjection,responseCookieProjection,loginFormExpression} from './frontend_ui_driver.mjs';
+import {FixtureUiDriver,connectAndMeasure,navigationProgress,navigationObservation,observedRouteExpression,safeProxyDiagnostics,authReadiness,safeAuthDiagnostics,loginResultHeader,fixtureProfileExpression,fixtureIdentityMenuExpression,profileReadiness,profileDiagnostic,classifyUserInfoBody,cookieDiagnostics,requestCookieProjection,responseCookieProjection,loginFormExpression} from './frontend_ui_driver.mjs';
 import {recordFirstAuthCdpFailure} from './browser_entry.mjs';
 const config={origin:'http://127.0.0.1:53123',coverId:7,coverSha256:'0'.repeat(64)};
 const readyAuth={originMatches:true,loginPath:false,usernamePresent:false,passwordPresent:false,submitPresent:false,submitDisabled:false,invalidCredentialsDisplayed:false,documentReady:'complete'};
@@ -362,7 +362,7 @@ test('navigation observations classify exact RPC lifecycle and exceptions withou
  driver.poll=async(expression,observe)=>{
   for(const [i,path] of ['/connect/LibraryEndpoint/getAll','/connect/GameEndpoint/getAll','/connect/UserEndpoint/getUserInfo'].entries()){
    driver.event('Network.requestWillBeSent',{requestId:'PRIVATE-'+i,request:{url:config.origin+path,method:'POST',postData:'PRIVATE-BODY'}});
-   driver.event('Network.responseReceived',{requestId:'PRIVATE-'+i,response:{url:config.origin+path,status:i===1?403:200}});
+   driver.event('Network.responseReceived',{requestId:'PRIVATE-'+i,response:{url:config.origin+path,status:i===1?403:200,headers:i===1?{'X-Gameyfin-Fixture-Proxy-Deny':'capacity'}:{}}});
    driver.event(i===2?'Network.loadingFailed':'Network.loadingFinished',{requestId:'PRIVATE-'+i});
   }
   driver.event('Runtime.exceptionThrown',{exceptionDetails:{text:'PRIVATE-ERROR'}});
@@ -377,11 +377,22 @@ test('navigation observations classify exact RPC lifecycle and exceptions withou
  };
  await assert.rejects(driver.navigate('/game/33000'),/bounded fixture stop/);
  const observation=progress.at(-1).observation;
- assert.deepEqual(observation.library,{status:'4xx',completion:'finished'});
- assert.deepEqual(observation.game,{status:'4xx',completion:'finished'});
- assert.deepEqual(observation.profile,{status:'2xx',completion:'failed'});
+ assert.deepEqual(observation.library,{status:'4xx',completion:'finished',httpStatus:403,proxyDeny:'none'});
+ assert.deepEqual(observation.game,{status:'4xx',completion:'finished',httpStatus:403,proxyDeny:'capacity'});
+ assert.deepEqual(observation.profile,{status:'2xx',completion:'failed',httpStatus:200,proxyDeny:'none'});
  assert.equal(observation.uncaughtExceptionSeen,true);assert(!JSON.stringify(progress).includes('PRIVATE'));
  for(let i=0;i<40;i++)driver.event('Network.requestWillBeSent',{requestId:'bounded-'+i,request:{url:config.origin+'/connect/GameEndpoint/getAll',method:'POST'}});
  assert.equal(driver.navigationRequestCount,32);assert(driver.navigationRequests.size<=32);assert.equal(driver.navigationState.truncated,true);
  for(const bad of [{domRootPresent:1},{uncaughtExceptionSeen:'PRIVATE'},{raw:'PRIVATE'},{game:{status:403,completion:'finished'}},{game:{status:'2xx',completion:'PRIVATE'}}])assert.throws(()=>navigationObservation({...observation,...bad}));
+ const inherited=Object.assign(Object.create({status:'2xx',completion:'finished'}),{raw:'PRIVATE',other:'PRIVATE'});
+ assert.throws(()=>navigationObservation({...observation,game:inherited}));
+ const hidden=Object.defineProperty({status:'2xx',completion:'finished'},'raw',{value:'PRIVATE',enumerable:false});
+ assert.deepEqual(navigationObservation({...observation,game:hidden}).game,{status:'2xx',completion:'finished'});
+});
+
+test('proxy observations accept bounded counters only, never raw denial text',()=>{
+ const value={requests:256,active:8,queued:8,peakActive:8,peakQueued:8,deniedCapacity:1,deniedRequestBudget:0,deniedPolicy:0,deniedDeadline:0,deniedClosed:0};
+ assert.deepEqual(safeProxyDiagnostics(value),value);
+ for(const bad of [{requests:257},{active:9},{queued:9},{deniedPolicy:true},{raw:'secret'}])assert.throws(()=>safeProxyDiagnostics({...value,...bad}));
+ const inherited=Object.assign(Object.create({requests:1}),value);delete inherited.requests;inherited.raw='PRIVATE';assert.throws(()=>safeProxyDiagnostics(inherited));
 });

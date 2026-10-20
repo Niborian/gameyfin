@@ -80,9 +80,11 @@ process.stdout.write(JSON.stringify(rows));
             with self.assertRaises(ValueError):hosted_browser.validate_navigation_progress({'navigationProgress':bad})
     def test_node_navigation_observation_roundtrip_is_strict_and_nonsecret(self):
         program="""
-import {navigationProgress} from './frontend_ui_driver.mjs';
-const observation={domRootPresent:true,navPresent:true,signInPresent:false,staticErrorViewPresent:false,uncaughtExceptionSeen:true,truncated:false,...Object.fromEntries(['library','game','profile'].map(k=>[k,{status:'2xx',completion:'finished'}]))};
-process.stdout.write(JSON.stringify({navigationProgress:navigationProgress(2,'content',null,observation)}));
+import {navigationProgress,safeProxyDiagnostics} from './frontend_ui_driver.mjs';
+import {LoopbackProxy} from './frontend_loopback_proxy.mjs';
+const observation={domRootPresent:true,navPresent:true,signInPresent:false,staticErrorViewPresent:false,uncaughtExceptionSeen:true,truncated:false,...Object.fromEntries(['library','game','profile'].map(k=>[k,{status:'4xx',completion:'finished',httpStatus:403,proxyDeny:'capacity'}]))};
+const proxy=new LoopbackProxy('http://127.0.0.1:53123');
+process.stdout.write(JSON.stringify({navigationProgress:{...navigationProgress(2,'content',null,observation),proxyDiagnostics:safeProxyDiagnostics(proxy.diagnostics())}}));proxy.close();
 """
         result=subprocess.run(['node','--input-type=module','-e',program],cwd=Path(__file__).resolve().parent,capture_output=True,timeout=10,check=True)
         self.assertLess(len(result.stdout),4096);row=json.loads(result.stdout)
@@ -90,6 +92,10 @@ process.stdout.write(JSON.stringify({navigationProgress:navigationProgress(2,'co
         progress=row['navigationProgress'];observation=progress['observation']
         for mutation in ({'domRootPresent':1},{'uncaughtExceptionSeen':'secret'},{'raw':'secret'},{'game':{'status':403,'completion':'finished'}},{'game':{'status':'2xx','completion':'secret'}}):
             with self.assertRaises(ValueError):hosted_browser.validate_navigation_progress({'navigationProgress':{**progress,'observation':{**observation,**mutation}}})
+        for mutation in ({'httpStatus':True},{'httpStatus':'secret'},{'proxyDeny':'secret'},{'raw':'secret'}):
+            with self.assertRaises(ValueError):hosted_browser.validate_navigation_progress({'navigationProgress':{**progress,'observation':{**observation,'game':{**observation['game'],**mutation}}}})
+        for mutation in ({'active':9},{'queued':9},{'requests':257},{'deniedPolicy':True},{'raw':'secret'}):
+            with self.assertRaises(ValueError):hosted_browser.validate_navigation_progress({'navigationProgress':{**progress,'proxyDiagnostics':{**progress['proxyDiagnostics'],**mutation}}})
     def test_progress_preserves_receipt_deadline_and_partial_evidence(self):
         value=HostedBrowser.__new__(HostedBrowser);value.process=Mock();value.diagnostic_output=None
         value.record_navigation_progress=Mock()

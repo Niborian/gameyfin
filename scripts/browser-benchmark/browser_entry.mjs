@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {LoopbackProxy} from './frontend_loopback_proxy.mjs';
 import {chromeProxyFlags} from './frontend_proxy_policy.mjs';
-import {FixtureUiDriver,safeAuthDiagnostics} from './frontend_ui_driver.mjs';
+import {FixtureUiDriver,safeAuthDiagnostics,safeProxyDiagnostics} from './frontend_ui_driver.mjs';
 let currentPhase='arguments',failurePhase=null,failureEmitted=false,launchFailureCategory=null,launchDiagnostics=null,authStage=null,failureCounters=null,authDiagnostics=null;
 export const authStages=Object.freeze(['interception','login-navigation','login-form','submit','redirect','profile-proof','complete']);
 export const observedNetworkEvents=Object.freeze(['Fetch.requestPaused','Network.requestWillBeSent','Network.responseReceived','Network.loadingFinished','Network.loadingFailed','Network.requestWillBeSentExtraInfo','Network.responseReceivedExtraInfo','Runtime.exceptionThrown']);
@@ -146,7 +146,7 @@ export async function main(argv){
       session.send(m,p).then(value=>{clearTimeout(deadline);resolve(value);},error=>{clearTimeout(deadline);if(currentPhase==='authentication'&&driver)recordFirstAuthCdpFailure(driver.authDiagnostics,m,error);reject(new Error('Private CDP operation failed'));});
     })};
     for(const name of observedNetworkEvents)session.on(name,p=>cdp.onEvent?.(name,p));
-    driver=new FixtureUiDriver(cdp,{origin,...identity,onProgress:progress=>process.stdout.write(JSON.stringify({navigationProgress:progress})+'\n')});
+    driver=new FixtureUiDriver(cdp,{origin,...identity,onProgress:progress=>process.stdout.write(JSON.stringify({navigationProgress:{...progress,proxyDiagnostics:safeProxyDiagnostics(proxy.diagnostics())}})+'\n')});
     currentPhase='input';let username=await readLine(),password=await readLine();
     if(username.length<1||username.length>128||password.length<16||password.length>256||/[\x00-\x1f\x7f]/.test(username+password))throw new Error('Private credentials boundary');
     currentPhase='authentication';const authProof=await driver.authenticate(username,password);username='';password='';

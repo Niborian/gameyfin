@@ -9,8 +9,13 @@ export function navigationProgress(routeIndex,stage,readiness=null,observation=n
 export function navigationObservation(value){
   const flags=['domRootPresent','navPresent','signInPresent','staticErrorViewPresent','uncaughtExceptionSeen','truncated'];
   const rpcs=['library','game','profile'];
-  if(!value||typeof value!=='object'||Object.keys(value).length!==9||!flags.every(k=>typeof value[k]==='boolean')||!rpcs.every(k=>value[k]&&Object.keys(value[k]).length===2&&['not-observed','1xx','2xx','3xx','4xx','5xx','invalid'].includes(value[k].status)&&['not-observed','pending','finished','failed'].includes(value[k].completion)))throw new Error('Navigation observation boundary');
-  return {...Object.fromEntries(flags.map(k=>[k,value[k]])),...Object.fromEntries(rpcs.map(k=>[k,{status:value[k].status,completion:value[k].completion}]))};
+  if(!value||typeof value!=='object'||Object.keys(value).length!==9||![...flags,...rpcs].every(k=>Object.hasOwn(value,k))||!flags.every(k=>typeof value[k]==='boolean')||!rpcs.every(k=>value[k]&&[2,4].includes(Object.keys(value[k]).length)&&Object.hasOwn(value[k],'status')&&Object.hasOwn(value[k],'completion')&&['not-observed','1xx','2xx','3xx','4xx','5xx','invalid'].includes(value[k].status)&&['not-observed','pending','finished','failed'].includes(value[k].completion)&&(Object.keys(value[k]).length===2||(Object.hasOwn(value[k],'httpStatus')&&Object.hasOwn(value[k],'proxyDeny')&&(value[k].httpStatus===null||Number.isInteger(value[k].httpStatus)&&value[k].httpStatus>=100&&value[k].httpStatus<=599)&&['not-observed','none','capacity','request-budget','policy','deadline','closed','invalid'].includes(value[k].proxyDeny)))))throw new Error('Navigation observation boundary');
+  return {...Object.fromEntries(flags.map(k=>[k,value[k]])),...Object.fromEntries(rpcs.map(k=>[k,{status:value[k].status,completion:value[k].completion,...(Object.hasOwn(value[k],'httpStatus')?{httpStatus:value[k].httpStatus,proxyDeny:value[k].proxyDeny}:{})}]))};
+}
+export function safeProxyDiagnostics(value){
+  const keys=['requests','active','queued','peakActive','peakQueued','deniedCapacity','deniedRequestBudget','deniedPolicy','deniedDeadline','deniedClosed'];
+  if(!value||typeof value!=='object'||Object.keys(value).length!==keys.length||!keys.every(k=>Object.hasOwn(value,k)&&Number.isInteger(value[k])&&value[k]>=0&&value[k]<=(['active','queued','peakActive','peakQueued'].includes(k)?8:256)))throw new Error('Proxy diagnostic boundary');
+  return Object.fromEntries(keys.map(k=>[k,value[k]]));
 }
 export function observedRouteExpression(path,coverId){
   // Shell/error observations never substitute for route content or decoded cover.
@@ -171,12 +176,12 @@ export class FixtureUiDriver {
       if(method==='Runtime.exceptionThrown')this.navigationState.uncaughtExceptionSeen=true;
       if(method==='Network.requestWillBeSent'){
         try{const u=new URL(params.request?.url);const kind=u.origin===this.origin&&params.request?.method==='POST'?({'/connect/LibraryEndpoint/getAll':'library','/connect/GameEndpoint/getAll':'game','/connect/UserEndpoint/getUserInfo':'profile'})[u.pathname]:null;
-          if(kind){if(typeof params.requestId==='string'&&params.requestId.length<=256&&this.navigationRequestCount<32){this.navigationRequestCount++;this.navigationRequests.set(params.requestId,kind);this.navigationLast.set(kind,params.requestId);this.navigationState[kind]={status:'not-observed',completion:'pending'};}else this.navigationState.truncated=true;}
+          if(kind){if(typeof params.requestId==='string'&&params.requestId.length<=256&&this.navigationRequestCount<32){this.navigationRequestCount++;this.navigationRequests.set(params.requestId,kind);this.navigationLast.set(kind,params.requestId);this.navigationState[kind]={status:'not-observed',completion:'pending',httpStatus:null,proxyDeny:'not-observed'};}else this.navigationState.truncated=true;}
         }catch{}
       }
       const kind=this.navigationRequests.get(params.requestId);
       // Per family, report the latest observed request, not an older response race.
-      if(kind&&this.navigationLast.get(kind)===params.requestId&&method==='Network.responseReceived'){const status=params.response?.status;this.navigationState[kind].status=Number.isInteger(status)&&status>=100&&status<=599?Math.floor(status/100)+'xx':'invalid';}
+      if(kind&&this.navigationLast.get(kind)===params.requestId&&method==='Network.responseReceived'){const status=params.response?.status;const valid=Number.isInteger(status)&&status>=100&&status<=599;this.navigationState[kind].status=valid?Math.floor(status/100)+'xx':'invalid';this.navigationState[kind].httpStatus=valid?status:null;const marker=Object.entries(params.response?.headers||{}).find(([key])=>key.toLowerCase()==='x-gameyfin-fixture-proxy-deny')?.[1];this.navigationState[kind].proxyDeny=marker===undefined?'none':['capacity','request-budget','policy','deadline','closed'].includes(marker)?marker:'invalid';}
       if(kind&&['Network.loadingFinished','Network.loadingFailed'].includes(method)){if(this.navigationLast.get(kind)===params.requestId)this.navigationState[kind].completion=method==='Network.loadingFinished'?'finished':'failed';this.navigationRequests.delete(params.requestId);}
     }
     if(method==='Network.requestWillBeSentExtraInfo'||method==='Network.responseReceivedExtraInfo'){
@@ -322,7 +327,7 @@ export class FixtureUiDriver {
   async navigate(path){
     if(!['/library/27003','/game/33000'].includes(path)||++this.navigations>3)throw new Error('Navigation bound');
     this.onProgress(navigationProgress(this.navigations,'navigate'));
-    this.navigationRequests.clear();this.navigationLast.clear();this.navigationRequestCount=0;this.navigationState={uncaughtExceptionSeen:false,truncated:false,...Object.fromEntries(['library','game','profile'].map(k=>[k,{status:'not-observed',completion:'not-observed'}]))};
+    this.navigationRequests.clear();this.navigationLast.clear();this.navigationRequestCount=0;this.navigationState={uncaughtExceptionSeen:false,truncated:false,...Object.fromEntries(['library','game','profile'].map(k=>[k,{status:'not-observed',completion:'not-observed',httpStatus:null,proxyDeny:'not-observed'}]))};
     this.cover=null;await this.request('Page.navigate',{url:this.origin+path});
     let lastProgress=-Infinity;
     const value=await this.poll(observedRouteExpression(path,this.coverId),value=>{

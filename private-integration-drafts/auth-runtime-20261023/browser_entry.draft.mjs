@@ -1,7 +1,7 @@
 // DRAFT ONLY: explicit hosted case1 CLI; no current harness/workflow imports this copy.
 // Hosted-container only. Normal UI login; private stdin, sanitized stdout.
 import {runPublicAuthCase} from './case1_public_auth.mjs';
-import {parseCase1Arguments,CASE1_COMMAND,case1Receipt} from './case1_protocol.mjs';
+import {parseCase1Arguments,CASE1_COMMAND,case1Receipt,validateCase1Failure} from './case1_protocol.mjs';
 import {fixedFixtureTransports} from '../../scripts/browser-benchmark/frontend_fixture_transport.mjs';
 import fs from 'node:fs/promises';
 import {createRequire} from 'node:module';
@@ -78,9 +78,9 @@ export function failureReceipt(phase,category=null,diagnostics=null,stage=null,c
   if(auth!==null&&phase!=='authentication')throw new Error('Authentication diagnostic phase boundary');
   return {browserFailed:true,phase,...(category===null?{}:{launchFailureCategory:category}),...(diagnostics===null?{}:{launchDiagnostics:diagnostics}),...(stage===null?{}:{authStage:stage}),...(counters===null?{}:{failureCounters:counters}),...(auth===null?{}:{authDiagnostics:safeAuthDiagnostics(auth)})};
 }
-let uiRounds=1,uiRound=1;
+let uiRounds=1,uiRound=1,publicAuthCase1Failure=null;
 function emit(value){process.stdout.write(JSON.stringify(uiRounds===3?{uiRound,receipt:value}:value)+'\n');}
-function emitFailure(phase){if(!failureEmitted){failureEmitted=true;emit(failureReceipt(phase,launchFailureCategory,launchDiagnostics,authStage,failureCounters,authDiagnostics));}}
+function emitFailure(phase){if(!failureEmitted){failureEmitted=true;const receipt=failureReceipt(phase,launchFailureCategory,launchDiagnostics,authStage,failureCounters,authDiagnostics);if(publicAuthCase1Failure!==null){if(phase!=='navigation')throw new Error('Case1 failure phase');receipt.publicAuthCase1Failure=validateCase1Failure(publicAuthCase1Failure);}emit(receipt);}}
 
 export function validateArguments(argv){
   if(argv.length!==3||!/^172\.(1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3}$/.test(argv[0])||argv[0].split('.').some(x=>Number(x)>255)||!/^\d{1,10}$/.test(argv[1])||Number(argv[1])<1||! /^[a-f0-9]{64}$/.test(argv[2]))throw new Error('Fixture identity boundary');
@@ -142,7 +142,7 @@ export async function main(argv){
     currentPhase='input';
     if(await readLine()!==CASE1_COMMAND)throw new Error('Exact case1 controller command required');
     currentPhase='navigation';
-    const proof=await runPublicAuthCase({driver,cdp,publicPolicyEnabled:true});
+    const proof=await runPublicAuthCase({driver,cdp,publicPolicyEnabled:true,onFailure:value=>{publicAuthCase1Failure=validateCase1Failure(value);}});
     if(timedOut)throw new Error('Controller deadline');
     emit(case1Receipt(proof,proxy.diagnostics()));
 

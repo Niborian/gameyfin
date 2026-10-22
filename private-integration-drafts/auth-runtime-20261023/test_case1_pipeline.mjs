@@ -5,7 +5,7 @@ import {EventEmitter} from 'node:events';
 import {FixtureUiDriver} from '../../scripts/browser-benchmark/frontend_ui_driver.mjs';
 import {observedNetworkEvents,bindCase1ObservedEvents,enableCase1Observation,case1ObservationReady} from './browser_entry.draft.mjs';
 import {runPublicAuthCase} from './case1_public_auth.mjs';
-import {parseCase1Arguments,validateCase1Result} from './case1_protocol.mjs';
+import {parseCase1Arguments,validateCase1Result,validateCase1Failure,CASE1_DOM_FLAGS} from './case1_protocol.mjs';
 
 async function fixture(options={}){
   const session=new EventEmitter(), calls=[], origin='http://127.0.0.1:55203';
@@ -27,7 +27,8 @@ async function fixture(options={}){
     }
     return {coverSha256Matches:options.badCover!==true}; // Synthetic result, not runtime evidence.
   };
-  driver.evaluate=async()=>{
+  driver.evaluate=async(expression)=>{
+    if(expression.includes('footerVersionMatches:'))return Object.fromEntries(CASE1_DOM_FLAGS.map(k=>[k,false]));
     if(options.frame!==false)session.emit('Page.frameNavigated',{frame:{url:origin+'/login'}});
     if(options.close!==false)session.emit('Network.webSocketClosed',{requestId:'public-ws'});
     if(options.authCatalog){request('late','/connect/GameEndpoint/getAll');session.emit('Network.loadingFinished',{requestId:'late',encodedDataLength:2});}
@@ -37,6 +38,19 @@ async function fixture(options={}){
   return {session,cdp,driver,calls,get forwarded(){return forwarded;}};
 }
 const execute=f=>runPublicAuthCase({driver:f.driver,cdp:f.cdp,publicPolicyEnabled:true});
+test('post-browse failure reports strict boolean current DOM and bounded counts without recovering assertion',async()=>{
+  const f=await fixture({close:false});let diagnostic;
+  await assert.rejects(()=>runPublicAuthCase({driver:f.driver,cdp:f.cdp,publicPolicyEnabled:true,onFailure:value=>{diagnostic=value;}}),/settlement unproved/);
+  assert.equal(diagnostic.stage,'settlement');assert.equal(diagnostic.oldWebSockets,1);
+  assert.deepEqual(validateCase1Failure(diagnostic),diagnostic);
+  for(const changed of [{stage:'arbitrary'},{pendingCatalogHttp:129},{privateText:'forbidden'},{dom:{...diagnostic.dom,rawUrl:'forbidden'}}])assert.throws(()=>validateCase1Failure({...diagnostic,...changed}));
+});
+test('diagnostic DOM unavailability is null and never changes original failure',async()=>{
+  const f=await fixture({close:false}),evaluate=f.driver.evaluate;let diagnostic;
+  f.driver.evaluate=async(expression,...args)=>{if(expression.includes('footerVersionMatches:'))throw new Error('unavailable');return evaluate(expression,...args);};
+  await assert.rejects(()=>runPublicAuthCase({driver:f.driver,cdp:f.cdp,publicPolicyEnabled:true,onFailure:value=>{diagnostic=value;}}),/settlement unproved/);
+  assert.equal(diagnostic.dom,null);
+});
 
 test('copied pipeline preserves original events and explicitly enables required CDP domains',async()=>{
   const f=await fixture();assert.equal(case1ObservationReady(f.cdp),true);

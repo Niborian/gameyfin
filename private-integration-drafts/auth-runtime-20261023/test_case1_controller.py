@@ -3,6 +3,9 @@ import ast
 import copy
 import inspect
 import io
+import json
+import os
+import tempfile
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -33,6 +36,36 @@ def receipt():
 
 
 class ProtocolTest(unittest.TestCase):
+    @unittest.skipUnless(os.name=='posix','Actual private-file permission guard requires POSIX; hosted CI executes this fixture')
+    def test_real_reader_persists_validated_failure_and_rejects_unknown_fields(self):
+        data={'stage':'anonymous-profile','dom':None,'anonymousRequestObserved':False,'anonymousProfileWasNull':False,'observationOverflow':False,'loginDocumentObserved':False,'pendingCatalogHttp':0,'oldWebSockets':0,'anonymousAdminHttp':0,'authCatalogHttp':0}
+        data.update(profileClassification='not-observed',anonymousHttpStatus=None)
+        good={'browserFailed':True,'phase':'navigation','publicAuthCase1Failure':data}
+        self.assertEqual(good,draft.validate_failure_receipt(good))
+        for bad in [dict(good,private='forbidden'),dict(good,publicAuthCase1Failure=dict(data,rawUrl='forbidden'))]:
+            with self.assertRaises(ValueError):draft.validate_failure_receipt(bad)
+        class ReadySelector:
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def register(self,*args):pass
+            def select(self,*args):return [True]
+        # Actual reader and persistence method, real pipe bytes and private temporary file.
+        for valid in [True,False]:
+            with tempfile.TemporaryDirectory() as directory:
+                path=Path(directory)/'browser.json';path.write_text('{}');path.chmod(0o600)
+                browser=draft.HostedBrowser.__new__(draft.HostedBrowser)
+                browser.diagnostic_output=path
+                read_fd,write_fd=os.pipe()
+                try:
+                    payload=good if valid else dict(good,publicAuthCase1Failure=dict(data,rawUrl='forbidden'))
+                    os.write(write_fd,(json.dumps(payload)+'\n').encode())
+                    with os.fdopen(read_fd,'rb',buffering=0) as stream:
+                        browser.process=SimpleNamespace(stdout=stream)
+                        with patch.object(draft.selectors,'DefaultSelector',ReadySelector),self.assertRaises(ValueError):browser._read_receipt(1)
+                    persisted=json.loads(path.read_text())
+                    self.assertEqual({'browserDriverFailure':good} if valid else {},persisted)
+                finally:os.close(write_fd)
+
     def test_exact_receipt_and_caps(self):
         good = receipt()
         self.assertEqual(good, draft.validate_case1_receipt(good))
@@ -62,8 +95,9 @@ class ProtocolTest(unittest.TestCase):
     def test_original_ownership_caps_receipt_reader_and_cleanup_are_unchanged(self):
         for name in ['creation_args', 'validate_app_contract', 'cleanup_known_browser', 'validate_navigation_progress']:
             self.assertEqual(inspect.getsource(getattr(original, name)), inspect.getsource(getattr(draft, name)), name)
-        for name in ['_read_receipt', 'close', 'record_navigation_progress', 'record_driver_failure']:
+        for name in ['close', 'record_navigation_progress', 'record_driver_failure']:
             self.assertEqual(inspect.getsource(getattr(original.HostedBrowser, name)), inspect.getsource(getattr(draft.HostedBrowser, name)), name)
+        self.assertEqual(inspect.getsource(original.HostedBrowser._read_receipt),inspect.getsource(draft.HostedBrowser._read_receipt).replace('value=validate_failure_receipt(value)','validate_failure_receipt(value)'))
         source = inspect.getsource(draft.HostedBrowser.__init__)
         self.assertIn("'--public-auth-case1'", source)
         self.assertIn('validate_browser_contract(created[0],self.id,owner,image)', source)

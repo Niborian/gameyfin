@@ -241,6 +241,22 @@ def validate_eligibility_diagnostic(e):
     return e
 
 def validate_failure_receipt(value):
+    case1_failure=None
+    if isinstance(value,dict) and 'publicAuthCase1Failure' in value:
+        data=value['publicAuthCase1Failure']
+        flags={'anonymousRequestObserved','anonymousProfileWasNull','observationOverflow','loginDocumentObserved'}
+        limits={'pendingCatalogHttp':128,'oldWebSockets':16,'anonymousAdminHttp':256,'authCatalogHttp':256}
+        dom_flags={'originMatches','libraryPath','gamePath','loginPath','navPresent','signInControlUnique','usernamePresent','passwordPresent','submitPresent','submitEnabled','documentComplete','footerVersionMatches'}
+        if (value.get('phase')!='navigation' or not isinstance(data,dict) or set(data)!={'stage','dom','profileClassification','anonymousHttpStatus'}|flags|set(limits) or
+            data['profileClassification'] not in ('not-observed','pending','null','fixture-user','other','invalid','failed') or
+            (data['anonymousHttpStatus'] is not None and (type(data['anonymousHttpStatus']) is not int or not 100<=data['anonymousHttpStatus']<=599)) or
+            data['stage'] not in ('version','anonymous-profile','sign-in','login-form','settlement') or
+            any(type(data[k]) is not bool for k in flags) or
+            any(type(data[k]) is not int or not 0<=data[k]<=maximum for k,maximum in limits.items()) or
+            (data['dom'] is not None and (not isinstance(data['dom'],dict) or set(data['dom'])!=dom_flags or any(type(v) is not bool for v in data['dom'].values())))):
+            raise ValueError('Case1 failure boundary')
+        case1_failure={k:({**v} if k=='dom' and v is not None else v) for k,v in data.items()}
+        value={k:v for k,v in value.items() if k!='publicAuthCase1Failure'}
     base={'browserFailed','phase'}
     categories={'crashpad-database','readonly-filesystem','sandbox-unavailable','namespace-permission','missing-shared-library','missing-executable','launch-timeout','other'}
     if (not isinstance(value,dict) or value.get('browserFailed') is not True or not base.issubset(value) or set(value)-base-{'launchFailureCategory','launchDiagnostics','authStage','failureCounters','authDiagnostics'} or
@@ -289,7 +305,7 @@ def validate_failure_receipt(value):
             data['preflightPhase'] not in ('resolve','invalid-result','stat','access','complete') or data['preflightErrno'] not in ('ENOENT','EACCES','EPERM','other') or
             (data['exitCode'] is not None and (type(data['exitCode']) is not int or not 0<=data['exitCode']<=255))):
             raise ValueError('Bounded launch diagnostics schema')
-    return value
+    return {**value,**({'publicAuthCase1Failure':case1_failure} if case1_failure is not None else {})}
 
 class HostedBrowser:
     def __init__(self,owner,image,network,app_ip,cover_id,cover_sha,*,app_id,app_image,fixture_root,waiting=False,diagnostic_output=None,ui_version=False,ui_rounds=1,public_case1=False):
@@ -365,7 +381,7 @@ class HostedBrowser:
                         raw.clear()
                         continue
                     if value.get('browserFailed') is True:
-                        validate_failure_receipt(value)
+                        value=validate_failure_receipt(value)
                         self.record_driver_failure(value)
                         raise ValueError('Private browser phase failed; sanitized receipt retained')
                     return value

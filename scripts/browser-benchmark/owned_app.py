@@ -25,6 +25,28 @@ def lifecycle_failure(phase,error,elapsed):
         'routeCategory':route if route in routes else 'other',
         'scope':'Fixed lifecycle categories only; no error messages, request bodies or credentials'}
 
+def h2_helper_failure(error,row=None):
+    """Whitelist-only diagnosis from bounded private command output; never SQL/text."""
+    parts=[];truncated=False
+    for value in (getattr(error,'stdout',''),getattr(error,'stderr','')):
+        if isinstance(value,bytes):value=value.decode('utf8','replace')
+        if not isinstance(value,str):continue
+        truncated|=len(value)>16384;parts.append(value[:8192]+value[-8192:])
+    text='\n'.join(parts)
+    allowed=('JdbcSQLSyntaxErrorException','JdbcSQLIntegrityConstraintViolationException','JdbcSQLInvalidAuthorizationSpecException','JdbcSQLNonTransientConnectionException','JdbcSQLDataException','JdbcSQLFeatureNotSupportedException','JdbcSQLNonTransientException','JdbcSQLTimeoutException','JdbcSQLTransactionRollbackException','JdbcSQLTransientConnectionException','JdbcSQLRecoverableException')
+    classes=[name for name in allowed if 'org.h2.jdbc.'+name in text]
+    codes=set(re.findall(r'\[([0-9]{5})-[0-9]{1,4}\]',text));states=set(re.findall(r'\bSQLState\s*[:=]\s*([A-Z0-9]{5})\b',text,re.I))
+    state=row.get('State',{}) if isinstance(row,dict) else {};exit_code=state.get('ExitCode');command_code=getattr(error,'returncode',None)
+    return {'scope':'UI-only stopped-H2 helper fixed enums/numbers; no SQL, messages, arguments, credentials or environment',
+        'exceptionClass':classes[0] if len(classes)==1 else 'ambiguous' if classes else 'not-observed',
+        'errorCode':int(next(iter(codes))) if len(codes)==1 else None,'sqlState':next(iter(states)).upper() if len(states)==1 else None,
+        'ambiguousCodes':len(codes)>1 or len(states)>1,'outputTruncated':truncated,
+        'mainClassMissing':'Could not find or load main class' in text,'classNotFound':'java.lang.ClassNotFoundException' in text,
+        'noClassDefinition':'java.lang.NoClassDefFoundError' in text,'heapOom':'java.lang.OutOfMemoryError' in text,
+        'commandExitCode':command_code if type(command_code) is int and -128<=command_code<=255 else None,
+        'stateObserved':isinstance(row,dict),'containerExitCode':exit_code if type(exit_code) is int and 0<=exit_code<=255 else None,
+        'oomKilled':state.get('OOMKilled') if type(state.get('OOMKilled')) is bool else None}
+
 def hosted_only():
     if os.name!='posix' or os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('RUNNER_ENVIRONMENT')!='github-hosted':
         raise ValueError('Disposable GitHub-hosted Linux only; not local/server Docker')
@@ -179,6 +201,7 @@ class OwnedApp:
         if not re.fullmatch('sha256:[a-f0-9]{64}',image):raise ValueError('Immutable local image ID required')
         if not re.fullmatch('[a-f0-9]{64}',expected_jar_sha):raise ValueError('Built exact application JAR SHA required')
         if type(ui_only) is not bool or type(watchdog_seconds) is not int or not 1<=watchdog_seconds<=1200:raise ValueError('Explicit application mode/deadline boundary')
+        self.ui_only=ui_only
         if ui_only:
             if waiting or metadata_plugin is not None or not re.fullmatch(r'/opt/gameyfin/lib/h2-[0-9.]+\.jar',h2_jar) or not 1<=len(original_plugins)<=32 or Path(direct_plugin) not in [Path(p) for p in original_plugins]:raise ValueError('Original-image UI-only inputs')
         elif h2_jar!='/opt/gameyfin/h2.jar' or original_plugins:raise ValueError('Original benchmark input contract unchanged')
@@ -298,6 +321,19 @@ class OwnedApp:
             '--entrypoint',entry,self.image,*args).strip()
         self.record(identity,self.image)
         try:command('start','--attach',identity,timeout=60)
+        except subprocess.CalledProcessError as error:
+            if self.ui_only and self.lifecycle_phase=='stopped-h2-seed' and self.diagnostic_output:
+                try:
+                    try:
+                        observed=json.loads(command('inspect',identity))[0];validate_owned(observed,self.root,self.owner,self.image,identity)
+                    except Exception:observed=None
+                    value=h2_helper_failure(error,observed);path=Path(self.diagnostic_output).with_name(Path(self.diagnostic_output).stem+'-h2-helper.json')
+                    data=json.dumps(value,sort_keys=True)
+                    if len(data.encode())>4096 or path.is_symlink() or path.parent.is_symlink():raise ValueError('Bounded H2 diagnostic destination')
+                    fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,'O_NOFOLLOW',0),0o600)
+                    with os.fdopen(fd,'w') as stream:stream.write(data)
+                except Exception:pass # Evidence failure must not prevent exact helper removal.
+            raise
         finally:
             row=json.loads(command('inspect',identity))[0]
             command('rm','--force',validate_owned(row,self.root,self.owner,self.image,identity))

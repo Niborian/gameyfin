@@ -66,14 +66,30 @@ class FixtureClient:
         match=re.search(rb'<meta[^>]*name="_csrf"[^>]*content="([^"]{1,512})"',body)
         if status!=200 or not match:raise RuntimeError('Normal fixture CSRF page unavailable')
         self.csrf=match[1].decode('ascii');return self.csrf
-    def bootstrap(self):
+    def bootstrap(self,*,ui_only=False):
+        if type(ui_only) is not bool:raise ValueError('Bootstrap mode boundary')
         self.page_csrf('/setup');password=secrets.token_urlsafe(32)
         self.request('/connect/SetupEndpoint/registerSuperAdmin',{'superAdminRegistration':
             {'username':'fixture-admin','password':password,'email':'fixture@example.invalid'}})
         self.login(password)
+        if ui_only:
+            self.ui_plugin_gate(disable_external=True)
+            return password
         for plugin in (PLUGIN_ID,'org.gameyfin.plugins.download.direct'):
             self.request('/connect/PluginEndpoint/enablePlugin',{'pluginId':plugin})
         self.plugin_gate();return password
+    def ui_plugin_gate(self,*,disable_external=False):
+        rows=self.request('/connect/PluginEndpoint/getAll',{})
+        if not isinstance(rows,list) or not 1<=len(rows)<=32 or len({p.get('id') for p in rows})!=len(rows):raise ValueError('Original plugin inventory bound')
+        direct='org.gameyfin.plugins.download.direct'
+        if not any(p.get('id')==direct for p in rows):raise ValueError('Original direct plugin missing')
+        if disable_external:
+            for p in rows:
+                if p.get('id')!=direct:self.request('/connect/PluginEndpoint/disablePlugin',{'pluginId':p['id']})
+            self.request('/connect/PluginEndpoint/enablePlugin',{'pluginId':direct})
+            return self.ui_plugin_gate()
+        if any((p.get('state')!='STARTED' if p.get('id')==direct else p.get('state')=='STARTED') for p in rows):raise ValueError('UI-only external provider isolation gate')
+        return {'originalPluginCount':len(rows),'externalMetadataDisabled':True,'directStarted':True}
     def login(self,password):
         if not isinstance(password,str) or not 32<=len(password)<=128:raise ValueError('Ephemeral fixture password bound')
         self.page_csrf('/login')

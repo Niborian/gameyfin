@@ -98,6 +98,8 @@ export async function browserResources(read=fs.readFile){
 }
 
 export async function main(argv){
+  const uiVersionOnly=argv.length===4&&argv[3]==='--ui-version=2.4.3';
+  if(uiVersionOnly)argv=argv.slice(0,3);
   const identity=validateArguments(argv);
   if(process.getuid?.()===0||process.env.GAMEYFIN_HOSTED_BROWSER!=='reviewed-fixture-only')throw new Error('Hosted nonroot boundary');
   const require=createRequire('/home/pptruser/package.json');
@@ -135,6 +137,7 @@ export async function main(argv){
     currentPhase='input';let username=await readLine(),password=await readLine();
     if(username.length<1||username.length>128||password.length<16||password.length>256||/[\x00-\x1f\x7f]/.test(username+password))throw new Error('Private credentials boundary');
     currentPhase='authentication';const authProof=await driver.authenticate(username,password);username='';password='';
+    if(uiVersionOnly){await driver.poll("(()=>({ready:[...document.querySelectorAll('p')].some(p=>p.textContent.trim()==='Unofficial Gameyfin 2.4.3')}))()",()=>{},driver.postSubmitDeadline);process.stdout.write(JSON.stringify({uiVersionVerified:true})+'\n');}
     process.stdout.write(JSON.stringify(authenticationReady(authProof))+'\n');
     let command=await readLine();
     if(command==='navigate'){

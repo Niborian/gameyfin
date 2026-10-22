@@ -1,9 +1,9 @@
-name: Reviewed Chrome-only cancellation probe
+name: Reviewed public81 original-UI first pass
 on:
   workflow_dispatch:
     inputs:
       reviewed:
-        description: Parent reviewed this exact diagnostic-only workflow
+        description: Parent reviewed this exact retained-image UI-only workflow
         required: true
         type: boolean
         default: false
@@ -13,35 +13,38 @@ on:
         type: string
 permissions:
   contents: read
+  actions: read
 concurrency:
-  group: chrome-only-cancel-probe-${{ github.ref }}
+  group: public81-ui-first-pass-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  probe:
+  ui:
     if: >-
       github.repository == 'Niborian/gameyfin' &&
       github.event_name == 'workflow_dispatch' && inputs.reviewed == true &&
       inputs.reviewed_head == github.sha
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - name: Build only reviewed Chrome fixture image; never publish
+      - name: Build only reviewed Chrome image; no app build or test suites
         run: |
-          mkdir -p .benchmark/cancel-probe
-          docker build --file scripts/browser-benchmark/Dockerfile --iidfile .benchmark/cancel-probe/image.id scripts/browser-benchmark
-      - name: Actual sandboxed network-none protocol probe; not application acceptance
+          mkdir -p .benchmark/public81-ui
+          docker build --file scripts/browser-benchmark/Dockerfile --iidfile .benchmark/public81-ui/browser.id scripts/browser-benchmark
+      - name: One retained public-image original-UI pass; no scans
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          timeout --signal=TERM --kill-after=1s 99s python3 -B scripts/browser-benchmark/chrome_smoke.py --cancel-probe --image "$(cat .benchmark/cancel-probe/image.id)" --output .benchmark/cancel-probe/result.json
-      - name: Exact current-job probe-only cleanup; never global prune
+          timeout --signal=TERM --kill-after=2s 598s python3 -B scripts/browser-benchmark/public_image_ui.py --browser-image "$(cat .benchmark/public81-ui/browser.id)" --output .benchmark/public81-ui/result.json
+      - name: Exact current-job cleanup only; no global prune
         if: always()
-        run: timeout --signal=TERM --kill-after=1s 12s python3 -B scripts/browser-benchmark/chrome_smoke.py --cancel-probe --cleanup-only
+        run: timeout --signal=TERM --kill-after=2s 40s python3 -B scripts/browser-benchmark/public_image_ui.py --cleanup-only
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
-          name: chrome-only-cancel-probe-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .benchmark/cancel-probe/*.json
+          name: public81-original-ui-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .benchmark/public81-ui/*.json
           retention-days: 7
           if-no-files-found: warn

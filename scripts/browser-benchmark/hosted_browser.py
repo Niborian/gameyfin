@@ -287,7 +287,7 @@ def validate_failure_receipt(value):
     return value
 
 class HostedBrowser:
-    def __init__(self,owner,image,network,app_ip,cover_id,cover_sha,*,app_id,app_image,fixture_root,waiting=False,diagnostic_output=None):
+    def __init__(self,owner,image,network,app_ip,cover_id,cover_sha,*,app_id,app_image,fixture_root,waiting=False,diagnostic_output=None,ui_version=False):
         if os.name!='posix' or os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('RUNNER_ENVIRONMENT')!='github-hosted':
             raise ValueError('Hosted Linux CI only')
         row=json.loads(command('network','inspect',network))[0]
@@ -301,10 +301,12 @@ class HostedBrowser:
         validate_app_contract(app_rows[0],fixture_root,owner,app_image,app_id,network,waiting=waiting)
         image_rows=json.loads(command('image','inspect',image))
         if len(image_rows)!=1 or image_rows[0].get('Id')!=image:raise ValueError('Actual browser image mismatch')
+        if type(ui_version) is not bool:raise ValueError('Optional UI version mode')
+        self.ui_version=ui_version;self.uiVersionVerified=False
         self.owner=owner;self.image=image;self.id=None;self.process=None;self.watchdog=None;self.diagnostic_output=diagnostic_output
         try:
             record_creation_intent(fixture_root,owner,image)
-            self.id=command(*creation_args(owner,image,network,app_ip,cover_id,cover_sha)).strip()
+            self.id=command(*creation_args(owner,image,network,app_ip,cover_id,cover_sha),*(['--ui-version=2.4.3'] if ui_version else [])).strip()
             if not re.fullmatch('[a-f0-9]{64}',self.id): raise ValueError('Created ID boundary')
             record_browser(fixture_root,owner,self.id,image)
             created=json.loads(command('inspect',self.id))
@@ -374,7 +376,12 @@ class HostedBrowser:
         if not isinstance(username,str) or not isinstance(password,str) or not 1<=len(username)<=128 or not 16<=len(password)<=256 or re.search(r'[\x00-\x1f\x7f]',username+password):
             raise ValueError('Private input boundary')
         self.process.stdin.write((username+'\n'+password+'\n').encode());self.process.stdin.flush()
-        ready=self._read_receipt(30)
+        auth_deadline=time.monotonic()+30
+        if getattr(self,'ui_version',False):
+            version=self._read_receipt(max(0,auth_deadline-time.monotonic()))
+            if not isinstance(version,dict) or set(version)!={'uiVersionVerified'} or version['uiVersionVerified'] is not True:raise ValueError('Original UI footer version proof')
+            self.uiVersionVerified=True
+        ready=self._read_receipt(max(0,auth_deadline-time.monotonic()))
         validate_auth_ready(ready)
         self.authenticationEvidence={k:ready[k] for k in ('normalLoginAutoRedirectObserved','fixtureProfileVerified')}
         if getattr(self,'diagnostic_output',None):

@@ -174,10 +174,14 @@ def cleanup(root,owner,*,remove_root=False):
         shutil.rmtree(root)
 
 class OwnedApp:
-    def __init__(self,image,direct_plugin,metadata_plugin,*,expected_jar_sha,waiting=False,diagnostic_output=None):
+    def __init__(self,image,direct_plugin,metadata_plugin,*,expected_jar_sha,waiting=False,diagnostic_output=None,ui_only=False,h2_jar='/opt/gameyfin/h2.jar',original_plugins=(),watchdog_seconds=1200):
         hosted_only()
         if not re.fullmatch('sha256:[a-f0-9]{64}',image):raise ValueError('Immutable local image ID required')
         if not re.fullmatch('[a-f0-9]{64}',expected_jar_sha):raise ValueError('Built exact application JAR SHA required')
+        if type(ui_only) is not bool or type(watchdog_seconds) is not int or not 1<=watchdog_seconds<=1200:raise ValueError('Explicit application mode/deadline boundary')
+        if ui_only:
+            if waiting or metadata_plugin is not None or not re.fullmatch(r'/opt/gameyfin/lib/h2-[0-9.]+\.jar',h2_jar) or not 1<=len(original_plugins)<=32 or Path(direct_plugin) not in [Path(p) for p in original_plugins]:raise ValueError('Original-image UI-only inputs')
+        elif h2_jar!='/opt/gameyfin/h2.jar' or original_plugins:raise ValueError('Original benchmark input contract unchanged')
         self.image=image;self.owner=secrets.token_hex(8);self.network='gameyfin-browser-net-'+self.owner
         self.diagnostic_output=diagnostic_output;self.diagnostic_captured=False
         self.lifecycle_phase='fixture-preparation';self.lifecycle_started=time.monotonic()
@@ -194,7 +198,9 @@ class OwnedApp:
             (self.root/'OWNER').write_text('benchmark-27-'+self.owner)
             (self.root/'IDENTITY.json').write_text(json.dumps({'owner':self.owner,'device':initial.st_dev,'inode':initial.st_ino}))
             for leaf in ('db','data','logs','plugins','plugindata'):(self.root/leaf).mkdir(mode=0o755)
-            for source in (direct_plugin,metadata_plugin):
+            plugin_sources=original_plugins if ui_only else (direct_plugin,metadata_plugin)
+            if len({Path(p).name for p in plugin_sources})!=len(plugin_sources):raise ValueError('Unique original plugin names')
+            for source in plugin_sources:
                 source=Path(source)
                 if not source.is_file() or source.is_symlink():raise ValueError('Explicit freshly built fixture plugins')
                 target=self.root/'plugins'/source.name;shutil.copyfile(source,target);target.chmod(0o644)
@@ -207,7 +213,7 @@ class OwnedApp:
                 self.waiting_root.mkdir(mode=0o777);self.waiting_root.chmod(0o777)
             self.write_ledger()
             command('network','create','--internal','--label','gameyfin.fixture.owner=benchmark-27-'+self.owner,self.network)
-            self.watchdog=subprocess.Popen([sys.executable,str(Path(__file__)),'--watchdog','--root',str(self.root),'--owner',self.owner],
+            self.watchdog=subprocess.Popen([sys.executable,str(Path(__file__)),'--watchdog','--root',str(self.root),'--owner',self.owner]+(['--deadline-seconds',str(watchdog_seconds)] if watchdog_seconds!=1200 else []),
                 stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
             self.lifecycle_phase='fixture-ownership'
             self.helper('chown',['-R','1337:1337',*('/owned/'+x for x in ('db','data','logs','plugins','plugindata')),
@@ -237,18 +243,18 @@ class OwnedApp:
             if digest!=[expected_jar_sha,'/opt/gameyfin/application.jar']:raise ValueError('Actual running app JAR differs from source receipt')
             row=self.inspect();self.ip=row['NetworkSettings']['Networks'][self.network]['IPAddress'];self.client=FixtureClient(self.ip)
             self.lifecycle_phase='setup-readiness';self.ready('/setup')
-            self.lifecycle_phase='admin-plugin-bootstrap';self.password=self.client.bootstrap()
+            self.lifecycle_phase='admin-plugin-bootstrap';self.password=self.client.bootstrap(ui_only=True) if ui_only else self.client.bootstrap()
             self.lifecycle_phase='stop-before-seed'
             command('stop','--time','20',self.id)
             if self.inspect()['State']['Running']:raise ValueError('No live H2 import')
             self.lifecycle_phase='stopped-h2-seed'
-            self.helper('java',['-Xmx128m','-cp','/opt/gameyfin/h2.jar','org.h2.tools.RunScript',
+            self.helper('java',['-Xmx128m','-cp',h2_jar,'org.h2.tools.RunScript',
                 '-url','jdbc:h2:/db/gameyfin_db;IFEXISTS=TRUE','-user','gfadmin','-password','gameyfin','-script','/seed/seed.sql'],user='1337:1337',
                 mounts=[(self.root/'db','/db',False),(self.root/'fixture','/seed',True)])
             self.lifecycle_phase='seeded-restart';command('start',self.id)
             self.lifecycle_phase='login-readiness';self.ready('/login')
             self.lifecycle_phase='seeded-login';self.client.login(self.password)
-            self.lifecycle_phase='seeded-plugin-gate';self.client.plugin_gate()
+            self.lifecycle_phase='seeded-plugin-gate';self.client.ui_plugin_gate() if ui_only else self.client.plugin_gate()
             self.lifecycle_phase='cover-ingestion';self.cover_path=self.client.ingest_cover()
             self.lifecycle_phase='cover-validation';self.client.image_gate(self.cover_path)
         except Exception as error:
@@ -350,10 +356,11 @@ class OwnedApp:
     def __exit__(self,*_):self.close()
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--watchdog',action='store_true');parser.add_argument('--cleanup-only',action='store_true')
+    parser=argparse.ArgumentParser();parser.add_argument('--watchdog',action='store_true');parser.add_argument('--cleanup-only',action='store_true');parser.add_argument('--deadline-seconds',type=int,default=1200)
     parser.add_argument('--root',type=Path,required=True);parser.add_argument('--owner',required=True);args=parser.parse_args()
     hosted_only()
-    if args.watchdog:time.sleep(1200)
+    if not 1<=args.deadline_seconds<=1200:raise ValueError('Application deadline boundary')
+    if args.watchdog:time.sleep(args.deadline_seconds)
     elif not args.cleanup_only:raise ValueError('Explicit scoped cleanup mode required')
     cleanup(args.root,args.owner,remove_root=args.cleanup_only)
 if __name__=='__main__':main()

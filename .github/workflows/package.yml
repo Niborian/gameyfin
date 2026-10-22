@@ -70,6 +70,7 @@ jobs:
         run: |
           npm ci --prefix app --ignore-scripts --no-audit --no-fund
           node --test scripts/test-auth-startup.cjs
+          node --test scripts/test-login-redirect-owner.cjs
 
       - name: Verify bounded synthetic proxy smoke validators
         run: |

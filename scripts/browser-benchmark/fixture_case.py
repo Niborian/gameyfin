@@ -80,6 +80,25 @@ class FixtureClient:
         self.plugin_gate();return password
     def ui_plugin_gate(self,*,disable_external=False):
         rows=self.request('/connect/PluginEndpoint/getAll',{})
+        diagnostic_error=None
+        diagnostic=getattr(self,'ui_plugin_diagnostic',None)
+        if not disable_external and diagnostic is not None:
+            labels={'org.gameyfin.plugins.download.direct':'direct','org.gameyfin.plugins.download.torrent':'torrent','org.gameyfin.plugins.metadata.steam':'steam','org.gameyfin.plugins.metadata.igdb':'igdb','org.gameyfin.plugins.metadata.steamgriddb':'steamgriddb'}
+            states={'CREATED','DISABLED','RESOLVED','STARTED','STOPPED','FAILED','UNLOADED'}
+            trusts={'BUNDLED','OFFICIAL','THIRD_PARTY','UNTRUSTED','UNKNOWN'}
+            validations={'VALID','INVALID','UNKNWOWN'}
+            valid_rows=isinstance(rows,list) and len(rows)<=32
+            selected=[p for p in rows if isinstance(p,dict)] if valid_rows else []
+            known={key:[p for p in selected if p.get('id')==key] for key in labels}
+            def enum(value,allowed):return value if isinstance(value,str) and value in allowed else 'UNOBSERVED'
+            snapshot={'enabledObserved':False,'inventoryBounded':valid_rows,'exactFiveCount':valid_rows and len(rows)==5,
+                'unknownIdObserved':any(p.get('id') not in labels for p in selected),'malformedRowObserved':valid_rows and len(selected)!=len(rows),
+                'plugins':{label:{'missing':not known[key],'duplicate':len(known[key])>1,
+                    'state':enum(known[key][0].get('state'),states) if len(known[key])==1 else 'UNOBSERVED',
+                    'trust':enum(known[key][0].get('trustLevel'),trusts) if len(known[key])==1 else 'UNOBSERVED',
+                    'configValidation':enum((known[key][0].get('configValidation') or {}).get('result'),validations) if len(known[key])==1 and isinstance(known[key][0].get('configValidation'),dict) else 'UNOBSERVED'} for key,label in labels.items()}}
+            try:diagnostic(snapshot)
+            except Exception as error:diagnostic_error=error
         if not isinstance(rows,list) or not 1<=len(rows)<=32 or len({p.get('id') for p in rows})!=len(rows):raise ValueError('Original plugin inventory bound')
         direct='org.gameyfin.plugins.download.direct'
         if not any(p.get('id')==direct for p in rows):raise ValueError('Original direct plugin missing')
@@ -89,6 +108,7 @@ class FixtureClient:
             self.request('/connect/PluginEndpoint/enablePlugin',{'pluginId':direct})
             return self.ui_plugin_gate()
         if any((p.get('state')!='STARTED' if p.get('id')==direct else p.get('state')=='STARTED') for p in rows):raise ValueError('UI-only external provider isolation gate')
+        if diagnostic_error is not None:raise ValueError('UI-only plugin diagnostic persistence failed') from None
         return {'originalPluginCount':len(rows),'externalMetadataDisabled':True,'directStarted':True}
     def login(self,password):
         if not isinstance(password,str) or not 32<=len(password)<=128:raise ValueError('Ephemeral fixture password bound')

@@ -265,6 +265,16 @@ class OwnedApp:
             digest=command('exec','--user','1337:1337',self.id,'sha256sum','/opt/gameyfin/application.jar').split()
             if digest!=[expected_jar_sha,'/opt/gameyfin/application.jar']:raise ValueError('Actual running app JAR differs from source receipt')
             row=self.inspect();self.ip=row['NetworkSettings']['Networks'][self.network]['IPAddress'];self.client=FixtureClient(self.ip)
+            if ui_only and diagnostic_output is not None:
+                def plugin_diagnostic(snapshot):
+                    phase={'admin-plugin-bootstrap':'pre-stop','seeded-plugin-gate':'post-restart'}.get(self.lifecycle_phase)
+                    if phase is None:raise ValueError('UI-only plugin diagnostic phase')
+                    path=Path(diagnostic_output).with_name('application-plugins-'+phase+'.json')
+                    if any(p.is_symlink() for p in [path.parent,*path.parent.parents]):raise ValueError('UI-only diagnostic parent symlink')
+                    payload=json.dumps({'phase':phase,**snapshot},allow_nan=False).encode('utf-8')
+                    if len(payload)>4096:raise ValueError('UI-only diagnostic byte bound')
+                    with os.fdopen(os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600),'wb') as sink:sink.write(payload)
+                self.client.ui_plugin_diagnostic=plugin_diagnostic
             self.lifecycle_phase='setup-readiness';self.ready('/setup')
             self.lifecycle_phase='admin-plugin-bootstrap';self.password=self.client.bootstrap(ui_only=True) if ui_only else self.client.bootstrap()
             self.lifecycle_phase='stop-before-seed'

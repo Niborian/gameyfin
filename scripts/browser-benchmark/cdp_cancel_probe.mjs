@@ -35,9 +35,9 @@ export async function probeCase(session,kind,{limitMs=15000}={}){
   await request('Page.enable');await request('Network.enable');await request('Fetch.enable',{patterns:[{urlPattern:'*',requestStage:'Request'}]});
   ledger.navigationStarted();await request('Page.navigate',{url:origin+'/a'});await loaded.promise;
   await request('Runtime.evaluate',{expression:"(()=>{const i=document.createElement('img');i.id='cover';document.body.append(i);i.src='/images/cover/1';})()"});await paused.promise;
-  if(kind==='current-document')await request('Runtime.evaluate',{expression:"(()=>{const i=document.getElementById('cover');i.remove();i.src='';})()"});
-  else{ledger.navigationStarted();await request('Page.navigate',{url:origin+'/b'});await newDocument.promise;}
+  await request('Runtime.evaluate',{expression:"(()=>{const i=document.getElementById('cover');i.remove();i.src='';})()"});
   await canceled.promise; // Deliberately held ONE request, only in this protocol test.
+  if(kind==='old-loader'){ledger.navigationStarted();await request('Page.navigate',{url:origin+'/b'});await newDocument.promise;}
   let error=null;try{await request('Fetch.continueRequest',{requestId:held.params.requestId});}catch(value){error=value;}
   const category=error?classifyCdpFailure(error,'Fetch.continueRequest'):'none';
   const eligibility=ledger.diagnose(held.assessment,error,false),terminal=ledger.terminal(held.record,error,false);

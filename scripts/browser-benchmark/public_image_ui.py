@@ -10,11 +10,11 @@ from ownership_index import create,cleanup_current,job_identity
 from fixture_case import verify_sources
 from throughput_case import metrics
 
-SOURCE='81f85eb4c5c9cfe5e0c4b4cb0b9420ea9e04f798'
-IMAGE='sha256:9ff08089c7bf46a62325766175bf20011dff2c1000370bcaa5dcae342ff7882d'
-ARTIFACT=12307145129;RUN=39511221286;SIZE=336289455
-ZIP_SHA='4c45acbfe7f371de40dc706999847cc59639c42e5f8aaf30d1843e8156c5059d'
-SCOPE='Public81 retained-image original-UI fresh-profile pass only; not same-profile relogin, scanning, performance, private integration or release acceptance'
+SOURCE='21cce95a6ea0b473ca096f6ae26a372f651baa1e'
+IMAGE='sha256:9ec1195171a00faf9715b3ef9128e5f0cd0be8042d8918907f28edeab00a7d08'
+ARTIFACT=12464351775;RUN=39864937299;SIZE=336291503
+ZIP_SHA='4148111b1a4a952a397543d25a1756e3b1a63f36701c5b69ae722faa7e92b3db'
+SCOPE='Public21cce retained-image original-UI fresh-profile pass only; not same-profile relogin, scanning, performance, private integration or release acceptance'
 API='https://api.github.com/repos/Niborian/gameyfin'
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -212,7 +212,7 @@ def execute(browser_image,output,ui_rounds=1):
     if type(ui_rounds) is not int or ui_rounds not in (1,3):raise ValueError('UI round count')
     hosted_only();root=input_root();root.mkdir(mode=0o700);info=root.stat();write(root/'OWNER.json',{'job':job_identity(),'device':info.st_dev,'inode':info.st_ino});create()
     report={'scope':SCOPE,'harnessSource':os.environ.get('GITHUB_SHA'),'complete':False,'sameProfileReloginProven':False,'scanProven':False,'performanceProven':False,'cleanupConfirmed':False};stage='artifact'
-    if ui_rounds==3:report['scope']='Public81 retained-image three-cycle same-page/profile original-UI login/browse/logout only; not scanning, performance, private integration or release acceptance'
+    if ui_rounds==3:report['scope']='Public21cce retained-image three-cycle same-page/profile original-UI login/browse/logout only; not scanning, performance, private integration or release acceptance'
     signal.signal(signal.SIGTERM,lambda *_:(_ for _ in ()).throw(TimeoutError('Controller deadline')));signal.signal(signal.SIGALRM,lambda *_:(_ for _ in ()).throw(TimeoutError('Controller deadline')));signal.alarm(570)
     try:
         report['artifact']=download(root);stage='image-inventory';evidence,direct,plugins=inventory(root);report['imageInventory']=evidence;stage='application'

@@ -1,11 +1,12 @@
 import {useAuth} from "Frontend/util/auth";
-import {useEffect, useState} from "react";
+import {useEffect, useRef, useState} from "react";
 import {Button, Card, CardBody, CardHeader, Link, useDisclosure} from "@heroui/react";
 import {Form, Formik} from "formik";
 import Input from "Frontend/components/general/input/Input";
 import PasswordResetModal from "Frontend/components/general/modals/PasswordResetModal";
 import SignUpModal from "Frontend/components/general/modals/SignUpModal";
 import {RegistrationEndpoint} from "Frontend/generated/endpoints";
+import {loginIsReady} from "Frontend/util/startupLifecycle";
 
 export default function LoginView() {
     const {state, login} = useAuth();
@@ -14,26 +15,59 @@ export default function LoginView() {
     const signUpModal = useDisclosure();
 
     const [signUpAllowed, setSignUpAllowed] = useState<boolean>(false);
+    const [policySettled, setPolicySettled] = useState(false);
+    const ready = loginIsReady(state.initializing, state.loading, policySettled);
+    const redirectOwner = useRef({mounted: false, interactive: false, pending: false, redirected: false});
 
     useEffect(() => {
+        redirectOwner.current.mounted = true;
+        return () => { redirectOwner.current.mounted = false; };
+    }, []);
+
+    useEffect(() => {
+        let current = true;
         if (state.user) {
-            redirectAfterLogin();
+            // An interactive submit owns its saved/default destination, even if
+            // LOGIN_SUCCESS updates state before login() returns that metadata.
+            if (!redirectOwner.current.interactive) redirectAfterLogin();
         } else {
-            RegistrationEndpoint.isSelfRegistrationAllowed().then(setSignUpAllowed);
+            setPolicySettled(false);
+            RegistrationEndpoint.isSelfRegistrationAllowed()
+                .then(allowed => { if (current) setSignUpAllowed(allowed); })
+                // Registration availability must not prevent ordinary login.
+                .catch(() => { if (current) setSignUpAllowed(false); })
+                .finally(() => { if (current) setPolicySettled(true); });
         }
+        return () => { current = false; };
     }, [state.user]);
 
     async function tryLogin(values: any, formik: any) {
-        const {defaultUrl, error, redirectUrl} = await login(values.username, values.password);
-        if (error) {
-            formik.setFieldError("username", " "); // Mark the field red, but don't show an error message
-            formik.setFieldError("password", "Invalid username and/or password.");
-        } else {
-            redirectAfterLogin(redirectUrl, defaultUrl);
+        const owner = redirectOwner.current;
+        if (!ready || !owner.mounted || owner.pending || owner.redirected) return;
+        owner.interactive = true;
+        owner.pending = true;
+        try {
+            const {defaultUrl, error, redirectUrl} = await login(values.username, values.password);
+            if (!owner.mounted) return;
+            if (error) {
+                owner.interactive = false;
+                formik.setFieldError("username", " "); // Mark the field red, but don't show an error message
+                formik.setFieldError("password", "Invalid username and/or password.");
+            } else {
+                redirectAfterLogin(redirectUrl, defaultUrl);
+            }
+        } catch (error) {
+            owner.interactive = false;
+            throw error;
+        } finally {
+            owner.pending = false;
         }
     }
 
     function redirectAfterLogin(redirectUrl?: string, defaultUrl?: string) {
+        const owner = redirectOwner.current;
+        if (!owner.mounted || owner.redirected) return;
+        owner.redirected = true;
         window.location.href = redirectUrl ?? defaultUrl ?? '/';
     }
 
@@ -76,7 +110,7 @@ export default function LoginView() {
                                                 Sign up
                                             </Button>
                                         }
-                                        <Button color="primary" type="submit" isLoading={formik.isSubmitting}>
+                                        <Button color="primary" type="submit" isDisabled={!ready} isLoading={formik.isSubmitting}>
                                             {formik.isSubmitting ? "" : "Log in"}
                                         </Button>
                                     </div>

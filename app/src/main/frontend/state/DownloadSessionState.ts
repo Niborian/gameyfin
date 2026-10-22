@@ -1,3 +1,4 @@
+import {runStartupState} from "Frontend/util/startupLifecycle";
 import {proxy} from 'valtio';
 import {BandwidthMonitoringEndpoint} from "Frontend/generated/endpoints";
 import SessionStatsDto from "Frontend/generated/org/gameyfin/app/core/download/bandwidth/SessionStatsDto";
@@ -28,24 +29,33 @@ export const downloadSessionState = proxy<DownloadSessionState>({
 });
 
 /** Subscribe to and process download session updates from backend **/
-export async function initializeDownloadSessionState() {
-    if (downloadSessionState.isLoaded) return;
+export async function initializeDownloadSessionState(signal?: AbortSignal) {
+    return runStartupState(downloadSessionState, signal, () => { downloadSessionState.all = []; downloadSessionState.byId = {}; }, async current => {
+        if (!current() || downloadSessionState.isLoaded) return;
 
-    // Fetch initial configuration data
-    const initialSessions = await BandwidthMonitoringEndpoint.getActiveSessions();
-    downloadSessionState.all = sortSessions(initialSessions);
-    initialSessions.forEach((session: SessionStatsDto) => {
-        downloadSessionState.byId[session.sessionId] = session;
-    });
-
-    // Subscribe to real-time updates
-    downloadSessionState.subscription = BandwidthMonitoringEndpoint.subscribe().onNext((downloadSessionUpdate: SessionStatsDto[][]) => {
-        downloadSessionUpdate.forEach((updateBatch: SessionStatsDto[]) => {
-            downloadSessionState.all = sortSessions(updateBatch);
-            updateBatch.forEach((session: SessionStatsDto) => {
+        try {
+            // Fetch initial configuration data
+            const initialSessions = await BandwidthMonitoringEndpoint.getActiveSessions(signal ? {signal} : undefined);
+            if (!current()) return;
+            downloadSessionState.all = sortSessions(initialSessions);
+            initialSessions.forEach((session: SessionStatsDto) => {
                 downloadSessionState.byId[session.sessionId] = session;
             });
-        });
+
+            // Subscribe to real-time updates
+            downloadSessionState.subscription = BandwidthMonitoringEndpoint.subscribe().onNext((downloadSessionUpdate: SessionStatsDto[][]) => {
+                if (!current()) return;
+                downloadSessionUpdate.forEach((updateBatch: SessionStatsDto[]) => {
+                    downloadSessionState.all = sortSessions(updateBatch);
+                    updateBatch.forEach((session: SessionStatsDto) => {
+                        downloadSessionState.byId[session.sessionId] = session;
+                    });
+                });
+            });
+        } catch (error) {
+            if (!current()) return;
+            throw error;
+        }
     });
 }
 

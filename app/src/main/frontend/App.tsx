@@ -1,4 +1,4 @@
-import {Outlet, useHref, useNavigate} from 'react-router';
+import {Outlet, useHref, useNavigate, useLocation} from 'react-router';
 import "./main.css";
 import {HeroUIProvider} from "@heroui/react";
 import {ThemeProvider as NextThemesProvider} from "next-themes";
@@ -20,6 +20,7 @@ import {initializePlatformState} from "Frontend/state/PlatformState";
 import {initializeDownloadSessionState} from "Frontend/state/DownloadSessionState";
 import {initializeUserState} from "Frontend/state/UserState";
 import {initializeCollectionState} from "Frontend/state/CollectionState";
+import {isAuthOnlyRoute} from "Frontend/util/startupLifecycle";
 
 export default function App() {
     client.middlewares = [ErrorHandlingMiddleware];
@@ -50,23 +51,28 @@ export default function App() {
 
 function ViewWithAuth() {
     const auth = useAuth();
+    const {pathname} = useLocation();
+    const admin = isAdmin(auth);
+    const authOnly = isAuthOnlyRoute(pathname);
 
     useEffect(() => {
-        if (auth.state.initializing || auth.state.loading) return;
+        if (auth.state.initializing || auth.state.loading || authOnly) return;
+        const lifecycle = new AbortController();
 
-        initializeLibraryState();
-        initializeCollectionState();
-        initializePlatformState();
-        initializeGameRequestState();
-        initializePluginState();
-        initializeGameState();
+        initializeLibraryState(lifecycle.signal);
+        initializeCollectionState(lifecycle.signal);
+        initializePlatformState(lifecycle.signal);
+        initializeGameRequestState(lifecycle.signal);
+        initializePluginState(lifecycle.signal);
+        initializeGameState(lifecycle.signal);
 
-        if (isAdmin(auth)) {
-            initializeScanState();
-            initializeDownloadSessionState();
-            initializeUserState();
+        if (admin) {
+            initializeScanState(lifecycle.signal);
+            initializeDownloadSessionState(lifecycle.signal);
+            initializeUserState(lifecycle.signal);
         }
-    }, [auth]);
+        return () => lifecycle.abort();
+    }, [auth.state.initializing, auth.state.loading, auth.state.user?.id, auth.state.user?.username, admin, authOnly]);
 
     return <>
         <IconContext.Provider value={{size: 20}}>

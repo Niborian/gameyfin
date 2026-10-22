@@ -1,3 +1,4 @@
+import {runStartupState} from "Frontend/util/startupLifecycle";
 import {Subscription} from "@vaadin/hilla-frontend";
 import {proxy} from "valtio/index";
 import {LibraryEndpoint} from "Frontend/generated/endpoints";
@@ -42,31 +43,40 @@ export const libraryState = proxy<LibraryState>({
 });
 
 /** Subscribe to and process state updates from backend **/
-export async function initializeLibraryState() {
-    if (libraryState.isLoaded) return;
+export async function initializeLibraryState(signal?: AbortSignal) {
+    return runStartupState(libraryState, signal, () => { libraryState.state = {}; }, async current => {
+        if (!current() || libraryState.isLoaded) return;
 
-    // Fetch initial library list
-    const initialEntries = await LibraryEndpoint.getAll();
-    initialEntries.forEach((library: LibraryDto) => {
-        libraryState.state[library.id] = library;
-    });
+        try {
+            // Fetch initial library list
+            const initialEntries = await LibraryEndpoint.getAll(signal ? {signal} : undefined);
+            if (!current()) return;
+            initialEntries.forEach((library: LibraryDto) => {
+                libraryState.state[library.id] = library;
+            });
 
-    // Subscribe to real-time updates
-    libraryState.subscription = LibraryEndpoint.subscribeToLibraryEvents().onNext((libraryEvents: LibraryEvent[]) => {
-        libraryEvents.forEach((libraryEvent: LibraryEvent) => {
-            switch (libraryEvent.type) {
-                case "created":
-                case "updated":
-                    //@ts-ignore
-                    libraryState.state[libraryEvent.library.id] = libraryEvent.library;
-                    break;
-                case "deleted":
-                    //@ts-ignore
-                    handleLibraryDeletion(libraryEvent.libraryId);
-                    //@ts-ignore
-                    delete libraryState.state[libraryEvent.libraryId];
-                    break;
-            }
-        })
+            // Subscribe to real-time updates
+            libraryState.subscription = LibraryEndpoint.subscribeToLibraryEvents().onNext((libraryEvents: LibraryEvent[]) => {
+                if (!current()) return;
+                libraryEvents.forEach((libraryEvent: LibraryEvent) => {
+                    switch (libraryEvent.type) {
+                        case "created":
+                        case "updated":
+                            //@ts-ignore
+                            libraryState.state[libraryEvent.library.id] = libraryEvent.library;
+                            break;
+                        case "deleted":
+                            //@ts-ignore
+                            handleLibraryDeletion(libraryEvent.libraryId);
+                            //@ts-ignore
+                            delete libraryState.state[libraryEvent.libraryId];
+                            break;
+                    }
+                })
+            });
+        } catch (error) {
+            if (!current()) return;
+            throw error;
+        }
     });
 }

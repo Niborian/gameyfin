@@ -1,0 +1,11 @@
+# This Dockerfile-specific context contains public browser sources and exactly3
+# reviewed draft browser modules, not controller state or other private drafts.
+**
+!scripts/
+!scripts/browser-benchmark/
+!scripts/browser-benchmark/*.mjs
+!private-integration-drafts/
+!private-integration-drafts/auth-runtime-20261023/
+!private-integration-drafts/auth-runtime-20261023/browser_entry.draft.mjs
+!private-integration-drafts/auth-runtime-20261023/case1_public_auth.mjs
+!private-integration-drafts/auth-runtime-20261023/case1_protocol.mjs

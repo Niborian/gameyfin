@@ -1,0 +1,54 @@
+diff --git a/scripts/browser-benchmark/hosted_browser.py b/private-integration-drafts/auth-runtime-20261023/hosted_browser_case1.py
+index dd02458b..2619f375 100644
+--- a/scripts/browser-benchmark/hosted_browser.py
++++ b/private-integration-drafts/auth-runtime-20261023/hosted_browser_case1.py
+@@ -6,0 +7,4 @@ stdin. Caller is responsible for a <=15s held-provider callback budget.
++# Draft copy: actual hosted transport/caps/cleanup retained; no current harness imports it.
++import sys
++from pathlib import Path
++sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts' / 'browser-benchmark'))
+@@ -291 +295 @@ class HostedBrowser:
+-    def __init__(self,owner,image,network,app_ip,cover_id,cover_sha,*,app_id,app_image,fixture_root,waiting=False,diagnostic_output=None,ui_version=False,ui_rounds=1):
++    def __init__(self,owner,image,network,app_ip,cover_id,cover_sha,*,app_id,app_image,fixture_root,waiting=False,diagnostic_output=None,ui_version=False,ui_rounds=1,public_case1=False):
+@@ -306,0 +311,5 @@ class HostedBrowser:
++        if public_case1 is not True or ui_version or ui_rounds != 1:raise ValueError('Exact public case1 browser mode required')
++        expected_entry=['node','/opt/gameyfin-browser/private-integration-drafts/auth-runtime-20261023/browser_entry.draft.mjs']
++        image_config=image_rows[0].get('Config',{})
++        if image_config.get('Entrypoint')!=expected_entry or image_config.get('Labels',{}).get('org.gameyfin.browser.auth-case')!='public-auth-case1-v1':raise ValueError('Actual reviewed case1 browser entry required')
++        self.public_case1=public_case1
+@@ -312 +321 @@ class HostedBrowser:
+-            self.id=command(*creation_args(owner,image,network,app_ip,cover_id,cover_sha),*(['--ui-version=2.4.3'] if ui_version else []),*(['--ui-rounds=3'] if ui_rounds==3 else [])).strip()
++            self.id=command(*creation_args(owner,image,network,app_ip,cover_id,cover_sha),*(['--ui-version=2.4.3'] if ui_version else []),*(['--ui-rounds=3'] if ui_rounds==3 else []),'--public-auth-case1').strip()
+@@ -326 +335 @@ class HostedBrowser:
+-            self.watchdog=subprocess.Popen([sys.executable,str(Path(__file__).with_name('owned_container_watchdog.py')),
++            self.watchdog=subprocess.Popen([sys.executable,str((Path(__file__).resolve().parents[2] / 'scripts' / 'browser-benchmark' / 'owned_container_watchdog.py')),
+@@ -381,0 +391,8 @@ class HostedBrowser:
++    def public_auth_case1(self):
++        if getattr(self,'public_case1',False) is not True:raise ValueError('Case1 mode required')
++        if getattr(self,'case1_complete',False):raise ValueError('Case1 may run only once')
++        self.process.stdin.write(b'public-auth-case1\n');self.process.stdin.flush()
++        receipt=validate_case1_receipt(self._read_receipt(60))
++        self.case1_complete=True
++        return receipt
++
+@@ -457,0 +475,20 @@ class HostedBrowser:
++
++
++CASE1_WINDOW='login-document-start-to-first-enabled-login-form-checkpoint'
++def validate_case1_result(value):
++    yes={'uiVersionVerified','anonymousProfileWasNull','originalPublicLibraryAndGamePassed','coversDecodedAndHashVerified','actualSignInAndLoginReadinessPassed','oldDocumentCatalogHttpAndWebSocketsSettledAtCheckpoint'}
++    no={'anonymousAdminSubscriptionAbsenceProven','sameDocumentReactCancellationProven','staleSubscriptionCallbackFencingProven','fullIssue154AcceptanceProven'}
++    zero={'authDocumentCatalogRpcCount','anonymousAdminListHttpRpcCount'}
++    rest={'authCatalogObservationWindow','naturalPendingCatalogAtSignIn','catalogRequestsCancelled'}
++    if not isinstance(value,dict) or set(value)!=yes|no|zero|rest or any(value[k] is not True for k in yes) or any(value[k] is not False for k in no) or any(type(value[k]) is not int or value[k]!=0 for k in zero) or value['authCatalogObservationWindow']!=CASE1_WINDOW:raise ValueError('Exact scoped case1 proof required')
++    for key,limit in [('naturalPendingCatalogAtSignIn',128),('catalogRequestsCancelled',256)]:
++        if type(value[key]) is not int or not 0<=value[key]<=limit:raise ValueError('Case1 count bound')
++    return dict(value)
++
++def validate_case1_receipt(value):
++    if not isinstance(value,dict) or set(value)!={'publicAuthCase1','proxyDiagnostics'}:raise ValueError('Exact case1 receipt schema')
++    proof=validate_case1_result(value['publicAuthCase1'])
++    # Reuse the original strict proxy schema/budgets; this wrapper validates only,
++    # and is not emitted or interpreted as a fabricated navigation observation.
++    validate_navigation_progress({'navigationProgress':{'routeIndex':1,'stage':'complete','readiness':None,'proxyDiagnostics':value['proxyDiagnostics']}})
++    return {'publicAuthCase1':proof,'proxyDiagnostics':dict(value['proxyDiagnostics'])}

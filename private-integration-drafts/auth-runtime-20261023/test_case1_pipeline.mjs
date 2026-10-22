@@ -1,0 +1,91 @@
+// Pure dispatch fixtures only; these are NOT actual browser/runtime acceptance.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {EventEmitter} from 'node:events';
+import {FixtureUiDriver} from '../../scripts/browser-benchmark/frontend_ui_driver.mjs';
+import {observedNetworkEvents,bindCase1ObservedEvents,enableCase1Observation,case1ObservationReady} from './browser_entry.draft.mjs';
+import {runPublicAuthCase} from './case1_public_auth.mjs';
+import {parseCase1Arguments,validateCase1Result} from './case1_protocol.mjs';
+
+async function fixture(options={}){
+  const session=new EventEmitter(), calls=[], origin='http://127.0.0.1:55203';
+  const cdp={onEvent:null,request:async(method)=>{calls.push(method);return method==='Network.getResponseBody'?{body:'null',base64Encoded:false}:{};}};
+  const driver=new FixtureUiDriver(cdp,{origin,coverId:42,coverSha256:'a'.repeat(64)});
+  let forwarded=0;const owner=cdp.onEvent;cdp.onEvent=(...args)=>{forwarded++;owner(...args);};
+  if(options.bound!==false)bindCase1ObservedEvents(session,cdp);
+  if(options.bound!==false&&options.enabled!==false)await enableCase1Observation(cdp);
+  const request=(id,path)=>session.emit('Network.requestWillBeSent',{requestId:id,request:{url:origin+path,method:'POST'},timestamp:1});
+  driver.navigate=async()=>{
+    driver.navigations++;
+    if(driver.navigations===1){
+      request('anonymous','/connect/UserEndpoint/getUserInfo');
+      session.emit('Network.responseReceived',{requestId:'anonymous',response:{url:origin+'/connect/UserEndpoint/getUserInfo',status:200,headers:{}}});
+      session.emit('Network.loadingFinished',{requestId:'anonymous',encodedDataLength:4});
+      session.emit('Network.webSocketCreated',{requestId:'public-ws',url:'ws://127.0.0.1:55203/HILLA/push'});
+      if(options.admin)request('admin',options.admin);
+      if(options.overflow)for(let i=0;i<257;i++)session.emit('Page.frameNavigated',{frame:{url:origin+'/game/33000'}});
+    }
+    return {coverSha256Matches:options.badCover!==true}; // Synthetic result, not runtime evidence.
+  };
+  driver.evaluate=async()=>{
+    if(options.frame!==false)session.emit('Page.frameNavigated',{frame:{url:origin+'/login'}});
+    if(options.close!==false)session.emit('Network.webSocketClosed',{requestId:'public-ws'});
+    if(options.authCatalog){request('late','/connect/GameEndpoint/getAll');session.emit('Network.loadingFinished',{requestId:'late',encodedDataLength:2});}
+    return true;
+  };
+  driver.poll=async()=>({ready:true}); // No sleep or actual browser in dispatch tests.
+  return {session,cdp,driver,calls,get forwarded(){return forwarded;}};
+}
+const execute=f=>runPublicAuthCase({driver:f.driver,cdp:f.cdp,publicPolicyEnabled:true});
+
+test('copied pipeline preserves original events and explicitly enables required CDP domains',async()=>{
+  const f=await fixture();assert.equal(case1ObservationReady(f.cdp),true);
+  assert.deepEqual(f.calls,['Page.enable','Network.enable']);
+  for(const event of observedNetworkEvents)assert.equal(f.session.listenerCount(event),1);
+  for(const event of ['Page.frameNavigated','Network.webSocketCreated','Network.webSocketClosed'])assert.equal(f.session.listenerCount(event),1);
+  const result=await execute(f);assert.ok(f.forwarded>0);
+  assert.equal(result.authDocumentCatalogRpcCount,0);
+  assert.equal(result.authCatalogObservationWindow,'login-document-start-to-first-enabled-login-form-checkpoint');
+  assert.equal(result.anonymousAdminSubscriptionAbsenceProven,false);
+  assert.equal(result.sameDocumentReactCancellationProven,false);
+  assert.equal(result.fullIssue154AcceptanceProven,false);
+  assert.deepEqual(validateCase1Result(result),result);
+});
+test('missing binding or missing domain enable cannot yield absence proof',async()=>{
+  for(const options of [{bound:false},{enabled:false}]){const f=await fixture(options);await assert.rejects(()=>execute(f),/Fresh original driver/);}
+});
+test('missing frame forwarding and an unclosed real-observed socket fail closed',async()=>{
+  for(const options of [{frame:false},{close:false}]){const f=await fixture(options);await assert.rejects(()=>execute(f),/settlement unproved/);}
+});
+test('actual admin HTTP methods and late catalog calls are rejected',async()=>{
+  for(const admin of ['/connect/UserEndpoint/getAllUsers','/connect/BandwidthMonitoringEndpoint/getActiveSessions','/connect/LibraryEndpoint/subscribeToScanProgressEvents']){
+    const f=await fixture({admin});await assert.rejects(()=>execute(f),/Anonymous public identity/);
+  }
+  const f=await fixture({authCatalog:true});await assert.rejects(()=>execute(f),/settlement unproved/);
+});
+test('additional-event cap overrun is a failure, not silent zero activity',async()=>{
+  const f=await fixture({overflow:true});await assert.rejects(()=>execute(f),/Anonymous public identity/);
+});
+test('observation cap never drops original interception ownership events',()=>{
+  const session=new EventEmitter(), forwarded=[],cdp={onEvent:(method)=>forwarded.push(method)};
+  bindCase1ObservedEvents(session,cdp);
+  for(let i=0;i<257;i++)session.emit('Page.frameNavigated',{frame:{url:'http://127.0.0.1:55203/login'}});
+  session.emit('Fetch.requestPaused',{});
+  assert.equal(forwarded.filter(method=>method==='Fixture.observationOverflow').length,1);
+  assert.equal(forwarded.at(-1),'Fetch.requestPaused');
+});
+test('missing original cover proof cannot become a successful public receipt',async()=>{
+  const f=await fixture({badCover:true});await assert.rejects(()=>execute(f),/Original cover identity/);
+});
+test('actual case1 mode and receipt fields fail closed on wider claims or unknown data',async()=>{
+  assert.deepEqual(parseCase1Arguments(['172.18.0.2','42','a'.repeat(64),'--public-auth-case1']),['172.18.0.2','42','a'.repeat(64)]);
+  for(const args of [[],['x','y','z'],['x','y','z','--ui-rounds=3'],['x','y','z','--public-auth-case1','extra']])assert.throws(()=>parseCase1Arguments(args));
+  const f=await fixture(),result=await execute(f);
+  for(const changed of [{fullIssue154AcceptanceProven:true},{anonymousAdminSubscriptionAbsenceProven:true},{naturalPendingCatalogAtSignIn:129},{authDocumentCatalogRpcCount:1},{uiVersionVerified:false},{privateDto:'forbidden'},{authCatalogObservationWindow:'forever'}])assert.throws(()=>validateCase1Result({...result,...changed}));
+});
+test('observation failure before case installation remains permanently failed',async()=>{
+  const f=await fixture();
+  for(let i=0;i<257;i++)f.session.emit('Page.frameNavigated',{frame:{url:'http://127.0.0.1:55203/login'}});
+  assert.equal(case1ObservationReady(f.cdp),false);
+  await assert.rejects(()=>execute(f),/Fresh original driver/);
+});

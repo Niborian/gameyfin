@@ -1,0 +1,99 @@
+diff --git a/scripts/browser-benchmark/browser_entry.mjs b/private-integration-drafts/auth-runtime-20261023/browser_entry.draft.mjs
+index 7ca83061..31fbc6f5 100644
+--- a/scripts/browser-benchmark/browser_entry.mjs
++++ b/private-integration-drafts/auth-runtime-20261023/browser_entry.draft.mjs
+@@ -0,0 +1 @@
++// DRAFT ONLY: explicit hosted case1 CLI; no current harness/workflow imports this copy.
+@@ -2 +3,3 @@
+-import {fixedFixtureTransports} from './frontend_fixture_transport.mjs';
++import {runPublicAuthCase} from './case1_public_auth.mjs';
++import {parseCase1Arguments,CASE1_COMMAND,case1Receipt} from './case1_protocol.mjs';
++import {fixedFixtureTransports} from '../../scripts/browser-benchmark/frontend_fixture_transport.mjs';
+@@ -5,5 +8,5 @@ import {createRequire} from 'node:module';
+-import {LoopbackProxy} from './frontend_loopback_proxy.mjs';
+-import {chromeProxyFlags} from './frontend_proxy_policy.mjs';
+-import {FixtureUiDriver,safeAuthDiagnostics,safeProxyDiagnostics} from './frontend_ui_driver.mjs';
+-import {createCdpTransport,recordFirstAuthCdpFailure} from './frontend_cdp_failures.mjs';
+-export {classifyCdpFailure,recordFirstAuthCdpFailure} from './frontend_cdp_failures.mjs';
++import {LoopbackProxy} from '../../scripts/browser-benchmark/frontend_loopback_proxy.mjs';
++import {chromeProxyFlags} from '../../scripts/browser-benchmark/frontend_proxy_policy.mjs';
++import {FixtureUiDriver,safeAuthDiagnostics,safeProxyDiagnostics} from '../../scripts/browser-benchmark/frontend_ui_driver.mjs';
++import {createCdpTransport,recordFirstAuthCdpFailure} from '../../scripts/browser-benchmark/frontend_cdp_failures.mjs';
++export {classifyCdpFailure,recordFirstAuthCdpFailure} from '../../scripts/browser-benchmark/frontend_cdp_failures.mjs';
+@@ -103,4 +106,2 @@ export async function main(argv){
+-  if(argv.length===5&&argv[3]==='--ui-version=2.4.3'&&argv[4]==='--ui-rounds=3'){uiRounds=3;argv=argv.slice(0,4);}
+-  const uiVersionOnly=argv.length===4&&argv[3]==='--ui-version=2.4.3';
+-  if(uiVersionOnly)argv=argv.slice(0,3);
+-  const identity=validateArguments(argv);
++  const identity=validateArguments(parseCase1Arguments(argv));
++  uiRounds=1;
+@@ -138 +139,2 @@ export async function main(argv){
+-    for(const name of observedNetworkEvents)session.on(name,p=>cdp.onEvent?.(name,p));
++    bindCase1ObservedEvents(session,cdp);
++    await enableCase1Observation(cdp);
+@@ -140,23 +142,7 @@ export async function main(argv){
+-    for(uiRound=1;uiRound<=uiRounds;uiRound++){
+-    currentPhase='input';let username=await readLine(),password=await readLine();
+-    if(username.length<1||username.length>128||password.length<16||password.length>256||/[\x00-\x1f\x7f]/.test(username+password))throw new Error('Private credentials boundary');
+-    currentPhase='authentication';const authProof=await driver.authenticate(username,password,{alreadyOnLogin:uiRound>1});username='';password='';
+-    if(uiVersionOnly){await driver.poll("(()=>({ready:[...document.querySelectorAll('p')].some(p=>p.textContent.trim()==='Unofficial Gameyfin 2.4.3')}))()",()=>{},driver.postSubmitDeadline);emit({uiVersionVerified:true});}
+-    emit(authenticationReady(authProof));
+-    let command=await readLine();
+-    if(command==='navigate'){
+-      currentPhase='navigation';
+-      const before=await browserResources();
+-      const results=[];for(const route of ['/library/27003','/game/33000','/library/27003'])results.push(await driver.navigate(route));
+-      if(timedOut)throw new Error('Controller deadline');
+-      const after=await browserResources();
+-      emit({originalUiContentReady:true,coverDecoded:true,coverSha256Matches:true,navigations:results,browserResources:{before,after}});
+-      command=await readLine();
+-    }
+-    if(command!=='logout')throw new Error('Controller command boundary');
+-    currentPhase='logout';const loggedOut=await driver.logout();
+-    if(loggedOut?.loggedOut!==true)throw new Error('Normal UI logout gate');
+-    emit({loggedOut:true,...(uiRounds===3?{roundBudget:proxy.roundBudgetProof()}:{})});
+-    if(uiRounds===3&&uiRound<3)proxy.beginRound(uiRound+1,true);
+-    }
+-    uiRound=uiRounds;
++    currentPhase='input';
++    if(await readLine()!==CASE1_COMMAND)throw new Error('Exact case1 controller command required');
++    currentPhase='navigation';
++    const proof=await runPublicAuthCase({driver,cdp,publicPolicyEnabled:true});
++    if(timedOut)throw new Error('Controller deadline');
++    emit(case1Receipt(proof,proxy.diagnostics()));
++
+@@ -171 +157,33 @@ export async function main(argv){
+-if(process.argv[1]?.endsWith('/browser_entry.mjs'))main(process.argv.slice(2)).catch(()=>{emitFailure(failurePhase||currentPhase);process.stderr.write('Hosted browser operation failed\n');process.exitCode=1;});
++if(process.argv[1]?.endsWith('/browser_entry.draft.mjs'))main(process.argv.slice(2)).catch(()=>{emitFailure(failurePhase||currentPhase);process.stderr.write('Hosted browser operation failed\n');process.exitCode=1;});
++
++
++export const case1AdditionalEvents=Object.freeze(['Page.frameNavigated','Network.webSocketCreated','Network.webSocketClosed']);
++const case1ObservationContracts=new WeakMap();
++export function case1ObservationReady(cdp){const contract=case1ObservationContracts.get(cdp);return contract?.domainsEnabled===true&&contract.failed===false;}
++export async function enableCase1Observation(cdp){
++  const contract=case1ObservationContracts.get(cdp);
++  if(!contract)throw new Error('Case1 event pipeline must be bound first');
++  // These actual domains produce the lifecycle events; never assume listeners enable them.
++  for(const method of ['Page.enable','Network.enable'])await cdp.request(method,{});
++  if(contract.failed)throw new Error('Case1 observation already failed');
++  contract.domainsEnabled=true;
++}
++export function bindCase1ObservedEvents(session,cdp){
++  if(case1ObservationContracts.has(cdp))throw new Error('Case1 pipeline already bound');
++  // Preserve all original events, including Fetch ownership, without dropping gate events.
++  for(const name of observedNetworkEvents)session.on(name,p=>cdp.onEvent?.(name,p));
++  let additional=0,failed=false;
++  const invalid=()=>{if(!failed){failed=true;const contract=case1ObservationContracts.get(cdp);if(contract)contract.failed=true;cdp.onEvent?.('Fixture.observationOverflow',{});}};
++  const bounded=v=>typeof v==='string'&&v.length>0&&v.length<=128;
++  for(const name of case1AdditionalEvents)session.on(name,p=>{
++    if(++additional>256){invalid();return;}
++    if(name==='Page.frameNavigated'){
++      if(typeof p?.frame?.url!=='string'||p.frame.url.length>4096||p.frame.parentId!==undefined&&!bounded(p.frame.parentId)){invalid();return;}
++      cdp.onEvent?.(name,{frame:{url:p.frame.url,...(p.frame.parentId===undefined?{}:{parentId:p.frame.parentId})}});
++    }else{
++      if(!bounded(p?.requestId)||name==='Network.webSocketCreated'&&(typeof p.url!=='string'||p.url.length>4096)){invalid();return;}
++      cdp.onEvent?.(name,{requestId:p.requestId,...(name==='Network.webSocketCreated'?{url:p.url}:{})});
++    }
++  });
++  case1ObservationContracts.set(cdp,{domainsEnabled:false,failed:false});
++}

@@ -1,9 +1,9 @@
-name: Reviewed public81 original-UI first pass
+name: NEVER MERGE - reviewed public auth case1 diagnostic
 on:
   workflow_dispatch:
     inputs:
       reviewed:
-        description: Parent reviewed this exact retained-image UI-only workflow
+        description: Parent reviewed exact public synthetic case1 diagnostic commit; NEVER MERGE
         required: true
         type: boolean
         default: false
@@ -15,12 +15,13 @@ permissions:
   contents: read
   actions: read
 concurrency:
-  group: public81-ui-first-pass-${{ github.ref }}
+  group: public-auth-case1-diagnostic-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   ui:
     if: >-
       github.repository == 'Niborian/gameyfin' &&
+      github.ref == 'refs/heads/codex/public-auth-case1-20261023' &&
       github.event_name == 'workflow_dispatch' && inputs.reviewed == true &&
       inputs.reviewed_head == github.sha
     runs-on: ubuntu-24.04
@@ -29,22 +30,26 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - name: Build only reviewed Chrome image; no app build or test suites
+      - name: Limited case1 dispatch and receipt tests only; no app build
         run: |
-          mkdir -p .benchmark/public81-ui
-          docker build --file scripts/browser-benchmark/Dockerfile --iidfile .benchmark/public81-ui/browser.id scripts/browser-benchmark
-      - name: One retained public-image original-UI pass; no scans
+          timeout --signal=TERM --kill-after=2s 40s node --test private-integration-drafts/auth-runtime-20261023/test_case1_pipeline.mjs
+          timeout --signal=TERM --kill-after=2s 30s python3 -B -m unittest discover -s private-integration-drafts/auth-runtime-20261023 -p test_case1_controller.py
+      - name: Build only reviewed case1 Chrome transport; deny-all source context
+        run: |
+          mkdir -p .benchmark/public-auth-case1
+          timeout --signal=TERM --kill-after=2s 180s docker build --file private-integration-drafts/auth-runtime-20261023/Dockerfile.browser.draft --iidfile .benchmark/public-auth-case1/browser.id .
+      - name: Retained21cce public browse to login checkpoint only; not complete154
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          timeout --signal=TERM --kill-after=2s 598s python3 -B scripts/browser-benchmark/public_image_ui.py --browser-image "$(cat .benchmark/public81-ui/browser.id)" --output .benchmark/public81-ui/result.json --ui-rounds 3
+          timeout --signal=TERM --kill-after=2s 598s python3 -B private-integration-drafts/auth-runtime-20261023/controller_public_case1.py --parent-reviewed-case1 --browser-image "$(cat .benchmark/public-auth-case1/browser.id)" --output .benchmark/public-auth-case1/result.json
       - name: Exact current-job cleanup only; no global prune
         if: always()
-        run: timeout --signal=TERM --kill-after=2s 40s python3 -B scripts/browser-benchmark/public_image_ui.py --cleanup-only
+        run: timeout --signal=TERM --kill-after=2s 40s python3 -B private-integration-drafts/auth-runtime-20261023/controller_public_case1.py --cleanup-only
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
-          name: public81-original-ui-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .benchmark/public81-ui/*.json
+          name: public-auth-case1-sanitized-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .benchmark/public-auth-case1/*.json
           retention-days: 7
           if-no-files-found: warn

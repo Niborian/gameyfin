@@ -227,7 +227,7 @@ class OwnedApp:
                 source=Path(source)
                 if not source.is_file() or source.is_symlink():raise ValueError('Explicit freshly built fixture plugins')
                 target=self.root/'plugins'/source.name;shutil.copyfile(source,target);target.chmod(0o644)
-            self.fixture=generate_fixture(self.root/'fixture')
+            self.fixture=generate_fixture(self.root/'fixture',ui_only=True) if ui_only else generate_fixture(self.root/'fixture')
             (self.root/'fixture').chmod(0o755);(self.root/'fixture/seed.sql').chmod(0o644)
             self.waiting_root=None
             if waiting:

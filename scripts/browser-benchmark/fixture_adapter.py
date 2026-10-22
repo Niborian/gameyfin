@@ -4,13 +4,14 @@ PLUGIN_ID='org.gameyfin.experiments.fixture.metadata'
 def expected_ids():
     return set(range(31000,31104)) | set(range(32000,32027)) | {33000}
 
-def seed_appendix(manifest):
+def seed_appendix(manifest,*,ui_only=False):
+    if type(ui_only) is not bool:raise ValueError('Explicit seed mode')
     games=manifest['games']
     if len(games)!=132 or {game['gameId'] for game in games}!=expected_ids(): raise ValueError('exact fixture IDs required')
     lines=[]
     for library in range(27001,27005):
         lines.append("INSERT INTO LIBRARY_PLATFORMS(LIBRARY_ID,PLATFORMS) VALUES(%d,'PC_MICROSOFT_WINDOWS');"%library)
-    for game in games:
+    for game in (() if ui_only else games):
         identifier=game['gameId']
         lines.append("INSERT INTO GAME_ORIGINAL_IDS(GAME_ID,ORIGINAL_IDS,ORIGINAL_IDS_KEY) VALUES(%d,'fixture-%d','%s');"%(identifier,identifier,PLUGIN_ID))
     return '\n'.join(lines)+'\n'

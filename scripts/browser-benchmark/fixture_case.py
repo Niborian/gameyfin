@@ -8,14 +8,14 @@ from pathlib import Path
 from fixture_adapter import PLUGIN_ID,seed_appendix,validate_enrichment,validate_source_manifest
 from synthetic_image_fixture import cover_bytes,cover_route,fixture_manifest,update_game_body,validate_response
 
-def generate_fixture(output):
+def generate_fixture(output,*,ui_only=False):
     output=Path(output)
     seed_path=Path(__file__).resolve().parents[2]/'scripts/rehearsal/seed-scan-fixture.py'
     spec=importlib.util.spec_from_file_location('benchmark_seed',seed_path)
     seed=importlib.util.module_from_spec(spec);spec.loader.exec_module(seed)
     seed.generate(output,'/fixture')
     manifest=json.loads((output/'manifest.json').read_text())
-    with (output/'seed.sql').open('a',encoding='utf8') as sql:sql.write(seed_appendix(manifest))
+    with (output/'seed.sql').open('a',encoding='utf8') as sql:sql.write(seed_appendix(manifest,ui_only=ui_only))
     for path in (output/'sources').rglob('*'):path.chmod(0o755 if path.is_dir() else 0o644)
     (output/'sources').chmod(0o755)
     images=output/'images';images.mkdir(mode=0o755);images.chmod(0o755)

@@ -275,7 +275,7 @@ class OwnedApp:
                     if len(payload)>4096:raise ValueError('UI-only diagnostic byte bound')
                     with os.fdopen(os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600),'wb') as sink:sink.write(payload)
                 self.client.ui_plugin_diagnostic=plugin_diagnostic
-            self.lifecycle_phase='setup-readiness';self.ready('/setup')
+            self.lifecycle_phase='setup-readiness';self.ready('/setup',plugin_readiness=True) if ui_only else self.ready('/setup')
             self.lifecycle_phase='admin-plugin-bootstrap';self.password=self.client.bootstrap(ui_only=True) if ui_only else self.client.bootstrap()
             self.lifecycle_phase='stop-before-seed'
             command('stop','--time','20',self.id)
@@ -285,7 +285,7 @@ class OwnedApp:
                 '-url','jdbc:h2:/db/gameyfin_db;IFEXISTS=TRUE','-user','gfadmin','-password','gameyfin','-script','/seed/seed.sql'],user='1337:1337',
                 mounts=[(self.root/'db','/db',False),(self.root/'fixture','/seed',True)])
             self.lifecycle_phase='seeded-restart';command('start',self.id)
-            self.lifecycle_phase='login-readiness';self.ready('/login')
+            self.lifecycle_phase='login-readiness';self.ready('/login',plugin_readiness=True) if ui_only else self.ready('/login')
             self.lifecycle_phase='seeded-login';self.client.login(self.password)
             self.lifecycle_phase='seeded-plugin-gate';self.client.ui_plugin_gate() if ui_only else self.client.plugin_gate()
             self.lifecycle_phase='cover-ingestion';self.cover_path=self.client.ingest_cover()
@@ -347,10 +347,20 @@ class OwnedApp:
         finally:
             row=json.loads(command('inspect',identity))[0]
             command('rm','--force',validate_owned(row,self.root,self.owner,self.image,identity))
-    def ready(self,path):
+    def ready(self,path,*,plugin_readiness=False):
+        if type(plugin_readiness) is not bool:raise ValueError('Explicit plugin readiness mode')
         deadline=time.monotonic()+180
         while time.monotonic()<deadline:
-            try:self.client.page_csrf(path);return
+            try:
+                self.client.page_csrf(path)
+                if plugin_readiness:
+                    status,_,body=self.client.raw('/actuator/health/readiness',management=True)
+                    readiness=json.loads(body)
+                    if not isinstance(readiness,dict):raise ValueError('Plugin readiness JSON object required')
+                    if status!=200 or readiness.get('status')!='UP':
+                        time.sleep(1);continue
+                    if time.monotonic()>=deadline:break
+                return
             except (OSError,RuntimeError):time.sleep(1)
         raise TimeoutError('Actual application startup deadline')
     def inspect(self):

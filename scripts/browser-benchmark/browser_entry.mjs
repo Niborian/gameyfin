@@ -118,7 +118,7 @@ export async function main(argv){
   const readLine=()=>lines.length?Promise.resolve(lines.shift()):inputEnded?Promise.reject(new Error('Private input unavailable')):new Promise((resolve,reject)=>{const t=setTimeout(()=>{pending=null;reject(new Error('Private input deadline'));},15000);pending={resolve:x=>{clearTimeout(t);resolve(x);},reject:x=>{clearTimeout(t);reject(x);}};});
   try{
     currentPhase='bridge';
-    const origin='http://127.0.0.1:55201';proxy=new LoopbackProxy(origin,fixedFixtureTransports(origin,identity.appIp));await proxy.listen(55202);
+    const origin='http://127.0.0.1:55201';proxy=new LoopbackProxy(origin,{...fixedFixtureTransports(origin,identity.appIp),threeUiRounds:uiRounds===3});if(uiRounds===3)proxy.beginRound(1);await proxy.listen(55202);
     currentPhase='profile';
     profile=await fs.mkdtemp('/tmp/gameyfin-browser-');
     await fs.mkdir(profile+'/xdg-config',{mode:0o700});await fs.mkdir(profile+'/xdg-cache',{mode:0o700});
@@ -136,7 +136,7 @@ export async function main(argv){
       onFatal:(method,error)=>{if(currentPhase==='authentication'&&driver)recordFirstAuthCdpFailure(driver.authDiagnostics,method,error);},
     })};
     for(const name of observedNetworkEvents)session.on(name,p=>cdp.onEvent?.(name,p));
-    driver=new FixtureUiDriver(cdp,{origin,...identity,onProgress:progress=>emit({navigationProgress:{...progress,proxyDiagnostics:safeProxyDiagnostics(proxy.diagnostics())}})});
+    driver=new FixtureUiDriver(cdp,{origin,...identity,onProgress:progress=>emit({navigationProgress:{...progress,proxyDiagnostics:safeProxyDiagnostics(proxy.diagnostics(),uiRounds===3)}})});
     for(uiRound=1;uiRound<=uiRounds;uiRound++){
     currentPhase='input';let username=await readLine(),password=await readLine();
     if(username.length<1||username.length>128||password.length<16||password.length>256||/[\x00-\x1f\x7f]/.test(username+password))throw new Error('Private credentials boundary');
@@ -156,7 +156,8 @@ export async function main(argv){
     if(command!=='logout')throw new Error('Controller command boundary');
     currentPhase='logout';const loggedOut=await driver.logout();
     if(loggedOut?.loggedOut!==true)throw new Error('Normal UI logout gate');
-    emit({loggedOut:true});
+    emit({loggedOut:true,...(uiRounds===3?{roundBudget:proxy.roundBudgetProof()}:{})});
+    if(uiRounds===3&&uiRound<3)proxy.beginRound(uiRound+1,true);
     }
     uiRound=uiRounds;
   }catch(error){failurePhase=currentPhase;failureCounters=await browserFailureCounters();if(failurePhase==='authentication'){if(authStages.includes(driver?.authStage))authStage=driver.authStage;authDiagnostics=driver?.authDiagnostics||null;}if(failurePhase==='chrome-launch'){launchFailureCategory=classifyLaunchFailure(error);launchDiagnostics=launchFailureDiagnostics(error,preflight);}emitFailure(failurePhase);throw new Error('Hosted browser operation failed');}finally{

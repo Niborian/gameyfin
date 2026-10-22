@@ -2,10 +2,12 @@
 import http from 'node:http';import net from 'node:net';
 import {fixtureTarget,fixtureConnectTarget} from './frontend_proxy_policy.mjs';
 export class LoopbackProxy {
-  constructor(origin,{deadlineMs=90000,requestDeadlineMs=15000,dial=net.connect,request=http.request}={}){
+  constructor(origin,{deadlineMs=90000,requestDeadlineMs=15000,dial=net.connect,request=http.request,threeUiRounds=false}={}){
     fixtureTarget({method:'GET',url:origin+'/',host:new URL(origin).host},origin);
     if(!Number.isInteger(deadlineMs)||deadlineMs<1||deadlineMs>90000)throw new Error('Proxy deadline boundary');
     if(!Number.isInteger(requestDeadlineMs)||requestDeadlineMs<1||requestDeadlineMs>15000)throw new Error('Request deadline boundary');
+    if(typeof threeUiRounds!=='boolean')throw new Error('Fixed UI round policy');
+    this.threeUiRounds=threeUiRounds;this.round=1;this.roundBegun=false;this.roundCounts=[0,0,0];
     this.origin=origin;this.dial=dial;this.request=request;this.sockets=new Set();this.closed=false;this.active=0;this.count=0;this.bytes=0;this.budgetExceeded=false;this.fixtureConnectDenied=0;this.upgrades=0;
     this.queue=[];this.requestDeadlineMs=requestDeadlineMs;this.peakActive=0;this.peakQueued=0;this.denials=Object.fromEntries(['capacity','request-budget','policy','deadline','closed'].map(k=>[k,0]));
     this.inbound=new Map();this.httpEntries=new Set();this.outboundSockets=new Set();this.reservedSockets=0;this.peakSockets=0;this.peakOutboundSockets=0;this.idleSocketsReclaimed=0;this.socketRefusals=0;
@@ -18,6 +20,17 @@ export class LoopbackProxy {
     this.timer=setTimeout(()=>this.close(),deadlineMs);
   }
   socketRoom(){return this.sockets.size+this.reservedSockets<32;}
+  beginRound(round,normalUiLogoutAcknowledged=false){
+    if(!this.threeUiRounds||this.closed||typeof normalUiLogoutAcknowledged!=='boolean'||!Number.isInteger(round)||round<1||round>3||(!this.roundBegun?(round!==1||normalUiLogoutAcknowledged):(round!==this.round+1||!normalUiLogoutAcknowledged)))throw new Error('Trusted UI round transition');
+    this.round=round;this.roundBegun=true;
+  }
+  takeRequest(){
+    if(this.closed)throw this.rejection('closed');
+    if(this.threeUiRounds&&!this.roundBegun)throw this.rejection('request-budget');
+    if(this.count>=(this.threeUiRounds?768:256)||this.roundCounts[this.round-1]>=256)throw this.rejection('request-budget');
+    this.count++;this.roundCounts[this.round-1]++;
+  }
+  roundBudgetProof(){if(!this.threeUiRounds)throw new Error('UI round proof mode');return {round:this.round,counts:[...this.roundCounts],requests:this.count,perRoundLimit:256,totalLimit:768};}
   outboundRoom(){return this.socketRoom()&&this.outboundSockets.size+this.reservedSockets<8;}
   track(socket,outbound=false,closingAllowed=false){if(this.closed&&!closingAllowed||!this.socketRoom()||outbound&&this.outboundSockets.size+this.reservedSockets>=8){this.socketRefusals=Math.min(256,this.socketRefusals+1);socket.destroy();return;}this.sockets.add(socket);if(outbound)this.outboundSockets.add(socket);this.peakSockets=Math.max(this.peakSockets,this.sockets.size+this.reservedSockets);this.peakOutboundSockets=Math.max(this.peakOutboundSockets,this.outboundSockets.size+this.reservedSockets);socket.setTimeout(15000,()=>socket.destroy());socket.on('close',()=>{this.sockets.delete(socket);this.outboundSockets.delete(socket);this.drain();});socket.on('error',()=>{});return socket;}
   assignOutbound(entry,socket){const reserved=entry.reserved;this.releaseReservation(entry);if(!reserved||socket.closed===true){socket.destroy();return;}const tracked=this.track(socket,true,true);if(this.closed){socket.destroy();return;}return tracked;}
@@ -40,14 +53,14 @@ export class LoopbackProxy {
   released(){this.active--;this.drain();}
   drain(){while(!this.closed&&this.active<8&&this.queue.length){if(!this.socketRoom()){this.reclaimIdle();return;}if(!this.outboundRoom())return;const entry=this.queue.shift();entry.queued=false;if(entry.res.destroyed||entry.req.aborted||performance.now()>=entry.deadline){entry.finish('deadline');continue;}this.forward(entry);}}
   target(req){
-    if(this.closed)throw this.rejection('closed');if(this.count>=256)throw this.rejection('request-budget');this.count++;
+    this.takeRequest();
     try{if(req.rawHeaders.filter((v,i)=>i%2===0&&v.toLowerCase()==='host').length!==1)throw new Error();return fixtureTarget({method:req.method,url:req.url,host:req.headers.host,upgrade:req.headers.upgrade},this.origin);}catch{throw this.rejection('policy');}
   }
   headers(req){const h={...req.headers};delete h['proxy-authorization'];delete h['proxy-connection'];return h;}
   connect(req,socket,head){
     this.markTunnel(socket);
     let target;try{
-      if(this.closed)throw this.rejection('closed');if(this.count>=256)throw this.rejection('request-budget');this.count++;
+      this.takeRequest();
       if(this.active>=8||!this.outboundRoom())throw this.rejection('capacity');if(head.length>16384||req.rawHeaders.filter((v,i)=>i%2===0&&v.toLowerCase()==='host').length!==1)throw this.rejection('policy');
       target=fixtureConnectTarget({method:req.method,url:req.url,host:req.headers.host},this.origin);
     }catch(error){this.recordDenial(error.proxyReason);if(req.url===new URL(this.origin).host)this.fixtureConnectDenied++;socket.destroy();return;}

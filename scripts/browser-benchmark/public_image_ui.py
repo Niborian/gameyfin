@@ -221,12 +221,16 @@ def execute(browser_image,output,ui_rounds=1):
             if any(before[k] for k in ('active','draining','completed','failed')):raise ValueError('UI-only case must not scan')
             stage='browser';cover_id=int(app.cover_path.rsplit('/',1)[1])
             with HostedBrowser(app.owner,browser_image,app.network,app.ip,cover_id,app.fixture['image']['sha256'],app_id=app.id,app_image=IMAGE,fixture_root=app.root,ui_version=True,ui_rounds=ui_rounds,diagnostic_output=output.with_name('browser.json')) as browser:
-                if ui_rounds==3:report['sameProfileRounds']=[]
+                if ui_rounds==3:
+                    report['sameProfileRounds']=[]
+                    report['roundBudgetProofScope']='Cumulative snapshots at each normal UI logout, not terminal request counts; fixed768total/256per-round cap remains enforced through cleanup'
                 for round_index in range(1,ui_rounds+1):
                     browser.authenticate('fixture-admin',app.password);report['authenticationEvidence']=dict(browser.authenticationEvidence)
                     if browser.authenticationEvidence['normalLoginAutoRedirectObserved'] is not True or browser.uiVersionVerified is not True:raise ValueError('Automatic original-UI landing/version required')
                     report['uiVersionVerified']=True;report['navigation']=browser.sample();report['normalUiLogoutPassed']=browser.authenticated is False
-                    if ui_rounds==3:report['sameProfileRounds'].append({'round':round_index,'authenticationEvidence':dict(browser.authenticationEvidence),'uiVersionVerified':True,'navigation':report['navigation'],'normalUiLogoutPassed':report['normalUiLogoutPassed']})
+                    if ui_rounds==3:
+                        report['sameProfileRounds'].append({'round':round_index,'authenticationEvidence':dict(browser.authenticationEvidence),'uiVersionVerified':True,'navigation':report['navigation'],'normalUiLogoutPassed':report['normalUiLogoutPassed'],'roundBudget':dict(browser.roundBudgetProof)})
+                        report['lastRoundBudgetProof']=dict(browser.roundBudgetProof)
             report['browserCleanupConfirmed']=True;stage='final-gates';verify_sources(app.root/'fixture',app.fixture['manifest']);after=metrics(app.client)
             if ui_rounds==3:report['sameProfileReloginProven']=len(report['sameProfileRounds'])==3 and all(r['round']==i and r['normalUiLogoutPassed'] is True and r['uiVersionVerified'] is True and all(r['authenticationEvidence'].get(k) is True for k in ('normalLoginAutoRedirectObserved','fixtureProfileVerified')) and all(r['navigation'].get(k) is True for k in ('originalUiContentReady','coverDecoded','coverSha256Matches')) and len(r['navigation']['navigations'])==3 for i,r in enumerate(report['sameProfileRounds'],1))
             if any(after[k]!=before[k] for k in ('active','draining','completed','failed')):raise ValueError('UI-only scan counters changed')

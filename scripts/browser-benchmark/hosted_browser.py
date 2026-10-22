@@ -28,13 +28,14 @@ BOOLEANS = {'coverSha256Matches','fromDiskCache','fromServiceWorker'}
 REQUIRED = {'domContentLoadedMs','loadMs','routeContentReadyMs','coverDecodedMs','coverNaturalWidth','coverNaturalHeight','coverResponseStatus','coverSha256Matches','fromDiskCache','fromServiceWorker'}
 
 
-def validate_navigation_progress(value):
+def validate_navigation_progress(value,*,three_ui_rounds=False):
+    if type(three_ui_rounds) is not bool:raise ValueError('Fixed progress round mode')
     if not isinstance(value,dict) or set(value)!={'navigationProgress'}:raise ValueError('Browser progress schema')
     row=value['navigationProgress']
     if not isinstance(row,dict) or not {'routeIndex','stage','readiness'}<=set(row) or not set(row)<={'routeIndex','stage','readiness','observation','proxyDiagnostics'}:raise ValueError('Browser progress schema')
     if 'proxyDiagnostics' in row:
         proxy=row['proxyDiagnostics'];keys={'requests','active','queued','peakActive','peakQueued','sockets','reservedSockets','peakSockets','outboundSockets','peakOutboundSockets','idleSocketsReclaimed','socketRefusals','deniedCapacity','deniedRequestBudget','deniedPolicy','deniedDeadline','deniedClosed'}
-        if not isinstance(proxy,dict) or set(proxy)!=keys or any(type(proxy[k]) is not int or not 0<=proxy[k]<=(8 if k in ('active','queued','peakActive','peakQueued','reservedSockets','outboundSockets','peakOutboundSockets') else 32 if k in ('sockets','peakSockets') else 256) for k in keys) or proxy['sockets']+proxy['reservedSockets']>32 or proxy['outboundSockets']+proxy['reservedSockets']>8:raise ValueError('Browser proxy diagnostic schema')
+        if not isinstance(proxy,dict) or set(proxy)!=keys or any(type(proxy[k]) is not int or not 0<=proxy[k]<=(8 if k in ('active','queued','peakActive','peakQueued','reservedSockets','outboundSockets','peakOutboundSockets') else 32 if k in ('sockets','peakSockets') else 768 if k=='requests' and three_ui_rounds else 256) for k in keys) or proxy['sockets']+proxy['reservedSockets']>32 or proxy['outboundSockets']+proxy['reservedSockets']>8:raise ValueError('Browser proxy diagnostic schema')
     if type(row['routeIndex']) is not int or not 1<=row['routeIndex']<=3 or row['stage'] not in ('navigate','content','cover-body','complete'):raise ValueError('Browser progress value')
     readiness=row['readiness']
     keys={'pathMatches','contentReady','coverTitlePresent','coverPresent','coverComplete','dimensionsMatch'}
@@ -348,7 +349,7 @@ class HostedBrowser:
                         if set(value)!={'uiRound','receipt'} or type(value['uiRound']) is not int or value['uiRound']!=self.ui_round or not isinstance(value['receipt'],dict):raise ValueError('Exact same-profile round receipt')
                         value=value['receipt']
                     if 'navigationProgress' in value:
-                        validate_navigation_progress(value)
+                        validate_navigation_progress(value,three_ui_rounds=getattr(self,'ui_rounds',1)==3)
                         progress_count+=1
                         if progress_count>64:raise ValueError('Browser progress count bound')
                         self.record_navigation_progress(value['navigationProgress'])
@@ -409,6 +410,13 @@ class HostedBrowser:
         if remaining<=0:raise TimeoutError('Browser operation budget exhausted before logout')
         self.process.stdin.write(b'logout\n');self.process.stdin.flush()
         logged_out=self._read_receipt(remaining)
+        if getattr(self,'ui_rounds',1)==3:
+            if not isinstance(logged_out,dict) or set(logged_out)!={'loggedOut','roundBudget'}:raise ValueError('Round logout proof schema')
+            proof=logged_out['roundBudget'];keys={'round','counts','requests','perRoundLimit','totalLimit'}
+            if not isinstance(proof,dict) or set(proof)!=keys or type(proof['round']) is not int or proof['round']!=self.ui_round or type(proof['perRoundLimit']) is not int or proof['perRoundLimit']!=256 or type(proof['totalLimit']) is not int or proof['totalLimit']!=768 or not isinstance(proof['counts'],list) or len(proof['counts'])!=3 or any(type(c) is not int or not 0<=c<=256 for c in proof['counts']) or any(proof['counts'][self.ui_round:]) or type(proof['requests']) is not int or proof['requests']!=sum(proof['counts']) or proof['requests']>768:raise ValueError('Exact fixed round budget proof')
+            previous=getattr(self,'roundBudgetProof',None)
+            if previous is not None and proof['counts'][:self.ui_round-1]!=previous['counts'][:self.ui_round-1]:raise ValueError('Prior round counters changed')
+            self.roundBudgetProof=proof;logged_out={'loggedOut':logged_out['loggedOut']}
         if logged_out!={'loggedOut':True} or logged_out.get('loggedOut') is not True:raise ValueError('Normal UI logout receipt')
         self.authenticated=False
         if getattr(self,'diagnostic_output',None):

@@ -1,0 +1,26 @@
+// Focused actual LoginView characterization; no DOM/browser or transport claim.
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
+const {createRequire}=require('node:module');
+const ts=process.env.TEST_TYPESCRIPT_MODULE?require(process.env.TEST_TYPESCRIPT_MODULE):createRequire(path.resolve(__dirname,'../app/package.json'))('typescript');
+function deferred(){let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};}
+async function fixture(initialUser=null){
+    let slots=[],cursor=0,effects=[],tree,loginCalls=0;
+    const redirects=[],auth={state:{user:initialUser,initializing:false,loading:false},login:()=>{loginCalls++;return pending.promise;}},pending=deferred();
+    const react={useRef:value=>{const i=cursor++;return slots[i]??(slots[i]={current:value});},useState:value=>{const i=cursor++;slots[i]??=value;return [slots[i],v=>{slots[i]=v;}];},useEffect:(fn,deps)=>{const i=cursor++,old=slots[i];if(!old||deps.some((v,j)=>v!==old.deps[j])){effects.push(()=>{old?.cleanup?.();const cleanup=fn();slots[i]={deps,cleanup,fn};});}}};
+    const jsx=(type,props)=>({type,props});
+    const module={exports:{}},source=fs.readFileSync(path.resolve(__dirname,'../app/src/main/frontend/views/LoginView.tsx'),'utf8');
+    const compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}});
+    const lifecycleModule={exports:{}};vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.resolve(__dirname,'../app/src/main/frontend/util/startupLifecycle.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{module:lifecycleModule,exports:lifecycleModule.exports});
+    vm.runInNewContext(compiled.outputText,{module,exports:module.exports,window:{location:{set href(value){redirects.push(value);}}},require(name){if(name==='react')return react;if(name==='react/jsx-runtime')return {jsx,jsxs:jsx};if(name==='Frontend/util/startupLifecycle')return lifecycleModule.exports;if(name==='Frontend/util/auth')return {useAuth:()=>auth};if(name==='@heroui/react')return new Proxy({useDisclosure:()=>({})},{get:(o,k)=>o[k]??k});if(name==='formik')return {Form:'Form',Formik:'Formik'};if(name==='Frontend/generated/endpoints')return {RegistrationEndpoint:{isSelfRegistrationAllowed:async()=>false}};return {default:name};}});
+    function render(){cursor=0;effects=[];tree=module.exports.default();for(const effect of effects)effect();return tree;}
+    function find(node){if(!node||typeof node!=='object')return null;if(node.type==='Formik')return node;for(const child of [node.props?.children].flat(Infinity)){const result=find(child);if(result)return result;}return null;}
+    render();await new Promise(setImmediate);render();return {auth,pending,redirects,render,get loginCalls(){return loginCalls;},submit(formik={setFieldError(){}}){return find(tree).props.onSubmit({username:'synthetic',password:'not-persisted'},formik);},replayEffects(){for(const slot of slots)if(slot?.fn){slot.cleanup?.();slot.cleanup=slot.fn();}},unmount(){for(const slot of slots)slot?.cleanup?.();}};
+}
+test('interactive state update before login result preserves saved target exactly once',async()=>{const f=await fixture(),p=f.submit();f.auth.state.user={};f.render();const before=[...f.redirects];f.pending.resolve({redirectUrl:'/saved',defaultUrl:'/default'});await p;f.render();assert.deepEqual({before,after:f.redirects},{before:[],after:['/saved']});});
+test('interactive result before auth rerender uses default target exactly once',async()=>{const f=await fixture(),p=f.submit();f.pending.resolve({defaultUrl:'/default'});await p;f.auth.state.user={};f.render();f.render();assert.deepEqual(f.redirects,['/default']);});
+test('already authenticated visit and effect replay redirect once without interactive login',async()=>{const f=await fixture({});f.replayEffects();f.render();f.auth.state.user={};f.render();assert.deepEqual(f.redirects,['/']);assert.equal(f.loginCalls,0);});
+test('failed credentials retain form error and allow a successful retry',async()=>{const f=await fixture(),errors=[],p=f.submit({setFieldError:(...v)=>errors.push(v)});f.pending.resolve({error:true});await p;assert.equal(errors.length,2);assert.deepEqual(f.redirects,[]);f.auth.login=async()=>({redirectUrl:'/retry'});f.render();await f.submit();assert.deepEqual(f.redirects,['/retry']);});
+test('double submit is single flight and unmounted completion cannot redirect',async()=>{const f=await fixture(),a=f.submit(),b=f.submit(),calls=f.loginCalls;f.unmount();f.pending.resolve({redirectUrl:'/saved'});await Promise.all([a,b]);assert.deepEqual({calls,redirects:f.redirects},{calls:1,redirects:[]});});
+test('rejected login promise releases ownership for a normal retry',async()=>{const f=await fixture(),failure=new Error('Synthetic transport failure');f.auth.login=async()=>{throw failure;};f.render();await assert.rejects(f.submit(),error=>error===failure);assert.deepEqual(f.redirects,[]);f.auth.login=async()=>({defaultUrl:'/retry-default'});f.render();await f.submit();assert.deepEqual(f.redirects,['/retry-default']);});

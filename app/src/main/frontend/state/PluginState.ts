@@ -1,3 +1,4 @@
+import {runStartupState} from "Frontend/util/startupLifecycle";
 import {Subscription} from "@vaadin/hilla-frontend";
 import PluginDto from "Frontend/generated/org/gameyfin/app/core/plugins/dto/PluginDto";
 import PluginUpdateDto from "Frontend/generated/org/gameyfin/app/core/plugins/dto/PluginUpdateDto";
@@ -38,27 +39,36 @@ export const pluginState = proxy<PluginState>({
 });
 
 /** Subscribe to and process state updates from backend **/
-export async function initializePluginState() {
-    if (pluginState.isLoaded) return;
+export async function initializePluginState(signal?: AbortSignal) {
+    return runStartupState(pluginState, signal, () => { pluginState.state = {}; }, async current => {
+        if (!current() || pluginState.isLoaded) return;
 
-    // Fetch initial plugin list
-    const initialEntries = await PluginEndpoint.getAll();
-    initialEntries.forEach((plugin: PluginDto) => {
-        pluginState.state[plugin.id] = plugin;
-    });
+        try {
+            // Fetch initial plugin list
+            const initialEntries = await PluginEndpoint.getAll(signal ? {signal} : undefined);
+            if (!current()) return;
+            initialEntries.forEach((plugin: PluginDto) => {
+                pluginState.state[plugin.id] = plugin;
+            });
 
-    // Subscribe to real-time updates
-    pluginState.subscription = PluginEndpoint.subscribe().onNext((updateDtos: PluginUpdateDto[]) => {
-        updateDtos.forEach((updateDto: PluginUpdateDto) => {
-            // Make sure the plugin exists in the state
-            if (pluginState.state[updateDto.id]) {
-                // Update the existing plugin by merging the new data using destructuring
-                pluginState.state[updateDto.id] = {
-                    ...pluginState.state[updateDto.id],
-                    ...updateDto
-                };
-            }
-        })
+            // Subscribe to real-time updates
+            pluginState.subscription = PluginEndpoint.subscribe().onNext((updateDtos: PluginUpdateDto[]) => {
+                if (!current()) return;
+                updateDtos.forEach((updateDto: PluginUpdateDto) => {
+                    // Make sure the plugin exists in the state
+                    if (pluginState.state[updateDto.id]) {
+                        // Update the existing plugin by merging the new data using destructuring
+                        pluginState.state[updateDto.id] = {
+                            ...pluginState.state[updateDto.id],
+                            ...updateDto
+                        };
+                    }
+                })
+            });
+        } catch (error) {
+            if (!current()) return;
+            throw error;
+        }
     });
 }
 

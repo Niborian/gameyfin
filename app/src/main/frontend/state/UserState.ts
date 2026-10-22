@@ -1,4 +1,5 @@
 import {proxy} from "valtio";
+import {runStartupState} from "Frontend/util/startupLifecycle";
 import {UserEndpoint} from "Frontend/generated/endpoints";
 import ExtendedUserInfoDto from "Frontend/generated/org/gameyfin/app/users/dto/ExtendedUserInfoDto";
 
@@ -17,16 +18,20 @@ export const userState = proxy<UserState>({
 });
 
 /** Fetch and cache all users **/
-export async function initializeUserState() {
-    if (userState.isLoaded) return;
+export async function initializeUserState(signal?: AbortSignal) {
+    return runStartupState(userState, signal, () => { userState.state = {}; userState.isLoaded = false; }, async current => {
+        if (!current() || userState.isLoaded) return;
 
-    try {
-        const allUsers = await UserEndpoint.getAllUsers();
-        allUsers.forEach((user: ExtendedUserInfoDto) => {
-            userState.state[user.id] = user;
-        });
-        userState.isLoaded = true;
-    } catch (error) {
-        console.error("Failed to load users:", error);
-    }
+        try {
+            const allUsers = await UserEndpoint.getAllUsers(signal ? {signal} : undefined);
+            if (!current()) return;
+            allUsers.forEach((user: ExtendedUserInfoDto) => {
+                userState.state[user.id] = user;
+            });
+            userState.isLoaded = true;
+        } catch (error) {
+            if (!current()) return;
+            console.error("Failed to load users:", error);
+        }
+    });
 }

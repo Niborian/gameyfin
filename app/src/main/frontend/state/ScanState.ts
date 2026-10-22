@@ -1,4 +1,5 @@
 import {proxy} from 'valtio';
+import {startupIsCurrent, ownStartupState} from "Frontend/util/startupLifecycle";
 import type LibraryScanProgress from "Frontend/generated/org/gameyfin/app/libraries/dto/LibraryScanProgress";
 import {LibraryEndpoint} from "Frontend/generated/endpoints";
 import {Subscription} from "@vaadin/hilla-frontend";
@@ -30,11 +31,13 @@ export const scanState = proxy<ScanState>({
 });
 
 /** Subscribe to and process state updates from backend **/
-export function initializeScanState() {
-    if (scanState.subscription) return;
+export function initializeScanState(signal?: AbortSignal) {
+    if (!startupIsCurrent(signal) || scanState.subscription) return;
+    ownStartupState(scanState, signal, () => { scanState.state = {}; });
 
     // Subscribe to real-time updates
     scanState.subscription = LibraryEndpoint.subscribeToScanProgressEvents().onNext((scanProgresses: LibraryScanProgress[]) => {
+        if (!startupIsCurrent(signal)) return;
         scanProgresses.forEach((scanProgress: LibraryScanProgress) => {
             // Filter out scans for libraries that are not in the current state
             if (!libraryState.state[scanProgress.libraryId]) return;

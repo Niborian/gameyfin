@@ -180,7 +180,8 @@ test('interception is enabled before login navigation; no auth API bypass',async
   for(const row of typed){const index=calls.indexOf(row);assert.match(calls[index-1][1].expression,/\.focus\(\)/);assert.match(calls[index+1][1].expression,/requestAnimationFrame/);}
   const click=calls.findIndex(([,params])=>params.expression?.includes('.click()'));
   assert(click>calls.indexOf(typed[1])+1);
-  assert.equal(calls.filter(([method])=>method==='Page.navigate').at(-1)[1].url,config.origin+'/settings/profile');
+  assert.deepEqual(calls.filter(([method])=>method==='Page.navigate').map(([,params])=>params.url),[config.origin+'/login']);
+  assert(expressions.some(expression=>expression.includes("==='My Profile'")&&expression.includes('targets[0].click()')));
 });
 test('profile identity probe reads only fixed fixture identity, never submits profile forms or loads covers',()=>{
   const profile=fixtureProfileExpression(config.origin),identity=fixtureIdentityMenuExpression();
@@ -208,9 +209,9 @@ test('source-backed profile trigger rejects hidden, missing-avatar and ambiguous
   assert.equal(clicks,0);assert.equal(evaluate([wrapper(true,0),wrapper(true,1)]),true);assert.equal(clicks,1);
 });
 test('late accepted login stays within original budget and explicitly retains missing automatic landing',async()=>{
-  let timer,accepted=false,profileStarted=false;
+  let timer,accepted=false,profileStarted=false;const documentNavigations=[];
   const cdp={request:async(method,params)=>{
-    if(method==='Page.navigate'&&params.url.endsWith('/settings/profile')){assert.equal(accepted,true);profileStarted=true;return {};}
+    if(method==='Page.navigate'){documentNavigations.push(params.url);assert.equal(params.url,config.origin+'/login');return {};}
     if(method!=='Runtime.evaluate')return {};
     if(params.expression.includes('usernameLength:u.value.length')){
       cdp.onEvent('Network.requestWillBeSent',{requestId:'late',request:{url:config.origin+'/login',method:'POST'}});
@@ -220,9 +221,10 @@ test('late accepted login stays within original budget and explicitly retains mi
     if(params.expression.includes('document.readyState'))return {result:{value:{ready:false,diagnostic:{...readyAuth,loginPath:true,usernamePresent:true,passwordPresent:true,submitPresent:true}}}};
     if(params.expression.includes('document.baseURI'))return {result:{value:{ready:true,diagnostic:readyProfile}}};
     if(params.expression.includes('Object.values(diagnostic)'))return {result:{value:{ready:true,diagnostic:{identityRow:true,adminItem:true,signOutItem:true}}}};
+    if(params.expression.includes("==='My Profile'")&&params.expression.includes('targets[0].click()')){assert.equal(accepted,true);profileStarted=true;return {result:{value:true}};}
     return {result:{value:/\.click\(\)|\.focus\(\)|new Promise/.test(params.expression)?true:{ready:true}}};
   }};
-  try{assert.deepEqual(await new FixtureUiDriver(cdp,config).authenticate('fixture-user','private-random-secret-12345'),{normalLoginAutoRedirectObserved:false,fixtureProfileVerified:true});assert.equal(profileStarted,true);}finally{clearTimeout(timer);}
+  try{assert.deepEqual(await new FixtureUiDriver(cdp,config).authenticate('fixture-user','private-random-secret-12345'),{normalLoginAutoRedirectObserved:false,fixtureProfileVerified:true});assert.equal(profileStarted,true);assert.deepEqual(documentNavigations,[config.origin+'/login']);}finally{clearTimeout(timer);}
 });
 test('optional redirect observation uses original auth budget even with submillisecond observation window',async()=>{
   const original=globalThis.performance;let clock=0,observationClock=false,observationStart=false,redirectTimeout;

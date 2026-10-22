@@ -41,8 +41,8 @@ jobs:
     timeout-minutes: 180
     env:
       GAMEYFIN_BENCHMARK_BUILD_TIME: '2026-10-11T18:51:55Z'
-      CONTROL_SOURCE: '5a6f51442157fd4bcd1041997fb5560f665f7278'
-      CANDIDATE_SOURCE: '81f85eb4c5c9cfe5e0c4b4cb0b9420ea9e04f798'
+      CONTROL_SOURCE: 'd7c878c1d558d9167ec35b1b2ed0f5977d79c7f7'
+      CANDIDATE_SOURCE: '04eb5c92832e5fb33704f4b0e62c2c9c081d3ab5'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:

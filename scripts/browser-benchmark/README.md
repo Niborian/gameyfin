@@ -46,13 +46,14 @@ execution gate, not a test result.
 
 ## Paired source inputs
 
-Control: `5a6f51442157fd4bcd1041997fb5560f665f7278`.
-Candidate: `81f85eb4c5c9cfe5e0c4b4cb0b9420ea9e04f798`.
+Control: `d7c878c1d558d9167ec35b1b2ed0f5977d79c7f7`.
+Candidate: `04eb5c92832e5fb33704f4b0e62c2c9c081d3ab5`.
 
-These are the historical control (`792a8aa`) and candidate (`f0c2870`)
-with the identical reviewed #154 authentication-startup lifecycle patch and
-single-flight initialization correction applied to each. The control includes
-the exact candidate correction cherry-picked onto its separate backend source.
+The control retains the historical `792a8aa` backend with only the 12 reviewed
+frontend files from merged candidate `04eb5c92` applied. Its frontend tree is
+`fa64a06b13f74fe71596045309321a92dd2e3cbb`, identical to the candidate, including
+the #154 startup single-flight and single-owner login redirect corrections.
+This is a historical synthetic control, not the running production image.
 Both therefore use the same corrected original Gameyfin UI; this is
 not a comparison of the auth fix against the old UI. The benchmark still
 requires byte-identical UI, configuration, and dependency entries in both

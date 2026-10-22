@@ -314,7 +314,14 @@ export class FixtureUiDriver {
       if(this.authDiagnostics.loginResultHeader==='failure'||(this.authDiagnostics.loginPostStatus!==null&&this.authDiagnostics.loginPostStatus>=400)||performance.now()>=postSubmitDeadline)throw new Error('Normal login protocol acceptance unproved');
       await new Promise(resolve=>setTimeout(resolve,Math.min(50,Math.max(0,postSubmitDeadline-performance.now()))));
     }
-    this.authStage='profile-proof';this.authDiagnostics.profile.stage='navigate';await this.request('Page.navigate',{url:this.origin+'/settings/profile'},postSubmitDeadline);
+    this.authStage='profile-proof';this.authDiagnostics.profile.stage='navigate';
+    // Use the original SPA menu rather than interrupting automatic landing with
+    // a new top-level document navigation. All checks share the submit deadline.
+    await this.poll(`(()=>({ready:location.origin===${JSON.stringify(this.origin)}&&location.pathname!=='/login'&&(${profileTriggers}).length===1}))()`,()=>{},postSubmitDeadline);
+    await this.openProfileMenu(postSubmitDeadline);
+    await this.poll(fixtureIdentityMenuExpression(),()=>{},postSubmitDeadline);
+    await this.poll(`(()=>({ready:[...document.querySelectorAll('[role="menuitem"]')].filter(e=>e.getClientRects().length>0&&e.textContent.trim()==='My Profile').length===1}))()`,()=>{},postSubmitDeadline);
+    if(await this.evaluate(`(()=>{if(location.origin!==${JSON.stringify(this.origin)}||location.pathname==='/login')return false;const items=[...document.querySelectorAll('[role="menuitem"]')].filter(e=>e.getClientRects().length>0);if(!['Signed in as fixture-admin','My Profile','Administration','Sign Out'].every(label=>items.some(e=>e.textContent.trim()===label)))return false;const targets=items.filter(e=>e.textContent.trim()==='My Profile');if(targets.length!==1)return false;targets[0].click();return true;})()`,postSubmitDeadline)!==true)throw new Error('Normal UI profile navigation unavailable');
     this.authDiagnostics.profile.stage='profile-dom';
     await this.poll(fixtureProfileExpression(this.origin),value=>{this.authDiagnostics.profile.readiness=profileReadiness(value?.diagnostic);},postSubmitDeadline);
     this.authDiagnostics.profile.stage='open-menu';

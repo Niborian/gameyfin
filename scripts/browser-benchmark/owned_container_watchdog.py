@@ -12,22 +12,25 @@ import time
 from cap_policy import caps_match
 
 
-def validate_cleanup_scope(inspect, container_id, owner, image_id):
+def validate_cleanup_scope(inspect, container_id, owner, image_id, *, network_none=False):
     if not re.fullmatch(r"[a-f0-9]{64}", container_id):
         raise ValueError("Container identity boundary")
     if not re.fullmatch(r"[a-f0-9]{16}", owner):
         raise ValueError("Owner boundary")
-    expected_name = "/gameyfin-browser-" + owner
+    if type(network_none) is not bool:raise ValueError('Network mode selector boundary')
+    expected_name = ("/gameyfin-browser-cancel-probe-" if network_none else "/gameyfin-browser-") + owner
     if inspect.get("Id") != container_id or inspect.get("Name") != expected_name:
         raise ValueError("Container ownership mismatch")
     if inspect.get("Image") != image_id or not re.fullmatch(r"sha256:[a-f0-9]{64}", image_id):
         raise ValueError("Image mismatch")
     if inspect.get("Config", {}).get("Labels", {}).get("gameyfin.browser.owner") != owner:
         raise ValueError("Owner label mismatch")
+    if network_none and inspect.get('Config',{}).get('Labels',{}).get('gameyfin.browser.purpose')!='cancel-probe-only':raise ValueError('Probe purpose label mismatch')
     host = inspect.get("HostConfig", {})
     mode = host.get("NetworkMode", "")
-    if mode != 'gameyfin-browser-net-' + owner:
+    if type(network_none) is not bool or mode != ('none' if network_none else 'gameyfin-browser-net-' + owner):
         raise ValueError("Network boundary")
+    if network_none and host.get('RestartPolicy')!={'Name':'no','MaximumRetryCount':0}:raise ValueError('Probe restart boundary')
     if host.get("Privileged") or host.get('PidMode','')!='' or host.get('IpcMode','') not in ('','private') or host.get('UTSMode','')!='' or host.get('CgroupnsMode')!='private' or host.get('Init') is not True or not host.get("ReadonlyRootfs"):
         raise ValueError("Namespace boundary")
     if host.get('PortBindings') or host.get('PublishAllPorts'):
@@ -39,8 +42,8 @@ def validate_cleanup_scope(inspect, container_id, owner, image_id):
     return container_id
 
 
-def validate(inspect,container_id,owner,image_id):
-    identity=validate_cleanup_scope(inspect,container_id,owner,image_id)
+def validate(inspect,container_id,owner,image_id,*,network_none=False):
+    identity=validate_cleanup_scope(inspect,container_id,owner,image_id,network_none=network_none)
     host=inspect['HostConfig']
     if host.get('NanoCpus')!=1000000000 or host.get('Memory')!=768*1024*1024 or host.get('MemorySwap')!=768*1024*1024 or host.get('PidsLimit')!=256 or not caps_match(host.get('CapDrop'),['ALL']) or not caps_match(host.get('CapAdd'),['SYS_ADMIN','SYS_CHROOT']):
         raise ValueError('Browser resource/capability boundary')

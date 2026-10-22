@@ -230,6 +230,11 @@ def creation_args(owner,image,network,app_ip,cover_id,cover_sha):
         image,app_ip,str(cover_id),cover_sha]
 
 
+def validate_eligibility_diagnostic(e):
+    enums={'resourceType':('Document','Image','Script','Stylesheet','Font','Fetch','XHR','Other','unknown'),'method':('GET','POST','HEAD','other','unknown'),'target':('exact-cover','same-origin-other','foreign','invalid'),'reason':('eligible','policy-denied','duplicate','not-image','not-get','not-exact-cover','network-missing','metadata-missing','frame-mismatch','loader-mismatch','generation-mismatch','hop-replaced','ambiguous','typed-binding-missing','cancel-not-before','pause-ineligible','truncated')};flags={'permitted','pauseEligible','metadataPresent','duplicate','truncated','typedBinding'};nullable={'frameMatches','loaderMatches','generationMatches','currentHop','reused','ambiguous','canceledBeforeFailure'}
+    if not isinstance(e,dict) or set(e)!=set(enums)|flags|nullable or any(e[k] not in values for k,values in enums.items()) or any(type(e[k]) is not bool for k in flags) or any(e[k] is not None and type(e[k]) is not bool for k in nullable):raise ValueError('Auth eligibility diagnostic boundary')
+    return e
+
 def validate_failure_receipt(value):
     base={'browserFailed','phase'}
     categories={'crashpad-database','readonly-filesystem','sandbox-unavailable','namespace-permission','missing-shared-library','missing-executable','launch-timeout','other'}
@@ -243,7 +248,9 @@ def validate_failure_receipt(value):
         if value['phase']!='authentication' or not isinstance(data,dict) or set(data) not in (keys,keys|{'interceptionDiagnostics'}) or type(data['loginPostObserved']) is not bool:raise ValueError('Auth diagnostics schema')
         if 'interceptionDiagnostics' in data:
             diagnostic=data['interceptionDiagnostics'];counters={'pausedEvents','duplicatePausedIds','canceledNetworkEvents','verifiedCanceledImageContinuations'}
-            if not isinstance(diagnostic,dict) or set(diagnostic)!=counters|{'failedOperation','failedRequestCanceled','truncated'} or diagnostic['failedOperation'] not in ('none','continue','deny') or (diagnostic['failedRequestCanceled'] is not None and type(diagnostic['failedRequestCanceled']) is not bool) or type(diagnostic['truncated']) is not bool or any(type(diagnostic[k]) is not int or not 0<=diagnostic[k]<=256 for k in counters) or diagnostic['verifiedCanceledImageContinuations']>diagnostic['pausedEvents']:raise ValueError('Auth interception diagnostic boundary')
+            if not isinstance(diagnostic,dict) or set(diagnostic)!=counters|{'failedOperation','failedRequestCanceled','truncated'}|({'eligibility'} if 'eligibility' in diagnostic else set()) or diagnostic['failedOperation'] not in ('none','continue','deny') or (diagnostic['failedRequestCanceled'] is not None and type(diagnostic['failedRequestCanceled']) is not bool) or type(diagnostic['truncated']) is not bool or any(type(diagnostic[k]) is not int or not 0<=diagnostic[k]<=256 for k in counters) or diagnostic['verifiedCanceledImageContinuations']>diagnostic['pausedEvents']:raise ValueError('Auth interception diagnostic boundary')
+            if 'eligibility' in diagnostic:
+                validate_eligibility_diagnostic(diagnostic['eligibility'])
         if data['loginPostStatus'] is not None and (type(data['loginPostStatus']) is not int or not 100<=data['loginPostStatus']<=599):raise ValueError('Auth diagnostic numeric boundary')
         if data['userInfoStatus'] is not None and (type(data['userInfoStatus']) is not int or not 100<=data['userInfoStatus']<=599):raise ValueError('Auth user-info status boundary')
         if data['loginResultHeader'] not in ('success','failure','missing','other'):raise ValueError('Auth result enum')

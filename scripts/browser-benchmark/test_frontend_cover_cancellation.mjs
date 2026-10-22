@@ -1,6 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {FixtureUiDriver,safeAuthDiagnostics} from './frontend_ui_driver.mjs';
 import {createCdpTransport,recordFirstAuthCdpFailure,invalidContinueContext} from './frontend_cdp_failures.mjs';
+import {eligibilityDiagnostic} from './frontend_cover_cancellation.mjs';
 const origin='http://127.0.0.1:53123',config={origin,coverId:7,coverSha256:'0'.repeat(64)};
 async function scenario(options={}){
  const calls=[],fatal=[];let driver,reject;
@@ -88,4 +89,11 @@ test('real transport binds FetchID at invocation even if caller mutates params b
  let error;try{await pending;}catch(value){error=value;}
  assert.equal(sent,'ORIGINAL-FETCH');assert.equal(invalidContinueContext(error,'ORIGINAL-FETCH'),token);assert.equal(invalidContinueContext(error,'MUTATED-FETCH'),null);
  assert(!JSON.stringify(error).includes('PRIVATE'));
+});
+test('first fatal discriminator distinguishes source class, lifecycle and ordering without raw values',async()=>{
+ for(const [options,reason] of [[{type:'Script'},'not-image'],[{url:origin+'/images/cover/8'},'not-exact-cover'],[{noNetwork:true},'network-missing'],[{newDocument:true},'loader-mismatch'],[{reuse:true},'hop-replaced'],[{late:true},'cancel-not-before'],[{noCancel:true},'cancel-not-before'],[{duplicate:true},'duplicate'],[{truncated:true},'truncated']]){
+  const {driver}=await scenario(options);const e=driver.authDiagnostics.interceptionDiagnostics.eligibility;assert.equal(e.reason,reason);assert.equal(driver.failure,true);assert.equal(e.canceledBeforeFailure,options.late?false:options.noCancel||options.noNetwork||options.type==='Script'?null:true);assert.equal(eligibilityDiagnostic(e).reason,reason);
+  for(const mutation of [{resourceType:'PRIVATE'},{method:'SECRET'},{target:'http://private/'},{reason:'raw'},{currentHop:1},{permitted:null},{canceledBeforeFailure:'false'},{rawId:'PRIVATE'}])assert.throws(()=>eligibilityDiagnostic({...e,...mutation}));
+  const inherited=Object.assign(Object.create({reason:e.reason}),e);delete inherited.reason;assert.throws(()=>eligibilityDiagnostic(inherited));
+ }
 });

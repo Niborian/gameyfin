@@ -46,6 +46,16 @@ execution gate, not a test result.
 
 ## Paired source inputs
 
+The separate manually reviewed `browser-cancel-probe.yml` is a Chrome-only
+protocol experiment: an owned tiny loopback HTML/PNG fixture, sandbox and fresh
+profile, network-none container, and the same bounded proxy. It holds one image
+request to establish actual cancellation-before-one-continue ordering, then
+checks current-document eligibility versus old-loader refusal. Missing events,
+successful continuation instead of the expected invalid-ID, forced termination,
+or uncertain cleanup fail the probe. It does not authenticate to Gameyfin or
+establish application, scan, performance, or release acceptance. The existing
+15-second startup smoke and full application benchmark gates remain separate.
+
 Control: `5a6f51442157fd4bcd1041997fb5560f665f7278`.
 Candidate: `81f85eb4c5c9cfe5e0c4b4cb0b9420ea9e04f798`.
 

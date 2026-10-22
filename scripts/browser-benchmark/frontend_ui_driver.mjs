@@ -1,7 +1,7 @@
 // Injectable/mock-tested original-UI adapter only; no SSH/browser/transport creation.
 import {allowRequest,validateLoginCredentials,loginFocusExpression,routeExpression,sanitizeMetrics,coverHashMatches,RUNTIME_ENABLED} from './frontend_cdp_measurement.mjs';
 import {recordFirstAuthCdpFailure} from './frontend_cdp_failures.mjs';
-import {CoverCancellationLedger} from './frontend_cover_cancellation.mjs';
+import {CoverCancellationLedger,eligibilityDiagnostic} from './frontend_cover_cancellation.mjs';
 export function navigationProgress(routeIndex,stage,readiness=null,observation=null){
   if(!Number.isInteger(routeIndex)||routeIndex<1||routeIndex>3||!['navigate','content','cover-body','complete'].includes(stage))throw new Error('Navigation progress boundary');
   const keys=['pathMatches','contentReady','coverTitlePresent','coverPresent','coverComplete','dimensionsMatch'];
@@ -51,8 +51,8 @@ export function safeAuthDiagnostics(value){
 }
 export function interceptionDiagnostics(value){
   const counters=['pausedEvents','duplicatePausedIds','canceledNetworkEvents','verifiedCanceledImageContinuations'];
-  if(!value||typeof value!=='object'||Object.keys(value).length!==7||!['failedOperation','failedRequestCanceled','truncated',...counters].every(k=>Object.hasOwn(value,k))||!['none','continue','deny'].includes(value.failedOperation)||!(value.failedRequestCanceled===null||typeof value.failedRequestCanceled==='boolean')||typeof value.truncated!=='boolean'||!counters.every(k=>Number.isInteger(value[k])&&value[k]>=0&&value[k]<=256)||value.verifiedCanceledImageContinuations>value.pausedEvents)throw new Error('Interception diagnostic boundary');
-  return {failedOperation:value.failedOperation,failedRequestCanceled:value.failedRequestCanceled,...Object.fromEntries(counters.map(k=>[k,value[k]])),truncated:value.truncated};
+  if(!value||typeof value!=='object'||Object.keys(value).length!==(Object.hasOwn(value,'eligibility')?8:7)||!['failedOperation','failedRequestCanceled','truncated',...counters].every(k=>Object.hasOwn(value,k))||!['none','continue','deny'].includes(value.failedOperation)||!(value.failedRequestCanceled===null||typeof value.failedRequestCanceled==='boolean')||typeof value.truncated!=='boolean'||!counters.every(k=>Number.isInteger(value[k])&&value[k]>=0&&value[k]<=256)||value.verifiedCanceledImageContinuations>value.pausedEvents)throw new Error('Interception diagnostic boundary');
+  return {failedOperation:value.failedOperation,failedRequestCanceled:value.failedRequestCanceled,...Object.fromEntries(counters.map(k=>[k,value[k]])),truncated:value.truncated,...(Object.hasOwn(value,'eligibility')?{eligibility:eligibilityDiagnostic(value.eligibility)}:{})};
 }
 const cookieFlags=['loginSetCookieSeen','loginSessionCookieSetSeen','loginSessionCookieBlocked','profileCookieHeaderSeen','profileSessionCookieAssociated','profileSessionCookieBlocked','loginSubmittedWithPendingRpc','otherSessionCookieSetAfterLogin'];
 export function cookieDiagnostics(value){
@@ -202,11 +202,12 @@ export class FixtureUiDriver {
       // Never retain headers/postData/cookies/console bodies in evidence.
       const networkId=typeof params.networkId==='string'&&params.networkId.length<=256?params.networkId:null;
       const cancellation=this.coverCancellation.pause(params,permitted,duplicate);
+      const assessment=this.coverCancellation.assessment(params,permitted,duplicate,cancellation!==null);
       const operation=permitted?'Fetch.continueRequest':'Fetch.failRequest';
       this.request(operation,permitted?{requestId:params.requestId}:{requestId:params.requestId,errorReason:'BlockedByClient'}).catch(error=>{
         if(this.coverCancellation.terminal(cancellation,error,diagnostic.truncated)){diagnostic.verifiedCanceledImageContinuations++;return;}
         recordFirstAuthCdpFailure(this.authDiagnostics,operation,error);
-        if(diagnostic.failedOperation==='none'){diagnostic.failedOperation=permitted?'continue':'deny';diagnostic.failedRequestCanceled=networkId!==null&&this.canceledNetworkIds.has(networkId)?true:null;}this.failure=true;
+        if(diagnostic.failedOperation==='none'){diagnostic.failedOperation=permitted?'continue':'deny';diagnostic.failedRequestCanceled=networkId!==null&&this.canceledNetworkIds.has(networkId)?true:null;diagnostic.eligibility=this.coverCancellation.diagnose(assessment,error,diagnostic.truncated);}this.failure=true;
       });
     }else if(method==='Network.requestWillBeSent'){
       let cookieKind=null,sameOrigin=false,rpc=false;try{const u=new URL(params.request?.url);sameOrigin=u.origin===this.origin;rpc=sameOrigin&&u.pathname.startsWith('/connect/')&&params.request?.method==='POST';if(sameOrigin&&params.request?.method==='POST'){if(u.pathname==='/login')cookieKind='login';else if(u.pathname==='/connect/UserEndpoint/getUserInfo'&&this.authStage==='profile-proof'&&this.authDiagnostics.loginPostStatus===200&&this.authDiagnostics.loginResultHeader==='success')cookieKind='profile';}}catch{}

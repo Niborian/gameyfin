@@ -9,6 +9,26 @@ def sample_receipt():
     return {'originalUiContentReady':True,'coverDecoded':True,'coverSha256Matches':True,'navigations':[row]*3,'browserResources':{'before':snapshot,'after':snapshot}}
 
 class CreationTests(unittest.TestCase):
+    def test_real_first_fatal_eligibility_roundtrip_is_value_free_and_strict(self):
+        program="""
+import {FixtureUiDriver} from './frontend_ui_driver.mjs';
+import {createCdpTransport} from './frontend_cdp_failures.mjs';
+import {failureReceipt} from './browser_entry.mjs';
+let driver,reject;const origin='http://127.0.0.1:53123';
+const request=createCdpTransport({send:()=>new Promise((_,r)=>{reject=r;})},{captureInterception:()=>driver.captureInterceptionFailure()});
+driver=new FixtureUiDriver({request},{origin,coverId:7,coverSha256:'0'.repeat(64)});
+const req={url:origin+'/private-script.js',method:'GET'};
+driver.event('Fetch.requestPaused',{requestId:'PRIVATE-FETCH',networkId:'PRIVATE-NET',frameId:'PRIVATE-FRAME',resourceType:'Script',request:req});
+driver.event('Network.loadingFailed',{requestId:'PRIVATE-NET',type:'Script',canceled:true});
+reject(new Error('Invalid InterceptionId. PRIVATE_COOKIE=secret'));await new Promise(resolve=>setImmediate(resolve));
+process.stdout.write(JSON.stringify(failureReceipt('authentication',null,null,'profile-proof',null,driver.authDiagnostics)));
+"""
+        result=subprocess.run(['node','--input-type=module','-e',program],cwd=Path(__file__).resolve().parent,capture_output=True,timeout=10,check=True)
+        self.assertLess(len(result.stdout),4096);self.assertNotIn(b'PRIVATE',result.stdout);self.assertNotIn(b'secret',result.stdout)
+        row=json.loads(result.stdout);self.assertEqual(hosted_browser.validate_failure_receipt(row),row)
+        diagnostic=row['authDiagnostics']['interceptionDiagnostics'];e=diagnostic['eligibility'];self.assertEqual(e['reason'],'not-image');self.assertIsNone(e['canceledBeforeFailure']);self.assertEqual(e['resourceType'],'Script')
+        for mutation in ({'resourceType':'private'},{'method':'private'},{'target':'http://private/'},{'reason':'private'},{'metadataPresent':1},{'currentHop':1},{'canceledBeforeFailure':'true'},{'rawId':'secret'}):
+            with self.assertRaises(ValueError):hosted_browser.validate_failure_receipt({**row,'authDiagnostics':{**row['authDiagnostics'],'interceptionDiagnostics':{**diagnostic,'eligibility':{**e,**mutation}}}})
     def test_node_interception_failure_roundtrip_and_strict_boundaries(self):
         # Exercise the real producer, not a Python copy of its receipt schema.
         program="""

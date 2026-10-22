@@ -1,133 +1,47 @@
-name: Reviewed original-UI scan benchmark
-
+name: Reviewed Chrome-only cancellation probe
 on:
   workflow_dispatch:
     inputs:
       reviewed:
-        description: Parent reviewed this exact benchmark workflow and source pair
-        type: boolean
+        description: Parent reviewed this exact diagnostic-only workflow
         required: true
+        type: boolean
         default: false
       reviewed_head:
-        description: Full exact workflow commit SHA reviewed by parent
-        type: string
+        description: Full exact reviewed workflow commit SHA
         required: true
-  pull_request:
-    # The event label binds the full exact reviewed head, not a retained flag.
-    types: [labeled]
-    branches: [main]
-    paths:
-      - scripts/browser-benchmark/**
-      - .github/workflows/browser-scan-benchmark.yml
-
+        type: string
 permissions:
   contents: read
-
 concurrency:
-  group: original-ui-benchmark-${{ github.event.pull_request.number || github.ref }}
+  group: chrome-only-cancel-probe-${{ github.ref }}
   cancel-in-progress: false
-
 jobs:
-  paired:
-    # No fork code, secrets, publishing, deployment or TrueNAS. A trusted review
-    # label activates pre-merge CI only after parent review; ordinary PRs skip.
+  probe:
     if: >-
       github.repository == 'Niborian/gameyfin' &&
-      ((github.event_name == 'workflow_dispatch' && inputs.reviewed == true && inputs.reviewed_head == github.sha) ||
-       (github.event_name == 'pull_request' &&
-        github.event.label.name == format('bench-ok-{0}', github.event.pull_request.head.sha) &&
-        github.event.pull_request.head.repo.full_name == github.repository))
+      github.event_name == 'workflow_dispatch' && inputs.reviewed == true &&
+      inputs.reviewed_head == github.sha
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
-    env:
-      GAMEYFIN_BENCHMARK_BUILD_TIME: '2026-10-11T18:51:55Z'
-      CONTROL_SOURCE: '5a6f51442157fd4bcd1041997fb5560f665f7278'
-      CANDIDATE_SOURCE: '81f85eb4c5c9cfe5e0c4b4cb0b9420ea9e04f798'
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
-        with:
-          distribution: temurin
-          java-version: '25'
-      - uses: gradle/actions/setup-gradle@4c125117fe7c5aed11272ec4213f602f012f89f2 # v5
-      - name: Validate local guards before any fixture containers
+      - name: Build only reviewed Chrome fixture image; never publish
         run: |
-          node --test scripts/browser-benchmark/test_*.mjs
-          python3 -B -m unittest discover -s scripts/browser-benchmark -p 'test_*.py'
-          python3 -B -m unittest discover -s scripts/browser-benchmark/overlap -p 'test_*.py'
-          timeout --signal=TERM --kill-after=2s 20s sudo python3 -B scripts/browser-benchmark/test_uid_permissions.py
-      - name: Bounded Chrome startup smoke before application builds
-        shell: bash
+          mkdir -p .benchmark/cancel-probe
+          docker build --file scripts/browser-benchmark/Dockerfile --iidfile .benchmark/cancel-probe/image.id scripts/browser-benchmark
+      - name: Actual sandboxed network-none protocol probe; not application acceptance
         run: |
-          set -euo pipefail
-          mkdir -p .benchmark/reports
-          docker build --file scripts/browser-benchmark/Dockerfile --iidfile .benchmark/browser-image.id scripts/browser-benchmark
-          timeout --signal=TERM --kill-after=5s 40s python3 -B scripts/browser-benchmark/chrome_smoke.py --image "$(cat .benchmark/browser-image.id)" --output .benchmark/reports/chrome-smoke.json
-      - name: Retain sanitized startup result before long application tests
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+          timeout --signal=TERM --kill-after=1s 99s python3 -B scripts/browser-benchmark/chrome_smoke.py --cancel-probe --image "$(cat .benchmark/cancel-probe/image.id)" --output .benchmark/cancel-probe/result.json
+      - name: Exact current-job probe-only cleanup; never global prune
         if: always()
-        with:
-          name: chrome-startup-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .benchmark/reports/chrome-smoke.json
-          retention-days: 7
-          if-no-files-found: warn
-      - name: Build both exact original-UI sources sequentially
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p .benchmark/sources .benchmark/reports
-          # Preserve the recorded historical build input, not the new auth-fix commit date.
-          test "$(git show -s --format=%cI f0c2870ef17d02b4d71bc9fe0170bb89a098a25f)" = '2026-10-11T20:51:55+02:00'
-          test "$(git rev-parse "$CONTROL_SOURCE^{commit}")" = "$CONTROL_SOURCE"
-          test "$(git rev-parse "$CANDIDATE_SOURCE^{commit}")" = "$CANDIDATE_SOURCE"
-          init_script="$GITHUB_WORKSPACE/scripts/browser-benchmark/fixed_build_time.init.gradle"
-          sha256sum "$init_script" > .benchmark/reports/build-input.sha256
-          printf '%s\n' "$GAMEYFIN_BENCHMARK_BUILD_TIME" > .benchmark/reports/build-time.txt
-          git worktree add --detach .benchmark/sources/control "$CONTROL_SOURCE"
-          git worktree add --detach .benchmark/sources/candidate "$CANDIDATE_SOURCE"
-          for arm in control candidate; do
-            (cd ".benchmark/sources/$arm" && ./gradlew :app:bootJar :plugins:directdownload:jar -Pvaadin.productionMode=true --no-daemon --max-workers=2 -I "$init_script" --console=plain)
-          done
-          mapfile -t control_jars < <(find .benchmark/sources/control/app/build/libs -maxdepth 1 -name 'app-*.jar' ! -name '*-plain.jar')
-          mapfile -t candidate_jars < <(find .benchmark/sources/candidate/app/build/libs -maxdepth 1 -name 'app-*.jar' ! -name '*-plain.jar')
-          test "${#control_jars[@]}" -eq 1
-          test "${#candidate_jars[@]}" -eq 1
-          python3 -B scripts/browser-benchmark/verify_source_pair.py --control "${control_jars[0]}" --candidate "${candidate_jars[0]}" --output .benchmark/reports/source-pair.json --prepare-root .benchmark/artifacts
-          cmp .benchmark/sources/control/plugins/directdownload/build/libs/directdownload-1.0.2.jar .benchmark/sources/candidate/plugins/directdownload/build/libs/directdownload-1.0.2.jar
-      - name: Build private reproducible fixture images and providers; never publish
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker build --file scripts/browser-benchmark/Dockerfile.app --build-arg SOURCE_REVISION="$CONTROL_SOURCE" --iidfile .benchmark/control-image.id .benchmark/artifacts/control
-          docker build --file scripts/browser-benchmark/Dockerfile.app --build-arg SOURCE_REVISION="$CANDIDATE_SOURCE" --iidfile .benchmark/candidate-image.id .benchmark/artifacts/candidate
-          python3 -B scripts/browser-benchmark/bind_built_images.py --receipt .benchmark/reports/source-pair.json --control "$(cat .benchmark/control-image.id)" --candidate "$(cat .benchmark/candidate-image.id)"
-          for provider in build_fixture build_waiting_fixture; do
-            python3 -B "scripts/browser-benchmark/$provider.py" --javac "$JAVA_HOME/bin/javac" --java "$JAVA_HOME/bin/java" --plugin-api .benchmark/artifacts/candidate/plugin-api.jar --pf4j .benchmark/artifacts/candidate/pf4j.jar --kotlin-stdlib .benchmark/artifacts/candidate/kotlin-stdlib.jar --output ".benchmark/$provider.jar"
-          done
-      - name: Sequential balanced ordinary scans and separate waiting-overlap case
-        shell: bash
-        run: |
-          set -euo pipefail
-          timeout --signal=TERM --kill-after=15s 9000s python3 -B scripts/browser-benchmark/run_benchmark.py \
-            --control-image "$(cat .benchmark/control-image.id)" \
-            --candidate-image "$(cat .benchmark/candidate-image.id)" \
-            --browser-image "$(cat .benchmark/browser-image.id)" \
-            --metadata-plugin .benchmark/build_fixture.jar --waiting-plugin .benchmark/build_waiting_fixture.jar \
-            --direct-plugin .benchmark/sources/candidate/plugins/directdownload/build/libs/directdownload-1.0.2.jar \
-            --receipt .benchmark/reports/source-pair.json --output .benchmark/reports/benchmark.json
-      - name: Exact owned Chrome smoke cleanup
-        if: always()
-        run: python3 -B scripts/browser-benchmark/chrome_smoke.py --cleanup-only
-      - name: Exact owned final cleanup; no global prune
-        if: always()
-        run: python3 -B scripts/browser-benchmark/run_benchmark.py --cleanup-only
+        run: timeout --signal=TERM --kill-after=1s 12s python3 -B scripts/browser-benchmark/chrome_smoke.py --cancel-probe --cleanup-only
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
-          name: original-ui-synthetic-benchmark-${{ github.run_id }}
-          path: .benchmark/reports/
+          name: chrome-only-cancel-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .benchmark/cancel-probe/*.json
           retention-days: 7
           if-no-files-found: warn

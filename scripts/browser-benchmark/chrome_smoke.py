@@ -4,75 +4,125 @@ from pathlib import Path
 from hosted_browser import command,creation_args,read_state,CREATION_PLAN
 from owned_container_watchdog import validate,validate_cleanup_scope
 
-def ledger_path():
+def ledger_path(cancel_probe=False):
+    if type(cancel_probe) is not bool:raise ValueError('Mode boundary')
     if os.name!='posix' or os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('RUNNER_ENVIRONMENT')!='github-hosted':raise ValueError('Hosted only')
     values=[os.environ.get(k,'') for k in ('GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_JOB')]
     if any(not re.fullmatch('[A-Za-z0-9_-]{1,64}',x) for x in values):raise ValueError('Job identity')
     root=Path(os.environ['RUNNER_TEMP']).resolve()
     if any(x.is_symlink() for x in [root,*root.parents]):raise ValueError('Regular private temp')
-    return root/('gameyfin-chrome-smoke-'+'-'.join(values)+'.json')
+    return root/(('gameyfin-chrome-cancel-probe-' if cancel_probe else 'gameyfin-chrome-smoke-')+'-'.join(values)+'.json')
 
-def cleanup(path):
-    if path!=ledger_path():raise ValueError('Exact current-job ledger')
+def budget_command(deadline,*args):
+    remaining=deadline-time.monotonic()
+    if remaining<=0:raise TimeoutError('Controller deadline')
+    return subprocess.run(['docker',*args],check=True,capture_output=True,text=True,timeout=min(10,remaining)).stdout
+
+def mode_plan(cancel_probe):
+    if type(cancel_probe) is not bool:raise ValueError('Mode boundary')
+    return ['/opt/gameyfin-browser/'+('cdp_cancel_probe.mjs' if cancel_probe else 'chrome_smoke.mjs')]
+
+def cleanup(path,cancel_probe=False,deadline=None):
+    if path!=(ledger_path(True) if cancel_probe else ledger_path()):raise ValueError('Exact current-job ledger')
+    call=(lambda *args:budget_command(deadline,*args)) if deadline is not None else command
     if not path.exists():return
     plan=read_state(path,4096)
-    if set(plan)!={'owner','image','id','contract','entrypoint','cmd'} or (plan['id'] is not None and (not isinstance(plan['id'],str) or not re.fullmatch('[a-f0-9]{64}',plan['id']))):raise ValueError('Strict intent schema')
-    owner=plan['owner'];image=plan['image'];network='gameyfin-browser-net-'+owner;name='gameyfin-browser-'+owner
-    if plan.get('contract')!=CREATION_PLAN or plan.get('entrypoint')!=['node'] or plan.get('cmd')!=['/opt/gameyfin-browser/chrome_smoke.mjs']:raise ValueError('Reviewed creation intent')
+    if set(plan)!={'owner','image','id','contract','entrypoint','cmd'}|({'purpose'} if cancel_probe else set()) or (plan['id'] is not None and (not isinstance(plan['id'],str) or not re.fullmatch('[a-f0-9]{64}',plan['id']))):raise ValueError('Strict intent schema')
+    owner=plan['owner'];image=plan['image'];network='gameyfin-browser-net-'+owner;name=('gameyfin-browser-cancel-probe-' if cancel_probe else 'gameyfin-browser-')+owner
+    if plan.get('contract')!=CREATION_PLAN or plan.get('entrypoint')!=['node'] or plan.get('cmd')!=mode_plan(cancel_probe) or cancel_probe and plan.get('purpose')!='chrome-cancel-probe-only':raise ValueError('Reviewed creation intent')
     if not re.fullmatch('[a-f0-9]{16}',owner) or not re.fullmatch('sha256:[a-f0-9]{64}',image):raise ValueError('Intent identity')
-    identities=command('ps','-aq','--no-trunc').split()
+    identities=call('ps','-aq','--no-trunc').split()
     for identity in identities:
-        row=json.loads(command('inspect',identity))[0]
+        row=json.loads(call('inspect',identity))[0]
         if row.get('Name')!='/'+name and identity!=plan.get('id'):continue
         if plan.get('id') is not None and identity!=plan['id']:raise ValueError('Immutable smoke identity')
-        validate_cleanup_scope(row,identity,owner,image)
+        if cancel_probe:validate_cleanup_scope(row,identity,owner,image,network_none=True)
+        else:validate_cleanup_scope(row,identity,owner,image)
         if row['Config'].get('Entrypoint')!=plan['entrypoint'] or row['Config'].get('Cmd')!=plan['cmd']:raise ValueError('Smoke entry identity')
-        command('rm','--force',identity)
-        if identity in command('ps','-aq','--no-trunc').split():raise ValueError('Exact removed-container confirmation')
-    networks=command('network','ls','--filter','name=^'+network+'$','--format','{{.ID}}').split()
+        call('rm','--force',identity)
+        if identity in call('ps','-aq','--no-trunc').split():raise ValueError('Exact removed-container confirmation')
+    networks=[] if cancel_probe else call('network','ls','--filter','name=^'+network+'$','--format','{{.ID}}').split()
     for identity in networks:
-        row=json.loads(command('network','inspect',identity))[0]
+        row=json.loads(call('network','inspect',identity))[0]
         if row.get('Name')!=network or row.get('Driver')!='bridge' or not row.get('Internal') or row.get('Labels',{}).get('gameyfin.browser.owner')!=owner or row.get('Containers'):raise ValueError('Exact isolated smoke network')
-        command('network','rm',row['Id'])
-    if plan.get('id') is not None and plan['id'] in command('ps','-aq','--no-trunc').split():raise ValueError('Recorded ID still present')
+        call('network','rm',row['Id'])
+    if plan.get('id') is not None and plan['id'] in call('ps','-aq','--no-trunc').split():raise ValueError('Recorded ID still present')
     path.unlink()
 
-def run(image,output):
-    path=ledger_path();owner=secrets.token_hex(8);network='gameyfin-browser-net-'+owner
+def run(image,output,cancel_probe=False):
+    # Reserve four seconds for reaping the independently retained watchdog.
+    deadline=time.monotonic()+96 if cancel_probe else None;call=(lambda *args:budget_command(deadline,*args)) if cancel_probe else command
+    path=ledger_path(True) if cancel_probe else ledger_path();owner=secrets.token_hex(8);network='gameyfin-browser-net-'+owner
     if not re.fullmatch('sha256:[a-f0-9]{64}',image):raise ValueError('Immutable image')
-    plan={'owner':owner,'image':image,'id':None,'contract':CREATION_PLAN,'entrypoint':['node'],'cmd':['/opt/gameyfin-browser/chrome_smoke.mjs']}
+    plan={'owner':owner,'image':image,'id':None,'contract':CREATION_PLAN,'entrypoint':['node'],'cmd':mode_plan(cancel_probe)}
+    if cancel_probe:plan['purpose']='chrome-cancel-probe-only'
     fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,'O_NOFOLLOW',0),0o600)
     with os.fdopen(fd,'w') as stream:json.dump(plan,stream)
-    watchdog=None
+    watchdog=None;receipt=None;accepted=False
     try:
-        watchdog=subprocess.Popen([sys.executable,__file__,'--watchdog'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
-        command('network','create','--internal','--label','gameyfin.browser.owner='+owner,network)
+        watchdog=subprocess.Popen([sys.executable,__file__,'--watchdog']+(['--cancel-probe'] if cancel_probe else []),stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+        if not cancel_probe:call('network','create','--internal','--label','gameyfin.browser.owner='+owner,network)
         args=creation_args(owner,image,network,'172.22.0.2',1,'a'*64)
         args=args[:-4] # remove image and fixture-only three arguments
-        args+=['--entrypoint','node',image,'/opt/gameyfin-browser/chrome_smoke.mjs']
-        identity=command(*args).strip()
+        if cancel_probe:
+            args[args.index('--network')+1]='none';args[args.index('--name')+1]='gameyfin-browser-cancel-probe-'+owner;args+=['--label','gameyfin.browser.purpose=cancel-probe-only']
+        args+=['--entrypoint','node',image,*plan['cmd']]
+        identity=call(*args).strip()
         if not re.fullmatch('[a-f0-9]{64}',identity):raise ValueError('Full created identity')
         plan['id']=identity;pending=path.with_suffix('.pending')
         fd=os.open(pending,os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,'O_NOFOLLOW',0),0o600)
         with os.fdopen(fd,'w') as stream:json.dump(plan,stream)
         pending.replace(path)
-        row=json.loads(command('inspect',identity))[0];validate(row,identity,owner,image)
+        row=json.loads(call('inspect',identity))[0]
+        if cancel_probe:validate(row,identity,owner,image,network_none=True)
+        else:validate(row,identity,owner,image)
         h=row['HostConfig']
         if h.get('ShmSize')!=128*1024**2 or h.get('Tmpfs')!={'/tmp':'rw,nosuid,nodev,size=128m,mode=1777'} or h.get('SecurityOpt') not in (['no-new-privileges'],['no-new-privileges=true'],['no-new-privileges:true']):raise ValueError('Matched smoke readonly/tmpfs/security boundary')
         if row['Config'].get('Entrypoint')!=plan['entrypoint'] or row['Config'].get('Cmd')!=plan['cmd']:raise ValueError('Known smoke command')
-        net=json.loads(command('network','inspect',network))[0]
-        if net.get('Name')!=network or net.get('Driver')!='bridge' or net.get('Labels',{}).get('gameyfin.browser.owner')!=owner or not net.get('Internal') or set(net.get('Containers',{})) not in (set(),{identity}):raise ValueError('No unexpected smoke peers')
-        result=subprocess.run(['docker','start','--attach',identity],capture_output=True,text=True,timeout=25)
-        if len(result.stdout.encode())>8192:raise ValueError('Smoke receipt bound')
-        receipt=json.loads(result.stdout);validate_receipt(receipt)
-        output.parent.mkdir(parents=True,exist_ok=True);output.write_text(json.dumps(receipt,indent=2))
-        if result.returncode or not receipt['started'] or not receipt['sandboxVerified']:raise RuntimeError('Chrome smoke rejected')
+        if not cancel_probe:
+            net=json.loads(call('network','inspect',network))[0]
+            if net.get('Name')!=network or net.get('Driver')!='bridge' or net.get('Labels',{}).get('gameyfin.browser.owner')!=owner or not net.get('Internal') or set(net.get('Containers',{})) not in (set(),{identity}):raise ValueError('No unexpected smoke peers')
+        result=subprocess.run(['docker','start','--attach',identity],capture_output=True,text=True,timeout=min(92,max(0.01,deadline-time.monotonic()-8)) if cancel_probe else 25)
+        if len(result.stdout.encode())>(16384 if cancel_probe else 8192):raise ValueError('Smoke receipt bound')
+        receipt=json.loads(result.stdout)
+        if cancel_probe:validate_probe_receipt(receipt)
+        else:validate_receipt(receipt)
+        output.parent.mkdir(parents=True,exist_ok=True)
+        if cancel_probe:write_probe_output(output.with_suffix('.provisional.json'),receipt)
+        else:output.write_text(json.dumps(receipt,indent=2))
+        if result.returncode or (not receipt['complete'] if cancel_probe else not receipt['started'] or not receipt['sandboxVerified']):raise RuntimeError('Chrome smoke rejected')
+        accepted=True
     finally:
-        cleanup(path)
-        if watchdog:
-            watchdog.terminate()
-            try:watchdog.wait(timeout=2)
-            except subprocess.TimeoutExpired:watchdog.kill();watchdog.wait(timeout=2)
+        try:
+            if cancel_probe:cleanup(path,True,deadline)
+            else:cleanup(path)
+        finally:
+            if watchdog:
+                watchdog.terminate()
+                try:watchdog.wait(timeout=2)
+                except subprocess.TimeoutExpired:watchdog.kill();watchdog.wait(timeout=2)
+    if cancel_probe and accepted:
+        final={**receipt,'containerCleanupConfirmed':True};validate_probe_receipt(final,controller=True);write_probe_output(output,final)
+
+def write_probe_output(path,row):
+    fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,'O_NOFOLLOW',0),0o600)
+    with os.fdopen(fd,'w') as stream:json.dump(row,stream,indent=2,allow_nan=False)
+
+def validate_probe_receipt(row,*,controller=False):
+    from hosted_browser import validate_eligibility_diagnostic
+    keys={'scope','complete','sandboxVerified','cases','failure','cleanup','listenersClosed'}|({'containerCleanupConfirmed'} if controller else set())
+    if type(controller) is not bool or not isinstance(row,dict) or controller and row.get('containerCleanupConfirmed') is not True:raise ValueError('Probe controller cleanup proof')
+    if not isinstance(row,dict) or set(row)!=keys or row['scope']!='Owned Chrome-only cancellation ordering; not application or performance acceptance' or any(type(row[k]) is not bool for k in ('complete','sandboxVerified','listenersClosed')) or row['failure'] not in ('none','probe-failed-or-not-reproduced'):raise ValueError('Probe receipt schema')
+    if not isinstance(row['cleanup'],dict) or set(row['cleanup'])!={'browserClosed','profileRemoved','forcedTermination','complete'} or any(type(v) is not bool for v in row['cleanup'].values()) or row['cleanup']['complete']!=(row['cleanup']['browserClosed'] and row['cleanup']['profileRemoved'] and not row['cleanup']['forcedTermination']):raise ValueError('Probe cleanup schema')
+    cases=row['cases']
+    if not isinstance(cases,list) or len(cases)>2:raise ValueError('Probe cases bound')
+    for index,case in enumerate(cases):
+        if not isinstance(case,dict) or set(case)!={'kind','complete','category','terminalCancellationAccepted','matchingCancellationObserved','continueCommands','eligibility'} or case['kind']!=('current-document','old-loader')[index] or any(type(case[k]) is not bool for k in ('complete','terminalCancellationAccepted','matchingCancellationObserved')) or case['category'] not in ('none','interception-invalid-id','execution-context-destroyed','execution-context-missing','target-closed','protocol-timeout','other') or type(case['continueCommands']) is not int or case['continueCommands']!=1:raise ValueError('Probe case schema')
+        e=validate_eligibility_diagnostic(case['eligibility'])
+        expected=case['category']=='interception-invalid-id' and case['matchingCancellationObserved'] and (case['terminalCancellationAccepted'] and e['reason']=='eligible' if index==0 else not case['terminalCancellationAccepted'] and e['loaderMatches'] is False)
+        if case['complete'] and not expected:raise ValueError('Probe false case completion')
+    if row['complete'] and not (row['sandboxVerified'] and row['listenersClosed'] and row['cleanup']['complete'] and row['failure']=='none' and len(cases)==2 and all(c['complete'] for c in cases)):raise ValueError('Probe false completion')
+    return row
 
 def validate_receipt(row):
     required={'scope','chromeCacheVersion','started','sandboxVerified','exitCode','signal','signalScope','deadlineTriggered','exitObservedBeforeCleanup','failurePhase','fatalFlags','zygoteChecks','fatalExcerpt','before','after'}
@@ -100,7 +150,9 @@ def validate_receipt(row):
     return row
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--image');parser.add_argument('--output',type=Path);parser.add_argument('--cleanup-only',action='store_true');parser.add_argument('--watchdog',action='store_true');args=parser.parse_args()
-    if args.watchdog:time.sleep(30);cleanup(ledger_path())
-    elif args.cleanup_only:cleanup(ledger_path())
-    else:run(args.image,args.output)
+    parser=argparse.ArgumentParser();parser.add_argument('--image');parser.add_argument('--output',type=Path);parser.add_argument('--cleanup-only',action='store_true');parser.add_argument('--watchdog',action='store_true');parser.add_argument('--cancel-probe',action='store_true');args=parser.parse_args()
+    if args.watchdog:
+        time.sleep(95 if args.cancel_probe else 30)
+        cleanup(ledger_path(True),True,time.monotonic()+5) if args.cancel_probe else cleanup(ledger_path())
+    elif args.cleanup_only:cleanup(ledger_path(True),True,time.monotonic()+10) if args.cancel_probe else cleanup(ledger_path())
+    else:run(args.image,args.output,args.cancel_probe)

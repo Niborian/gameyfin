@@ -171,6 +171,7 @@ export class FixtureUiDriver {
     // IDs stay in bounded process memory only; receipts contain counts, never IDs.
     this.pausedIds=new Set();this.canceledNetworkIds=new Set();this.authDiagnostics.interceptionDiagnostics={failedOperation:'none',failedRequestCanceled:null,pausedEvents:0,duplicatePausedIds:0,canceledNetworkEvents:0,verifiedCanceledImageContinuations:0,truncated:false};
     this.coverCancellation=new CoverCancellationLedger(origin,coverId);
+    this.initialAuthDiagnostics=structuredClone(this.authDiagnostics);this.authRound=0;this.interceptionEnabled=false;
     this.navigationRequests=new Map();this.navigationLast=new Map();this.navigationRequestCount=0;this.navigationState=null;
     cdp.onEvent=(method,params)=>this.event(method,params);
   }
@@ -237,7 +238,8 @@ export class FixtureUiDriver {
       if(this.userInfoBodyRequestId===params.requestId&&!this.userInfoBodyAttempted){
         this.userInfoBodyAttempted=true;this.userInfoBodyRequestId=null;
         if(!Number.isFinite(params.encodedDataLength)||params.encodedDataLength<0||params.encodedDataLength>16384){this.authDiagnostics.userInfoIdentity='invalid';return;}
-        this.request('Network.getResponseBody',{requestId:params.requestId},this.postSubmitDeadline??0).then(response=>{this.authDiagnostics.userInfoIdentity=classifyUserInfoBody(response);}).catch(()=>{this.authDiagnostics.userInfoIdentity='failed';});
+        const diagnostic=this.authDiagnostics;
+        this.request('Network.getResponseBody',{requestId:params.requestId},this.postSubmitDeadline??0).then(response=>{diagnostic.userInfoIdentity=classifyUserInfoBody(response);}).catch(()=>{diagnostic.userInfoIdentity='failed';});
       }
     }else if(method==='Network.loadingFailed'){
       this.cookieObservation.finished(params.requestId);
@@ -255,11 +257,13 @@ export class FixtureUiDriver {
   }
   captureInterceptionFailure(){return this.coverCancellation.stamp();}
   async enableBeforeAuth(){
+    if(this.interceptionEnabled)return;
     for(const method of ['Page.enable','Runtime.enable','Network.enable'])await this.request(method);
     await this.request('Fetch.enable',{patterns:[{urlPattern:'*',requestStage:'Request'}]});
     // The original fixture UI does not require WebRTC. Disable exposed peer APIs
     // before any page script, in addition to the scoped non-proxied-UDP preference.
     await this.request('Page.addScriptToEvaluateOnNewDocument',{source:`for(const name of ['RTCPeerConnection','webkitRTCPeerConnection','RTCDataChannel'])Object.defineProperty(globalThis,name,{value:undefined,writable:false,configurable:false});`});
+    this.interceptionEnabled=true;
   }
   async evaluate(expression,deadline=this.totalDeadline){
     const remaining=Math.floor(Math.min(15000,deadline-performance.now(),this.totalDeadline-performance.now()));
@@ -277,9 +281,18 @@ export class FixtureUiDriver {
     }
     throw new Error('DOM readiness deadline');
   }
-  async authenticate(username,password){
+  async authenticate(username,password,{alreadyOnLogin=false}={}){
     validateLoginCredentials(username,password);
-    this.authStage='interception';await this.enableBeforeAuth();this.authStage='login-navigation';await this.request('Page.navigate',{url:this.origin+'/login'});
+    if(typeof alreadyOnLogin!=='boolean'||(alreadyOnLogin&&(this.authRound<1||this.authRound>=3)))throw new Error('SPA authentication round boundary');
+    if(alreadyOnLogin){
+      const interception=this.authDiagnostics.interceptionDiagnostics;
+      this.authDiagnostics=structuredClone(this.initialAuthDiagnostics);this.authDiagnostics.interceptionDiagnostics=interception;
+      this.cookieObservation=new CookieObservation(this.authDiagnostics.cookieDiagnostics);
+      this.loginRequestIds.clear();this.userInfoRequestIds.clear();this.postLoginUserInfoIds.clear();this.userInfoBodyRequestId=null;this.userInfoBodyAttempted=false;this.postSubmitDeadline=null;this.navigations=0;
+    }
+    this.authRound++;
+    this.authStage='interception';await this.enableBeforeAuth();this.authStage='login-navigation';
+    if(!alreadyOnLogin)await this.request('Page.navigate',{url:this.origin+'/login'});
     this.authStage='login-form';
     await this.poll(loginFormExpression());
     this.authStage='submit';

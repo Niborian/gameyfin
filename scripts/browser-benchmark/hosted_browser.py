@@ -287,7 +287,7 @@ def validate_failure_receipt(value):
     return value
 
 class HostedBrowser:
-    def __init__(self,owner,image,network,app_ip,cover_id,cover_sha,*,app_id,app_image,fixture_root,waiting=False,diagnostic_output=None,ui_version=False):
+    def __init__(self,owner,image,network,app_ip,cover_id,cover_sha,*,app_id,app_image,fixture_root,waiting=False,diagnostic_output=None,ui_version=False,ui_rounds=1):
         if os.name!='posix' or os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('RUNNER_ENVIRONMENT')!='github-hosted':
             raise ValueError('Hosted Linux CI only')
         row=json.loads(command('network','inspect',network))[0]
@@ -302,11 +302,13 @@ class HostedBrowser:
         image_rows=json.loads(command('image','inspect',image))
         if len(image_rows)!=1 or image_rows[0].get('Id')!=image:raise ValueError('Actual browser image mismatch')
         if type(ui_version) is not bool:raise ValueError('Optional UI version mode')
+        if type(ui_rounds) is not int or ui_rounds not in (1,3) or (ui_rounds==3 and not ui_version):raise ValueError('Optional same-profile rounds')
+        self.ui_rounds=ui_rounds;self.ui_round=0
         self.ui_version=ui_version;self.uiVersionVerified=False
         self.owner=owner;self.image=image;self.id=None;self.process=None;self.watchdog=None;self.diagnostic_output=diagnostic_output
         try:
             record_creation_intent(fixture_root,owner,image)
-            self.id=command(*creation_args(owner,image,network,app_ip,cover_id,cover_sha),*(['--ui-version=2.4.3'] if ui_version else [])).strip()
+            self.id=command(*creation_args(owner,image,network,app_ip,cover_id,cover_sha),*(['--ui-version=2.4.3'] if ui_version else []),*(['--ui-rounds=3'] if ui_rounds==3 else [])).strip()
             if not re.fullmatch('[a-f0-9]{64}',self.id): raise ValueError('Created ID boundary')
             record_browser(fixture_root,owner,self.id,image)
             created=json.loads(command('inspect',self.id))
@@ -342,6 +344,9 @@ class HostedBrowser:
                 if chunk==b'\n':
                     value=json.loads(raw)
                     if not isinstance(value,dict): raise ValueError('Browser receipt schema')
+                    if getattr(self,'ui_rounds',1)==3:
+                        if set(value)!={'uiRound','receipt'} or type(value['uiRound']) is not int or value['uiRound']!=self.ui_round or not isinstance(value['receipt'],dict):raise ValueError('Exact same-profile round receipt')
+                        value=value['receipt']
                     if 'navigationProgress' in value:
                         validate_navigation_progress(value)
                         progress_count+=1
@@ -368,11 +373,16 @@ class HostedBrowser:
         if not self.diagnostic_output:return
         path=Path(self.diagnostic_output);observed=read_state(path,8192)
         observed['browserDriverFailure']=value
+        if getattr(self,'ui_rounds',1)==3:observed['uiRound']=self.ui_round
         pending=path.with_suffix('.driver-failure.pending')
         with pending.open('x') as output:output.write(json.dumps(observed,indent=2))
         pending.chmod(0o600);pending.replace(path)
 
     def authenticate(self,username,password):
+        if getattr(self,'ui_rounds',1)==3:
+            if getattr(self,'authenticated',False):raise ValueError('Prior UI logout required')
+            if self.ui_round>=3:raise ValueError('Same-profile round bound')
+            self.ui_round+=1
         if not isinstance(username,str) or not isinstance(password,str) or not 1<=len(username)<=128 or not 16<=len(password)<=256 or re.search(r'[\x00-\x1f\x7f]',username+password):
             raise ValueError('Private input boundary')
         self.process.stdin.write((username+'\n'+password+'\n').encode());self.process.stdin.flush()
@@ -386,6 +396,7 @@ class HostedBrowser:
         self.authenticationEvidence={k:ready[k] for k in ('normalLoginAutoRedirectObserved','fixtureProfileVerified')}
         if getattr(self,'diagnostic_output',None):
             path=Path(self.diagnostic_output);data=read_state(path,8192);data['authenticationEvidence']=self.authenticationEvidence
+            if getattr(self,'ui_rounds',1)==3:data['uiRound']=self.ui_round
             self.write_diagnostic(path,data,'.auth-ready.pending')
         self.authenticated=True
 

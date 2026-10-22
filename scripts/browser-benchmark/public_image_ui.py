@@ -208,9 +208,11 @@ def cleanup_all():
         if any(Path(m.get('Source','/')).resolve()==root or Path(m.get('Source','/')).resolve().is_relative_to(root) for row in rows for m in row.get('Mounts',[])):raise ValueError('Owned image inputs still referenced')
         exact_inputs(root);shutil.rmtree(root)
 
-def execute(browser_image,output):
+def execute(browser_image,output,ui_rounds=1):
+    if type(ui_rounds) is not int or ui_rounds not in (1,3):raise ValueError('UI round count')
     hosted_only();root=input_root();root.mkdir(mode=0o700);info=root.stat();write(root/'OWNER.json',{'job':job_identity(),'device':info.st_dev,'inode':info.st_ino});create()
     report={'scope':SCOPE,'harnessSource':os.environ.get('GITHUB_SHA'),'complete':False,'sameProfileReloginProven':False,'scanProven':False,'performanceProven':False,'cleanupConfirmed':False};stage='artifact'
+    if ui_rounds==3:report['scope']='Public81 retained-image three-cycle same-page/profile original-UI login/browse/logout only; not scanning, performance, private integration or release acceptance'
     signal.signal(signal.SIGTERM,lambda *_:(_ for _ in ()).throw(TimeoutError('Controller deadline')));signal.signal(signal.SIGALRM,lambda *_:(_ for _ in ()).throw(TimeoutError('Controller deadline')));signal.alarm(570)
     try:
         report['artifact']=download(root);stage='image-inventory';evidence,direct,plugins=inventory(root);report['imageInventory']=evidence;stage='application'
@@ -218,11 +220,15 @@ def execute(browser_image,output):
             before=metrics(app.client)
             if any(before[k] for k in ('active','draining','completed','failed')):raise ValueError('UI-only case must not scan')
             stage='browser';cover_id=int(app.cover_path.rsplit('/',1)[1])
-            with HostedBrowser(app.owner,browser_image,app.network,app.ip,cover_id,app.fixture['image']['sha256'],app_id=app.id,app_image=IMAGE,fixture_root=app.root,ui_version=True,diagnostic_output=output.with_name('browser.json')) as browser:
-                browser.authenticate('fixture-admin',app.password);report['authenticationEvidence']=dict(browser.authenticationEvidence)
-                if browser.authenticationEvidence['normalLoginAutoRedirectObserved'] is not True or browser.uiVersionVerified is not True:raise ValueError('Automatic original-UI landing/version required')
-                report['uiVersionVerified']=True;report['navigation']=browser.sample();report['normalUiLogoutPassed']=browser.authenticated is False
+            with HostedBrowser(app.owner,browser_image,app.network,app.ip,cover_id,app.fixture['image']['sha256'],app_id=app.id,app_image=IMAGE,fixture_root=app.root,ui_version=True,ui_rounds=ui_rounds,diagnostic_output=output.with_name('browser.json')) as browser:
+                if ui_rounds==3:report['sameProfileRounds']=[]
+                for round_index in range(1,ui_rounds+1):
+                    browser.authenticate('fixture-admin',app.password);report['authenticationEvidence']=dict(browser.authenticationEvidence)
+                    if browser.authenticationEvidence['normalLoginAutoRedirectObserved'] is not True or browser.uiVersionVerified is not True:raise ValueError('Automatic original-UI landing/version required')
+                    report['uiVersionVerified']=True;report['navigation']=browser.sample();report['normalUiLogoutPassed']=browser.authenticated is False
+                    if ui_rounds==3:report['sameProfileRounds'].append({'round':round_index,'authenticationEvidence':dict(browser.authenticationEvidence),'uiVersionVerified':True,'navigation':report['navigation'],'normalUiLogoutPassed':report['normalUiLogoutPassed']})
             report['browserCleanupConfirmed']=True;stage='final-gates';verify_sources(app.root/'fixture',app.fixture['manifest']);after=metrics(app.client)
+            if ui_rounds==3:report['sameProfileReloginProven']=len(report['sameProfileRounds'])==3 and all(r['round']==i and r['normalUiLogoutPassed'] is True and r['uiVersionVerified'] is True and all(r['authenticationEvidence'].get(k) is True for k in ('normalLoginAutoRedirectObserved','fixtureProfileVerified')) and all(r['navigation'].get(k) is True for k in ('originalUiContentReady','coverDecoded','coverSha256Matches')) and len(r['navigation']['navigations'])==3 for i,r in enumerate(report['sameProfileRounds'],1))
             if any(after[k]!=before[k] for k in ('active','draining','completed','failed')):raise ValueError('UI-only scan counters changed')
             report['sourceIntegrityUnchanged']=True;report['noScansStarted']=True;report['health']=app.final_gate()
         report['applicationCleanupConfirmed']=True
@@ -233,12 +239,12 @@ def execute(browser_image,output):
     finally:
         try:cleanup_all();report['cleanupConfirmed']=True
         finally:
-            signal.alarm(0);report['complete']='failure' not in report and all(report.get(k) is True for k in ('applicationCleanupConfirmed','browserCleanupConfirmed','cleanupConfirmed','uiVersionVerified','normalUiLogoutPassed','noScansStarted','sourceIntegrityUnchanged')) and all(report.get('authenticationEvidence',{}).get(k) is True for k in ('normalLoginAutoRedirectObserved','fixtureProfileVerified'));output.parent.mkdir(parents=True,exist_ok=True);write(output,report)
+            signal.alarm(0);report['complete']='failure' not in report and (ui_rounds==1 or report.get('sameProfileReloginProven') is True) and all(report.get(k) is True for k in ('applicationCleanupConfirmed','browserCleanupConfirmed','cleanupConfirmed','uiVersionVerified','normalUiLogoutPassed','noScansStarted','sourceIntegrityUnchanged')) and all(report.get('authenticationEvidence',{}).get(k) is True for k in ('normalLoginAutoRedirectObserved','fixtureProfileVerified'));output.parent.mkdir(parents=True,exist_ok=True);write(output,report)
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--browser-image');parser.add_argument('--output',type=Path);parser.add_argument('--cleanup-only',action='store_true');args=parser.parse_args();hosted_only()
+    parser=argparse.ArgumentParser();parser.add_argument('--browser-image');parser.add_argument('--output',type=Path);parser.add_argument('--cleanup-only',action='store_true');parser.add_argument('--ui-rounds',type=int,choices=(1,3),default=1);args=parser.parse_args();hosted_only()
     if args.cleanup_only:cleanup_all()
-    else:execute(args.browser_image,args.output)
+    else:execute(args.browser_image,args.output,args.ui_rounds)
 if __name__=='__main__':
     try:main()
     except Exception:raise SystemExit('Focused public UI pass failed; sanitized evidence/owned cleanup only') from None

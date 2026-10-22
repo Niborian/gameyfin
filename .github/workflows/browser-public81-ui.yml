@@ -37,7 +37,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          timeout --signal=TERM --kill-after=2s 598s python3 -B scripts/browser-benchmark/public_image_ui.py --browser-image "$(cat .benchmark/public81-ui/browser.id)" --output .benchmark/public81-ui/result.json
+          timeout --signal=TERM --kill-after=2s 598s python3 -B scripts/browser-benchmark/public_image_ui.py --browser-image "$(cat .benchmark/public81-ui/browser.id)" --output .benchmark/public81-ui/result.json --ui-rounds 3
       - name: Exact current-job cleanup only; no global prune
         if: always()
         run: timeout --signal=TERM --kill-after=2s 40s python3 -B scripts/browser-benchmark/public_image_ui.py --cleanup-only

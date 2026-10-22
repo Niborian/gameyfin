@@ -75,7 +75,9 @@ export function failureReceipt(phase,category=null,diagnostics=null,stage=null,c
   if(auth!==null&&phase!=='authentication')throw new Error('Authentication diagnostic phase boundary');
   return {browserFailed:true,phase,...(category===null?{}:{launchFailureCategory:category}),...(diagnostics===null?{}:{launchDiagnostics:diagnostics}),...(stage===null?{}:{authStage:stage}),...(counters===null?{}:{failureCounters:counters}),...(auth===null?{}:{authDiagnostics:safeAuthDiagnostics(auth)})};
 }
-function emitFailure(phase){if(!failureEmitted){failureEmitted=true;process.stdout.write(JSON.stringify(failureReceipt(phase,launchFailureCategory,launchDiagnostics,authStage,failureCounters,authDiagnostics))+'\n');}}
+let uiRounds=1,uiRound=1;
+function emit(value){process.stdout.write(JSON.stringify(uiRounds===3?{uiRound,receipt:value}:value)+'\n');}
+function emitFailure(phase){if(!failureEmitted){failureEmitted=true;emit(failureReceipt(phase,launchFailureCategory,launchDiagnostics,authStage,failureCounters,authDiagnostics));}}
 
 export function validateArguments(argv){
   if(argv.length!==3||!/^172\.(1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3}$/.test(argv[0])||argv[0].split('.').some(x=>Number(x)>255)||!/^\d{1,10}$/.test(argv[1])||Number(argv[1])<1||! /^[a-f0-9]{64}$/.test(argv[2]))throw new Error('Fixture identity boundary');
@@ -98,6 +100,7 @@ export async function browserResources(read=fs.readFile){
 }
 
 export async function main(argv){
+  if(argv.length===5&&argv[3]==='--ui-version=2.4.3'&&argv[4]==='--ui-rounds=3'){uiRounds=3;argv=argv.slice(0,4);}
   const uiVersionOnly=argv.length===4&&argv[3]==='--ui-version=2.4.3';
   if(uiVersionOnly)argv=argv.slice(0,3);
   const identity=validateArguments(argv);
@@ -133,12 +136,13 @@ export async function main(argv){
       onFatal:(method,error)=>{if(currentPhase==='authentication'&&driver)recordFirstAuthCdpFailure(driver.authDiagnostics,method,error);},
     })};
     for(const name of observedNetworkEvents)session.on(name,p=>cdp.onEvent?.(name,p));
-    driver=new FixtureUiDriver(cdp,{origin,...identity,onProgress:progress=>process.stdout.write(JSON.stringify({navigationProgress:{...progress,proxyDiagnostics:safeProxyDiagnostics(proxy.diagnostics())}})+'\n')});
+    driver=new FixtureUiDriver(cdp,{origin,...identity,onProgress:progress=>emit({navigationProgress:{...progress,proxyDiagnostics:safeProxyDiagnostics(proxy.diagnostics())}})});
+    for(uiRound=1;uiRound<=uiRounds;uiRound++){
     currentPhase='input';let username=await readLine(),password=await readLine();
     if(username.length<1||username.length>128||password.length<16||password.length>256||/[\x00-\x1f\x7f]/.test(username+password))throw new Error('Private credentials boundary');
-    currentPhase='authentication';const authProof=await driver.authenticate(username,password);username='';password='';
-    if(uiVersionOnly){await driver.poll("(()=>({ready:[...document.querySelectorAll('p')].some(p=>p.textContent.trim()==='Unofficial Gameyfin 2.4.3')}))()",()=>{},driver.postSubmitDeadline);process.stdout.write(JSON.stringify({uiVersionVerified:true})+'\n');}
-    process.stdout.write(JSON.stringify(authenticationReady(authProof))+'\n');
+    currentPhase='authentication';const authProof=await driver.authenticate(username,password,{alreadyOnLogin:uiRound>1});username='';password='';
+    if(uiVersionOnly){await driver.poll("(()=>({ready:[...document.querySelectorAll('p')].some(p=>p.textContent.trim()==='Unofficial Gameyfin 2.4.3')}))()",()=>{},driver.postSubmitDeadline);emit({uiVersionVerified:true});}
+    emit(authenticationReady(authProof));
     let command=await readLine();
     if(command==='navigate'){
       currentPhase='navigation';
@@ -146,13 +150,15 @@ export async function main(argv){
       const results=[];for(const route of ['/library/27003','/game/33000','/library/27003'])results.push(await driver.navigate(route));
       if(timedOut)throw new Error('Controller deadline');
       const after=await browserResources();
-      process.stdout.write(JSON.stringify({originalUiContentReady:true,coverDecoded:true,coverSha256Matches:true,navigations:results,browserResources:{before,after}})+'\n');
+      emit({originalUiContentReady:true,coverDecoded:true,coverSha256Matches:true,navigations:results,browserResources:{before,after}});
       command=await readLine();
     }
     if(command!=='logout')throw new Error('Controller command boundary');
     currentPhase='logout';const loggedOut=await driver.logout();
     if(loggedOut?.loggedOut!==true)throw new Error('Normal UI logout gate');
-    process.stdout.write(JSON.stringify({loggedOut:true})+'\n');
+    emit({loggedOut:true});
+    }
+    uiRound=uiRounds;
   }catch(error){failurePhase=currentPhase;failureCounters=await browserFailureCounters();if(failurePhase==='authentication'){if(authStages.includes(driver?.authStage))authStage=driver.authStage;authDiagnostics=driver?.authDiagnostics||null;}if(failurePhase==='chrome-launch'){launchFailureCategory=classifyLaunchFailure(error);launchDiagnostics=launchFailureDiagnostics(error,preflight);}emitFailure(failurePhase);throw new Error('Hosted browser operation failed');}finally{
     currentPhase='cleanup';
     clearTimeout(timer);process.stdin.destroy();proxy?.close();

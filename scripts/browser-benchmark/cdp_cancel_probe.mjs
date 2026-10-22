@@ -69,7 +69,8 @@ export async function runProbe(puppeteer){
   profile=await fs.mkdtemp('/tmp/gameyfin-browser-');await fs.mkdir(profile+'/xdg-config',{mode:0o700});await fs.mkdir(profile+'/xdg-cache',{mode:0o700});
   browser=await puppeteer.launch({headless:true,userDataDir:profile,env:launchEnvironment(profile),dumpio:false,timeout:10000,args:[...chromeProxyFlags(55202),'--disable-background-networking','--disable-component-update','--disable-sync','--no-first-run']});
   const sandbox=await browser.newPage();await sandbox.goto('chrome://sandbox',{timeout:10000});result.sandboxVerified=await sandbox.$eval('#evaluation',e=>e.textContent.trim()==='You are adequately sandboxed.');await sandbox.close();if(!result.sandboxVerified)throw new Error('Probe sandbox');
-  for(const kind of ['current-document','old-loader']){const page=await browser.newPage();try{result.cases.push(await probeCase(await page.createCDPSession(),kind));}finally{await page.close();}if(!result.cases.at(-1).complete)throw new Error('Probe not reproduced');}
+  // Retain both owned pages for the bounded final browser/process cleanup proof.
+  for(const kind of ['current-document','old-loader']){const page=await browser.newPage();result.cases.push(await probeCase(await page.createCDPSession(),kind));if(!result.cases.at(-1).complete)throw new Error('Probe not reproduced');}
  };
  try{await Promise.race([work(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Probe overall deadline')),75000);})]);}
  catch{result.failure='probe-failed-or-not-reproduced';}

@@ -224,7 +224,7 @@ test('actual App effect skips forms, retains public browse lifecycle across navi
 test('actual LoginView prevents fast submit until policy settles, including a failed lookup', async () => {
     for (const failed of [false, true]) {
         let finish, reject; const policy = new Promise((resolve, fail) => {finish = resolve; reject = fail;});
-        const values = []; let hook = 0, effectDone = false, effect, button, submit, logins = 0;
+        const values = [], effects = [], cleanups = []; let hook = 0, effectDone = false, button, submit, logins = 0;
         const jsx = (type, props) => {
             if (type === 'Formik') {submit = props.onSubmit; return props.children({isSubmitting: false});}
             if (type === 'Button' && props.type === 'submit') button = props;
@@ -232,18 +232,20 @@ test('actual LoginView prevents fast submit until policy settles, including a fa
         };
         const mod = load('views/LoginView.tsx', {
             'react': {useState(initial) {const index = hook++; if (!(index in values)) values[index] = initial; return [values[index], value => {values[index] = value;}];},
-                useEffect(fn) {if (!effectDone) effect = fn;}},
+                useRef(initial) {const index = hook++; if (!(index in values)) values[index] = {current: initial}; return values[index];},
+                useEffect(fn) {hook++; if (!effectDone) effects.push(fn);}},
             'react/jsx-runtime': {jsx, jsxs: jsx},
             'Frontend/util/auth': {useAuth: () => ({state: {initializing: false, loading: false}, login: async () => {logins++; return {error: true};}})},
             '@heroui/react': {Button: 'Button', useDisclosure: () => ({})},
             'formik': {Formik: 'Formik'},
             'Frontend/generated/endpoints': {RegistrationEndpoint: {isSelfRegistrationAllowed: () => policy}}
         });
-        function render() {hook = 0; mod.default(); if (!effectDone) {effectDone = true; effect();}}
+        function render() {hook = 0; mod.default(); if (!effectDone) {effectDone = true; for (const effect of effects) cleanups.push(effect());}}
         const formik = {setFieldError() {}};
         render(); assert.equal(button.isDisabled, true); await submit({}, formik); assert.equal(logins, 0);
         if (failed) reject(new Error('Unavailable registration policy')); else finish(false);
         await new Promise(resolve => setImmediate(resolve));
         render(); assert.equal(button.isDisabled, false); await submit({}, formik); assert.equal(logins, 1);
+        for (const cleanup of cleanups) if (typeof cleanup === 'function') cleanup();
     }
 });

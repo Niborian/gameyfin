@@ -1,4 +1,4 @@
-name: Reviewed public81 original-UI first pass
+name: NEVER MERGE - reviewed PR156 original-UI three-round acceptance
 on:
   workflow_dispatch:
     inputs:
@@ -21,6 +21,7 @@ jobs:
   ui:
     if: >-
       github.repository == 'Niborian/gameyfin' &&
+      github.ref == 'refs/heads/codex/public156-ui-acceptance-20261023' &&
       github.event_name == 'workflow_dispatch' && inputs.reviewed == true &&
       inputs.reviewed_head == github.sha
     runs-on: ubuntu-24.04
@@ -29,11 +30,13 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Pure exact source-binding tests only; no network or app build
+        run: timeout --signal=TERM --kill-after=2s 30s python3 -B -m unittest discover -s scripts/browser-benchmark -p test_public_image_source_binding.py
       - name: Build only reviewed Chrome image; no app build or test suites
         run: |
           mkdir -p .benchmark/public81-ui
-          docker build --file scripts/browser-benchmark/Dockerfile --iidfile .benchmark/public81-ui/browser.id scripts/browser-benchmark
-      - name: One retained public-image original-UI pass; no scans
+          timeout --signal=TERM --kill-after=2s 180s docker build --file scripts/browser-benchmark/Dockerfile --iidfile .benchmark/public81-ui/browser.id scripts/browser-benchmark
+      - name: Retained reviewed PR156 original-UI three-round pass; no app rebuild or scans
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

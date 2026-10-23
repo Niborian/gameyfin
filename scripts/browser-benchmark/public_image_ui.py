@@ -10,11 +10,13 @@ from ownership_index import create,cleanup_current,job_identity
 from fixture_case import verify_sources
 from throughput_case import metrics
 
-SOURCE='21cce95a6ea0b473ca096f6ae26a372f651baa1e'
-IMAGE='sha256:9ec1195171a00faf9715b3ef9128e5f0cd0be8042d8918907f28edeab00a7d08'
-ARTIFACT=12464351775;RUN=39864937299;SIZE=336291503
-ZIP_SHA='4148111b1a4a952a397543d25a1756e3b1a63f36701c5b69ae722faa7e92b3db'
-SCOPE='Public21cce retained-image original-UI fresh-profile pass only; not same-profile relogin, scanning, performance, private integration or release acceptance'
+SOURCE='bc9dc63e7d6f89122c4c441dea0390dc8be26c8b'
+IMAGE='sha256:4ce5f87c31dc6adb51c6030532e06926c1c12ea74fc08a98ae3482f10f448b9b'
+ARTIFACT=12470117300;RUN=39878562034;SIZE=336268975
+ZIP_SHA='795fc303a2adb27e19e9fe38b6ff10419fbc2c064f2c23334a055f1a9127ddb2'
+CHECKOUT='f0529306a7b9c129ebbdd6f59cf747bd3b873072'
+REVIEWED_TREE='4fb3be49f1f15b6dd1604c72c02fa60217ea2680'
+SCOPE='Reviewed PR156 retained-image original-UI fresh-profile pass only; not same-profile relogin, full issue154, scanning, performance, private integration or release acceptance'
 API='https://api.github.com/repos/Niborian/gameyfin'
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -43,7 +45,19 @@ def exact_inputs(root):
     marker=json.loads(read_regular(root/'OWNER.json',1024));info=root.stat(follow_symlinks=False)
     if marker!={'job':job_identity(),'device':info.st_dev,'inode':info.st_ino}:raise ValueError('Input root identity')
 
+def source_binding():
+    # Actual checkout SHA was observed in image job120172031450's checkout log.
+    # Labels name the PR head; never infer source equivalence from those labels.
+    expected={'reviewedHead':SOURCE,'checkoutCommit':CHECKOUT,'reviewedTree':REVIEWED_TREE,
+              'runId':RUN,'imageJobId':120172031450,'artifactId':ARTIFACT,'imageId':IMAGE}
+    binding=json.loads(read_regular(Path(__file__).with_name('public_image_source_binding.json'),2048))
+    if binding!=expected:raise ValueError('Exact reviewed image source binding')
+    head=api('/git/commits/'+SOURCE);checkout=api('/git/commits/'+CHECKOUT)
+    if head.get('sha')!=SOURCE or checkout.get('sha')!=CHECKOUT or head.get('tree',{}).get('sha')!=REVIEWED_TREE or checkout.get('tree',{}).get('sha')!=REVIEWED_TREE:raise ValueError('Reviewed image checkout tree mismatch')
+    return binding
+
 def download(root):
+    binding=source_binding()
     run=api('/actions/runs/'+str(RUN));meta=api('/actions/artifacts/'+str(ARTIFACT))
     if run.get('head_sha')!=SOURCE or run.get('status')!='completed' or run.get('conclusion')!='success' or run.get('head_repository',{}).get('id')!=1260847994:raise ValueError('Exact successful public source run')
     if meta.get('id')!=ARTIFACT or meta.get('name')!='staging-image-'+SOURCE or meta.get('size_in_bytes')!=SIZE or meta.get('digest')!='sha256:'+ZIP_SHA or meta.get('expired') is not False or meta.get('workflow_run',{}).get('id')!=RUN or meta.get('workflow_run',{}).get('head_sha')!=SOURCE:raise ValueError('Immutable artifact metadata')
@@ -98,7 +112,7 @@ def download(root):
     command('load','--input',root/'gameyfin-staging-image.tar',timeout=60)
     row=json.loads(command('image','inspect',IMAGE))[0];labels=row.get('Config',{}).get('Labels',{})
     if row.get('Id')!=IMAGE or labels.get('org.opencontainers.image.revision')!=SOURCE or labels.get('org.opencontainers.image.version')!='2.4.3' or row.get('Config',{}).get('Volumes'):raise ValueError('Exact public image source/version/volume boundary')
-    return {'artifactId':ARTIFACT,'runId':RUN,'artifactZipSha256':ZIP_SHA,'tarSha256':archive_hash,'source':SOURCE,'imageId':IMAGE,'version':'2.4.3'}
+    return {'artifactId':ARTIFACT,'runId':RUN,'artifactZipSha256':ZIP_SHA,'tarSha256':archive_hash,'source':SOURCE,'imageId':IMAGE,'version':'2.4.3','reviewedSourceBinding':binding}
 
 def hash_file(path):
     digest=hashlib.sha256()
@@ -212,7 +226,7 @@ def execute(browser_image,output,ui_rounds=1):
     if type(ui_rounds) is not int or ui_rounds not in (1,3):raise ValueError('UI round count')
     hosted_only();root=input_root();root.mkdir(mode=0o700);info=root.stat();write(root/'OWNER.json',{'job':job_identity(),'device':info.st_dev,'inode':info.st_ino});create()
     report={'scope':SCOPE,'harnessSource':os.environ.get('GITHUB_SHA'),'complete':False,'sameProfileReloginProven':False,'scanProven':False,'performanceProven':False,'cleanupConfirmed':False};stage='artifact'
-    if ui_rounds==3:report['scope']='Public21cce retained-image three-cycle same-page/profile original-UI login/browse/logout only; not scanning, performance, private integration or release acceptance'
+    if ui_rounds==3:report['scope']='Reviewed PR156 retained-image three-cycle same-page/profile original-UI login/profile/browse/image/logout only; not full issue154, scanning, performance, private integration or release acceptance'
     signal.signal(signal.SIGTERM,lambda *_:(_ for _ in ()).throw(TimeoutError('Controller deadline')));signal.signal(signal.SIGALRM,lambda *_:(_ for _ in ()).throw(TimeoutError('Controller deadline')));signal.alarm(570)
     try:
         report['artifact']=download(root);stage='image-inventory';evidence,direct,plugins=inventory(root);report['imageInventory']=evidence;stage='application'

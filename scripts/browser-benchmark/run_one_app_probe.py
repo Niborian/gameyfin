@@ -1,13 +1,67 @@
 """Local draft hosted-only technical diagnostic; never app build/publish/deploy."""
-import argparse,hashlib,json,os,signal,subprocess,sys,time,zipfile
+import argparse,hashlib,http.client,ipaddress,json,os,signal,socket,subprocess,sys,time,zipfile
 from pathlib import Path
 from retained_scan_image import SOURCE,IMAGE,input_root,write,download,inventory,cleanup_all,hash_file
 from owned_app import OwnedApp,hosted_only
 from ownership_index import create,job_identity,index_path
 from hosted_browser import HostedBrowser
-from throughput_case import metrics
+from throughput_case import metrics,parse_metrics
 from fixture_case import verify_sources
 from concurrent_scrape_probe import scrape,concurrent_probe
+
+def failure_http(address,path,*,clock=time.monotonic):
+    """Cookie/proxy/redirect-free private read: 2s socket timeouts plus boundary deadline checks.
+
+    Header parsing can span socket reads; this is not a hard 2s wall-clock guarantee.
+    The controller's hard 570s deadline remains authoritative.
+    """
+    parsed=ipaddress.ip_address(address)
+    if parsed.version!=4 or not parsed.is_private or parsed.is_loopback or parsed.is_link_local or path not in('/actuator/health','/actuator/prometheus'):raise ValueError('Fixed diagnostic target')
+    end=clock()+2;connection=http.client.HTTPConnection(str(parsed),8081,timeout=2);response=None
+    try:
+        connection.request('GET',path)
+        remaining=end-clock()
+        if remaining<=0:raise TimeoutError('Diagnostic request deadline')
+        if not isinstance(connection.sock,socket.socket):raise ValueError('Owned diagnostic socket')
+        connection.sock.settimeout(remaining);response=connection.getresponse()
+        if clock()>end:raise TimeoutError('Diagnostic header deadline')
+        chunks=[];total=0
+        bound=8192 if path=='/actuator/health'else 1024*1024
+        owned=response.fp.raw._sock
+        if not isinstance(owned,socket.socket):raise ValueError('Owned diagnostic response socket')
+        while not response.isclosed():
+            remaining=end-clock()
+            if remaining<=0:raise TimeoutError('Diagnostic deadline')
+            owned.settimeout(remaining);part=response.read1(min(65536,bound+1-total))
+            if not part:break
+            chunks.append(part);total+=len(part)
+            if total>bound:raise ValueError('Diagnostic byte bound')
+        if clock()>end or type(response.length)is int and response.length!=0:raise TimeoutError('Diagnostic incomplete or late')
+        return response.status,{},b''.join(chunks)
+    finally:
+        try:
+            if response is not None:response.close()
+        finally:connection.close()
+
+def observe_failure(app,report,persist,remaining):
+    available=remaining();observation={'controllerElapsedSeconds':max(0,570-available),'controllerRemainingSeconds':max(0,available)};report['failureObservation']=observation
+    if available<40:observation['status']='budget-skipped';persist();return
+    observation['status']='attempted'
+    def read_metrics():
+        status,_,body=failure_http(app.ip,'/actuator/prometheus')
+        if status!=200:raise ValueError('Diagnostic metrics status')
+        return parse_metrics(body)
+    for name,operation in (
+        ('resources',app.resources),
+        ('metrics',read_metrics)):
+        try:observation[name]=operation();observation[name+'Status']='observed'
+        except Exception:observation[name+'Status']='unavailable'
+        persist()
+    def retain_gate(gate):observation['finalGate']=gate;persist()
+    try:app.final_gate(on_observation=retain_gate,health_reader=lambda:failure_http(app.ip,'/actuator/health'))
+    except Exception:observation['finalGateStatus']='unavailable-or-rejected'
+    else:observation['finalGateStatus']='passed'
+    persist()
 
 def build_provider(root,evidence):
     base=Path(__file__).resolve().parent;deps=evidence['fixtureDependencies']
@@ -40,7 +94,7 @@ def execute(browser_image,output):
     if root.exists()or root.is_symlink()or index_path().exists():raise ValueError('Exclusive current-job inputs required')
     report={'scope':'One retained-image ordinary scan technical probe; not paired performance or cutover acceptance',
         'source':SOURCE,'image':IMAGE,'complete':False,'performanceAccepted':False,'continuousOverlapProven':False,'cleanupConfirmed':False}
-    stage='input-ownership';app=None;root_created=False
+    stage='input-ownership';app=None;root_created=False;controller_started=time.monotonic()
     def persist():
         data=json.dumps(report,allow_nan=False)
         if len(data.encode())>1024*1024:raise ValueError('Technical diagnostic receipt bound')
@@ -74,7 +128,11 @@ def execute(browser_image,output):
                 if browser.authenticationEvidence!={'normalLoginAutoRedirectObserved':True,'fixtureProfileVerified':True}:raise ValueError('Normal UI identity and landing required')
                 stage='concurrent-scan-browser';started=time.monotonic();report['resourceBefore']=app.resources()
                 def retain_concurrent(value):report['concurrent']=value;persist()
-                report['concurrent']=concurrent_probe(app.client.scan,browser.sample,lambda kind:scrape(app.ip,kind),on_observation=retain_concurrent);persist()
+                try:report['concurrent']=concurrent_probe(app.client.scan,browser.sample,lambda kind:scrape(app.ip,kind),on_observation=retain_concurrent);persist()
+                except BaseException:
+                    try:observe_failure(app,report,persist,lambda:570-(time.monotonic()-controller_started))
+                    except BaseException:pass # Diagnostic failure must never replace original failure/cleanup.
+                    raise
             report['browserCleanupConfirmed']=True;stage='scan-completion'
             deadline=started+180
             while True:

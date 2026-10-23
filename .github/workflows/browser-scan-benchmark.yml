@@ -25,7 +25,7 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.reviewed == true &&
       inputs.reviewed_head == github.sha
     runs-on: ubuntu-24.04
-    # 938s bounded steps plus setup/upload margin. App/browser/scan deadlines
+    # 968s bounded steps plus setup/upload margin. App/browser/scan deadlines
     # remain unchanged; reserve time for exact cleanup after a failed step.
     timeout-minutes: 20
     steps:
@@ -41,6 +41,7 @@ jobs:
           timeout --signal=TERM --kill-after=2s 60s python3 -B -m unittest discover -s scripts/browser-benchmark -p 'test_one_app*.py' -v
           timeout --signal=TERM --kill-after=2s 30s python3 -B -m unittest discover -s scripts/browser-benchmark -p 'test_scrape_transport.py' -v
           timeout --signal=TERM --kill-after=2s 30s python3 -B -m unittest discover -s scripts/browser-benchmark -p 'test_final_gate_diagnostics.py' -v
+          timeout --signal=TERM --kill-after=2s 30s python3 -B -m unittest discover -s scripts/browser-benchmark -p 'test_failure_observation.py' -v
       - name: Build only pinned Chrome image; no application build
         run: |
           mkdir -p .benchmark/one-app-probe

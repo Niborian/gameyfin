@@ -332,7 +332,7 @@ class OwnedApp:
             'memoryBytes':int((cg/'memory.current').read_text()),'anonymousBytes':int(memory['anon']),
             'fileCacheBytes':int(memory['file']),'rssBytes':int(match[1])*1024,
             'containerLifetimePeakBytes':int((cg/'memory.peak').read_text())}
-    def final_gate(self,on_observation=lambda gate:None):
+    def final_gate(self,on_observation=lambda gate:None,*,health_reader=None):
         gate={'unexpectedErrorCount':None,'oomLogCount':None,'oomKilled':None,'restartCount':None,'health':None,'healthHttpStatus':None}
         stage='inspection-unavailable'
         try:
@@ -340,7 +340,7 @@ class OwnedApp:
             stage='logs-unavailable';logs=command('logs',self.id)
             gate['unexpectedErrorCount']=sum(bool(re.search(r'\bERROR\b',line)) for line in logs.splitlines())
             gate['oomLogCount']=sum(bool(re.search(r'\bOutOfMemoryError(?::|\s*$)',line)) for line in logs.splitlines())
-            stage='health-unavailable';status,_,body=self.client.raw('/actuator/health',management=True)
+            stage='health-unavailable';status,_,body=(health_reader()if health_reader is not None else self.client.raw('/actuator/health',management=True))
             gate['healthHttpStatus']=status if type(status)is int and 100<=status<=599 else None
             health=json.loads(body).get('status') if status==200 else None
             gate['health']=health if health in ('UP','DOWN','OUT_OF_SERVICE','UNKNOWN',None) else 'other'

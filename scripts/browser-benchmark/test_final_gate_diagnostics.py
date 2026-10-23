@@ -32,6 +32,10 @@ class FinalGateDiagnostics(unittest.TestCase):
         with patch('owned_app.command',return_value=''):
             seen=[];gate=OwnedApp.final_gate(self.app(),seen.append)
         self.assertEqual(gate['failureCategory'],'passed');self.assertEqual(seen,[gate])
+    def test_optional_failure_health_reader_does_not_use_cookie_transport(self):
+        app=self.app();app.client.raw=lambda *a,**k:(_ for _ in()).throw(AssertionError('shared transport forbidden'))
+        with patch('owned_app.command',return_value=''):
+            self.assertEqual(OwnedApp.final_gate(app,health_reader=lambda:(200,{},b'{"status":"UP"}'))['health'],'UP')
     def test_close_records_only_confirmed_success_or_failure(self):
         for fail in (False,True):
             with tempfile.TemporaryDirectory() as folder:

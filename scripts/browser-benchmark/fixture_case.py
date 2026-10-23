@@ -66,14 +66,29 @@ class FixtureClient:
         match=re.search(rb'<meta[^>]*name="_csrf"[^>]*content="([^"]{1,512})"',body)
         if status!=200 or not match:raise RuntimeError('Normal fixture CSRF page unavailable')
         self.csrf=match[1].decode('ascii');return self.csrf
-    def bootstrap(self):
+    def bootstrap(self,*,isolate_bundled=False):
+        if type(isolate_bundled)is not bool:raise ValueError('Explicit retained bundle mode')
         self.page_csrf('/setup');password=secrets.token_urlsafe(32)
         self.request('/connect/SetupEndpoint/registerSuperAdmin',{'superAdminRegistration':
             {'username':'fixture-admin','password':password,'email':'fixture@example.invalid'}})
         self.login(password)
+        if isolate_bundled:
+            rows=self.request('/connect/PluginEndpoint/getAll',{})
+            if not isinstance(rows,list) or not 2<=len(rows)<=33 or any(not isinstance(p,dict)or not isinstance(p.get('id'),str)for p in rows) or len({p['id']for p in rows})!=len(rows):raise ValueError('Bounded original plus fixture plugin inventory')
+            for plugin in rows:
+                if plugin['id']not in (PLUGIN_ID,'org.gameyfin.plugins.download.direct'):
+                    self.request('/connect/PluginEndpoint/disablePlugin',{'pluginId':plugin['id']})
         for plugin in (PLUGIN_ID,'org.gameyfin.plugins.download.direct'):
             self.request('/connect/PluginEndpoint/enablePlugin',{'pluginId':plugin})
-        self.plugin_gate();return password
+        self.plugin_gate()
+        if isolate_bundled:self.retained_plugin_gate()
+        return password
+    def retained_plugin_gate(self):
+        rows=self.request('/connect/PluginEndpoint/getAll',{})
+        if not isinstance(rows,list)or not 2<=len(rows)<=33 or any(not isinstance(p,dict)for p in rows):raise ValueError('Retained plugin response bound')
+        allowed={PLUGIN_ID,'org.gameyfin.plugins.download.direct'}
+        if len({p.get('id')for p in rows})!=len(rows)or {p.get('id')for p in rows if p.get('state')=='STARTED'}!=allowed:raise ValueError('Only normal fixture metadata and original direct provider may start')
+        self.plugin_gate()
     def login(self,password):
         if not isinstance(password,str) or not 32<=len(password)<=128:raise ValueError('Ephemeral fixture password bound')
         self.page_csrf('/login')

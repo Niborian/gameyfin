@@ -174,10 +174,15 @@ def cleanup(root,owner,*,remove_root=False):
         shutil.rmtree(root)
 
 class OwnedApp:
-    def __init__(self,image,direct_plugin,metadata_plugin,*,expected_jar_sha,waiting=False,diagnostic_output=None):
+    def __init__(self,image,direct_plugin,metadata_plugin,*,expected_jar_sha,waiting=False,diagnostic_output=None,retained_scan=None):
         hosted_only()
         if not re.fullmatch('sha256:[a-f0-9]{64}',image):raise ValueError('Immutable local image ID required')
         if not re.fullmatch('[a-f0-9]{64}',expected_jar_sha):raise ValueError('Built exact application JAR SHA required')
+        h2_jar='/opt/gameyfin/h2.jar';plugin_sources=(direct_plugin,metadata_plugin)
+        if retained_scan is not None:
+            if waiting:raise ValueError('Retained diagnostic is ordinary scan only')
+            from retained_scan_image import validate_retained_inputs
+            h2_jar,plugin_sources=validate_retained_inputs(image,expected_jar_sha,direct_plugin,metadata_plugin,retained_scan)
         self.image=image;self.owner=secrets.token_hex(8);self.network='gameyfin-browser-net-'+self.owner
         self.diagnostic_output=diagnostic_output;self.diagnostic_captured=False
         self.lifecycle_phase='fixture-preparation';self.lifecycle_started=time.monotonic()
@@ -194,7 +199,7 @@ class OwnedApp:
             (self.root/'OWNER').write_text('benchmark-27-'+self.owner)
             (self.root/'IDENTITY.json').write_text(json.dumps({'owner':self.owner,'device':initial.st_dev,'inode':initial.st_ino}))
             for leaf in ('db','data','logs','plugins','plugindata'):(self.root/leaf).mkdir(mode=0o755)
-            for source in (direct_plugin,metadata_plugin):
+            for source in plugin_sources:
                 source=Path(source)
                 if not source.is_file() or source.is_symlink():raise ValueError('Explicit freshly built fixture plugins')
                 target=self.root/'plugins'/source.name;shutil.copyfile(source,target);target.chmod(0o644)
@@ -236,19 +241,20 @@ class OwnedApp:
             digest=command('exec','--user','1337:1337',self.id,'sha256sum','/opt/gameyfin/application.jar').split()
             if digest!=[expected_jar_sha,'/opt/gameyfin/application.jar']:raise ValueError('Actual running app JAR differs from source receipt')
             row=self.inspect();self.ip=row['NetworkSettings']['Networks'][self.network]['IPAddress'];self.client=FixtureClient(self.ip)
-            self.lifecycle_phase='setup-readiness';self.ready('/setup')
-            self.lifecycle_phase='admin-plugin-bootstrap';self.password=self.client.bootstrap()
+            self.lifecycle_phase='setup-readiness';self.ready('/setup',plugin_readiness=retained_scan is not None)
+            self.lifecycle_phase='admin-plugin-bootstrap';self.password=self.client.bootstrap(isolate_bundled=retained_scan is not None)
             self.lifecycle_phase='stop-before-seed'
             command('stop','--time','20',self.id)
             if self.inspect()['State']['Running']:raise ValueError('No live H2 import')
             self.lifecycle_phase='stopped-h2-seed'
-            self.helper('java',['-Xmx128m','-cp','/opt/gameyfin/h2.jar','org.h2.tools.RunScript',
+            self.helper('java',['-Xmx128m','-cp',h2_jar,'org.h2.tools.RunScript',
                 '-url','jdbc:h2:/db/gameyfin_db;IFEXISTS=TRUE','-user','gfadmin','-password','gameyfin','-script','/seed/seed.sql'],user='1337:1337',
                 mounts=[(self.root/'db','/db',False),(self.root/'fixture','/seed',True)])
             self.lifecycle_phase='seeded-restart';command('start',self.id)
-            self.lifecycle_phase='login-readiness';self.ready('/login')
+            self.lifecycle_phase='login-readiness';self.ready('/login',plugin_readiness=retained_scan is not None)
             self.lifecycle_phase='seeded-login';self.client.login(self.password)
             self.lifecycle_phase='seeded-plugin-gate';self.client.plugin_gate()
+            if retained_scan is not None:self.client.retained_plugin_gate()
             self.lifecycle_phase='cover-ingestion';self.cover_path=self.client.ingest_cover()
             self.lifecycle_phase='cover-validation';self.client.image_gate(self.cover_path)
         except Exception as error:
@@ -295,10 +301,16 @@ class OwnedApp:
         finally:
             row=json.loads(command('inspect',identity))[0]
             command('rm','--force',validate_owned(row,self.root,self.owner,self.image,identity))
-    def ready(self,path):
+    def ready(self,path,*,plugin_readiness=False):
         deadline=time.monotonic()+180
         while time.monotonic()<deadline:
-            try:self.client.page_csrf(path);return
+            try:
+                self.client.page_csrf(path)
+                if plugin_readiness:
+                    status,_,body=self.client.raw('/actuator/health/readiness',management=True)
+                    if status!=200 or json.loads(body).get('status')!='UP':time.sleep(1);continue
+                    if time.monotonic()>=deadline:break
+                return
             except (OSError,RuntimeError):time.sleep(1)
         raise TimeoutError('Actual application startup deadline')
     def inspect(self):

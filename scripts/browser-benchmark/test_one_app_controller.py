@@ -78,13 +78,15 @@ class ControllerFailureTests(unittest.TestCase):
             def cleanup():
                 saved=json.loads(output.read_text());self.assertEqual(saved['concurrent']['failureCategory'],'browser-failed')
                 self.assertIn('failureObservation',saved)
+                self.assertEqual(saved['scanBefore']['completed'],0)
+                self.assertEqual(saved['scanSnapshotClassification'],'unknown')
                 self.assertEqual(len(saved['concurrent']['probes']),2);cleaned.append(True)
             with ExitStack()as stack:
                 for p in self.fixture(root,output):stack.enter_context(p)
                 for p in [patch.object(runner,'download',return_value={}),patch.object(runner,'inventory',return_value=({'jarSha256':'b'*64},Path('direct.jar'),())),
                     patch.object(runner,'build_provider',return_value=(Path('fixture.jar'),{'fixtureJarSha256':'c'*64})),patch.object(runner,'OwnedApp',App),
                     patch.object(runner,'HostedBrowser',Browser),patch.object(runner,'verify_sources'),patch.object(runner,'plugin_proof',return_value={}),
-                    patch.object(runner,'metrics',return_value={'active':0,'draining':0,'completed':0,'failed':0}),patch.object(runner,'scrape',side_effect=probe),
+                    patch.object(runner,'metrics',return_value={'active':0,'draining':0,'completed':0,'failed':0,'heapBytes':1,'gcPauseCount':0,'gcPauseSeconds':0}),patch.object(runner,'scrape',side_effect=probe),
                     patch.object(runner,'failure_http',side_effect=TimeoutError('private observation timeout')),
                     patch.object(runner,'cleanup_all',side_effect=cleanup)]:stack.enter_context(p)
                 with self.assertRaisesRegex(ValueError,'private browser detail'):runner.execute('sha256:'+'1'*64,output)

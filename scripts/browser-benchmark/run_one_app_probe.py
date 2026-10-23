@@ -7,7 +7,7 @@ from ownership_index import create,job_identity,index_path
 from hosted_browser import HostedBrowser
 from throughput_case import metrics,parse_metrics
 from fixture_case import verify_sources
-from concurrent_scrape_probe import scrape,concurrent_probe
+from concurrent_scrape_probe import scrape,concurrent_probe,safe_telemetry,scan_snapshot_classification
 
 def failure_http(address,path,*,clock=time.monotonic):
     """Cookie/proxy/redirect-free private read: 2s socket timeouts plus boundary deadline checks.
@@ -118,6 +118,7 @@ def execute(browser_image,output):
             verify_sources(app.root/'fixture',app.fixture['manifest'])
             report['pluginBefore']=plugin_proof(app,evidence,provider,report['providerBuild']['fixtureJarSha256'])
             before=metrics(app.client)
+            report['scanBefore']=safe_telemetry(before);persist()
             if any(before[k]for k in ('active','draining','completed','failed')):raise ValueError('Fresh unscanned fixture required')
             stage='quiescent-probes';report['quiescentProbes']=[scrape(app.ip,kind)for kind in ('filtered','unfiltered')];persist()
             stage='original-browser'
@@ -127,7 +128,9 @@ def execute(browser_image,output):
                 browser.authenticate('fixture-admin',app.password)
                 if browser.authenticationEvidence!={'normalLoginAutoRedirectObserved':True,'fixtureProfileVerified':True}:raise ValueError('Normal UI identity and landing required')
                 stage='concurrent-scan-browser';started=time.monotonic();report['resourceBefore']=app.resources()
-                def retain_concurrent(value):report['concurrent']=value;persist()
+                def retain_concurrent(value):
+                    report['concurrent']=value
+                    report['scanSnapshotClassification']=scan_snapshot_classification(before,value.get('probes',[]));persist()
                 try:report['concurrent']=concurrent_probe(app.client.scan,browser.sample,lambda kind:scrape(app.ip,kind),on_observation=retain_concurrent);persist()
                 except BaseException:
                     try:observe_failure(app,report,persist,lambda:570-(time.monotonic()-controller_started))

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
-from concurrent_scrape_probe import scrape
+from concurrent_scrape_probe import scrape,safe_probe,safe_telemetry,scan_snapshot_classification
 import run_one_app_probe as runner
 
 
@@ -147,6 +147,25 @@ class ScrapeTransportTests(unittest.TestCase):
             self.assertIsNone(row['active'])
             self.assertEqual(row['stage'], stage)
             self.assertEqual(row['activeGaugeLineCount'], count)
+
+    def test_unfiltered_reuses_body_for_safe_jvm_and_scan_projection(self):
+        body=b'gameyfin_scans_active 0\ngameyfin_scans_draining 0\ngameyfin_scans_completed_total{type="full"} 4\ngameyfin_scans_failed_total{type="full"} 0\njvm_memory_used_bytes{area="heap"} 123\njvm_gc_pause_seconds_count 2\njvm_gc_pause_seconds_sum 0.01\n'
+        row,seen=self.exercise([body],kind='unfiltered')
+        self.assertEqual(row['telemetryStatus'],'observed');self.assertEqual(row['telemetry']['completed'],4)
+        self.assertEqual(row['telemetry']['heapBytes'],123)
+        projected=safe_probe({**row,'telemetry':{**row['telemetry'],'private':'never'}},'unfiltered')
+        self.assertNotIn('private',str(projected));self.assertEqual(projected['telemetryStatus'],'observed')
+        row,_=self.exercise([b'gameyfin_scans_active 0\n'],kind='unfiltered')
+        self.assertEqual(row['category'],'observed');self.assertEqual(row['telemetryStatus'],'unavailable')
+        for invalid in(float('nan'),float('inf'),-1):
+            with self.assertRaises(ValueError):safe_telemetry({**projected['telemetry'],'heapBytes':invalid})
+        before={**projected['telemetry'],'completed':0}
+        self.assertEqual(scan_snapshot_classification(before,[projected]),'four-completions-quiescent-at-snapshot')
+        pending={**projected,'telemetry':before}
+        self.assertEqual(scan_snapshot_classification(before,[pending]),'completion-not-yet-proven')
+        self.assertEqual(scan_snapshot_classification(before,[]),'unknown')
+        for change in({'category':'timeout'},{'httpStatus':503},{'active':1},{'telemetry':{'private':'forged'}}):
+            self.assertEqual(scan_snapshot_classification(before,[{**projected,**change}]),'unknown')
 
     def test_http_rejection_keeps_only_status_not_private_error_text(self):
         error = urllib.error.HTTPError('http://private.invalid', 302, 'private-detail', {}, None)

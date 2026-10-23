@@ -7,8 +7,19 @@ from concurrent_scrape_probe import concurrent_probe
 from run_one_app_probe import plugin_proof
 from fixture_case import FixtureClient,PLUGIN_ID
 import hashlib
+import retained_scan_image as retained
 
 class OneAppProbeTests(unittest.TestCase):
+    def test_retained_image_binding_requires_exact_manifest_and_equal_actual_checkout_tree(self):
+        def api(path):
+            sha=path.rsplit('/',1)[1]
+            return {'sha':sha,'tree':{'sha':retained.REVIEWED_TREE}}
+        with patch.object(retained,'api',side_effect=api):
+            self.assertEqual(retained.source_binding()['checkoutCommit'],retained.CHECKOUT)
+        with patch.object(retained,'read_regular',return_value='{}'):
+            with self.assertRaises(ValueError):retained.source_binding()
+        with patch.object(retained,'api',return_value={'sha':retained.SOURCE,'tree':{'sha':'0'*40}}):
+            with self.assertRaises(ValueError):retained.source_binding()
     def test_exact_manifest_dependencies_without_guessed_or_ambiguous_paths(self):
         text='Manifest-Version: 1.0\nClass-Path: lib/plugin-api-2.4.3.jar lib/pf4j-3.14.1.jar lib/kotlin-stdlib-2.2.0.jar lib/h2-2.4.240.jar\n'
         self.assertEqual(set(fixture_dependencies(text)),{'plugin-api','pf4j','kotlin-stdlib'})

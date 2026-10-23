@@ -1,5 +1,35 @@
 """One-app technical diagnostic only; no Docker, credentials or performance claim."""
 import ipaddress,math,re,socket,threading,time,urllib.error,urllib.request
+from throughput_case import parse_metrics
+
+TELEMETRY_KEYS=('active','draining','completed','failed','heapBytes','gcPauseCount','gcPauseSeconds')
+
+def safe_telemetry(value):
+    if not isinstance(value,dict):raise ValueError('Telemetry projection required')
+    result={}
+    for key in TELEMETRY_KEYS:
+        number=value.get(key)
+        if type(number)not in(int,float)or not math.isfinite(number)or not 0<=number<=2**53:raise ValueError('Bounded finite nonnegative telemetry')
+        if key=='heapBytes'and number>1024**3:raise ValueError('Fixture heap resource bound')
+        if key in('active','draining')and(number>4 or number!=int(number)):raise ValueError('Fixture ownership gauge')
+        if key in('completed','failed','gcPauseCount')and number!=int(number):raise ValueError('Integral telemetry counter')
+        result[key]=number
+    return result
+
+def scan_snapshot_classification(before,probes):
+    """Counter-backed point observation only; never proof of continuous overlap."""
+    if not isinstance(probes,list)or any(not isinstance(p,dict)for p in probes):return 'unknown'
+    rows=[safe_probe(p,'unfiltered')for p in probes if p.get('kind')=='unfiltered']
+    rows=[p for p in rows if p.get('telemetryStatus')=='observed']
+    if len(rows)!=1:return 'unknown'
+    try:prior=safe_telemetry(before);current=safe_telemetry(rows[0].get('telemetry'))
+    except ValueError:return 'unknown'
+    completed=current['completed']-prior['completed'];failed=current['failed']-prior['failed']
+    if completed<0 or failed<0 or completed>4:return 'unknown'
+    if failed>0:return 'failure-observed'
+    if completed==4 and current['active']==0 and current['draining']==0:return 'four-completions-quiescent-at-snapshot'
+    if current['active']>0 or current['draining']>0:return 'owned-work-at-snapshot'
+    return 'completion-not-yet-proven'
 
 PATHS={'filtered':'/actuator/prometheus?includedNames=gameyfin_scans_active','unfiltered':'/actuator/prometheus'}
 
@@ -9,11 +39,19 @@ def safe_probe(row,kind):
         value=row.get(key)
         return value if type(value)in(int,float)and math.isfinite(value)and 0<=value<=limit else None
     status=row.get('httpStatus');category=row.get('category')
-    return {'kind':kind,'started':number('started'),'completed':number('completed'),
+    result={'kind':kind,'started':number('started'),'completed':number('completed'),
         'httpStatus':status if type(status)is int and 100<=status<=599 else None,'active':number('active',4),
         'category':category if category in('observed','unavailable','timeout','http-rejected','transport-unavailable','invalid-or-unavailable')else'invalid-or-unavailable',
         'stage':row.get('stage')if row.get('stage')in('open','socket','read','body-status','gauge-selection','gauge-value','observed')else None,
         'activeGaugeLineCount':number('activeGaugeLineCount',1024)}
+    if kind=='unfiltered':
+        result['telemetryStatus']='unavailable'
+        try:
+            telemetry=safe_telemetry(row.get('telemetry'))
+            if result['category']!='observed'or result['httpStatus']!=200 or result['active']!=telemetry['active']:raise ValueError('Consistent observation provenance')
+            result['telemetry']=telemetry;result['telemetryStatus']='observed'
+        except ValueError:pass
+    return result
 
 def scrape(address,kind,*,clock=time.monotonic):
     parsed=ipaddress.ip_address(address)
@@ -54,6 +92,9 @@ def scrape(address,kind,*,clock=time.monotonic):
             value=float(match[1])if match else float('nan')
             if not math.isfinite(value)or not 0<=value<=4 or not value.is_integer():raise ValueError('Active gauge value range')
             row.update(active=value,category='observed',stage='observed')
+            if kind=='unfiltered':
+                try:row['telemetry']=safe_telemetry(parse_metrics(body));row['telemetryStatus']='observed'
+                except ValueError:row['telemetryStatus']='unavailable'
     except urllib.error.HTTPError as error:
         row.update(httpStatus=error.code if 100<=error.code<=599 else None,category='http-rejected')
     except (socket.timeout,TimeoutError):row['category']='timeout'

@@ -153,7 +153,10 @@ def cp_bytes(identity,path,bound):
         return b''.join(chunks)
     finally:reap_owned_process(process)
 
-def inventory(root):
+def inventory(root,*,on_observation=None):
+    def observe(stage):
+        if on_observation is not None:on_observation({'stage':stage})
+    observe('probe-create')
     owner=secrets.token_hex(8);plan={'owner':owner,'name':'gameyfin-public81-image-probe-'+owner,'id':None,'image':IMAGE};write(root/'image-probe.json',plan)
     try:
         identity=command('create','--pull','never','--name',plan['name'],'--label','gameyfin.public81.probe='+owner,'--network','none','--read-only','--restart','no','--user','1337:1337','--cap-drop','ALL','--security-opt','no-new-privileges','--cpus','.1','--memory','64m','--memory-swap','64m','--pids-limit','16','--entrypoint','/bin/true',IMAGE).strip()
@@ -167,9 +170,10 @@ def inventory(root):
                     if len(entries)>34:raise ValueError('Selected image file count bound')
                 if not 1<=len(entries)<=34 or len({e.name for e in entries})!=len(entries) or any(not regular_tar(e,allow_directory=True) for e in entries):raise ValueError('Regular bounded selected image files')
                 return [(e.name,archive.extractfile(e).read(bound+1)) for e in entries if e.isfile()]
-        application=export('/opt/gameyfin/application.jar',32*1024**2)
+        observe('application-export');application=export('/opt/gameyfin/application.jar',32*1024**2)
         if len(application)!=1 or PurePosixPath(application[0][0]).name!='application.jar':raise ValueError('Exact application JAR')
         jar=application[0][1];(root/'application.jar').write_bytes(jar)
+        observe('application-inspection')
         with zipfile.ZipFile(io.BytesIO(jar)) as zipped:
             entries=zipped.infolist()
             if len(entries)>8000 or len({e.filename for e in entries})!=len(entries) or sum(e.file_size for e in entries)>128*1024**2:raise ValueError('Application resource bound')
@@ -181,15 +185,17 @@ def inventory(root):
             ui=[e for e in entries if not e.is_dir() and e.filename.startswith('META-INF/VAADIN/')]
             if not ui or sum(e.file_size for e in ui)>64*1024**2 or any(e.file_size>8*1024**2 for e in ui):raise ValueError('Original compiled UI resources')
             ui_hash=hashlib.sha256(json.dumps(sorted((e.filename,hashlib.sha256(zipped.read(e)).hexdigest()) for e in ui),separators=(',',':')).encode()).hexdigest()
-        h2='/opt/gameyfin/'+matches[0]
+        observe('h2-export');h2='/opt/gameyfin/'+matches[0]
         if len(export(h2,8*1024**2))!=1:raise ValueError('Image H2 library missing')
+        observe('fixture-dependency-selection');selected_dependencies=fixture_dependencies(mf)
         dependencies={};dependency_root=root/'fixture-dependencies';dependency_root.mkdir(mode=0o700)
-        for name,relative in fixture_dependencies(mf).items():
+        for name,relative in selected_dependencies.items():
+            observe('fixture-dependency-export-'+name)
             selected=export('/opt/gameyfin/'+relative,16*1024**2)
             if len(selected)!=1 or PurePosixPath(selected[0][0]).name!=PurePosixPath(relative).name:raise ValueError('Exact manifest dependency export')
             data=selected[0][1];target=dependency_root/(name+'.jar');target.write_bytes(data)
             dependencies[name]={'path':str(target),'sha256':hashlib.sha256(data).hexdigest(),'imagePath':'/opt/gameyfin/'+relative}
-        plugins=root/'plugins';plugins.mkdir(mode=0o700);plugin_hashes={};direct=None
+        observe('original-plugin-export');plugins=root/'plugins';plugins.mkdir(mode=0o700);plugin_hashes={};direct=None
         for name,data in export('/opt/gameyfin/plugins/.',64*1024**2):
             filename=PurePosixPath(name).name
             if not re.fullmatch(r'[A-Za-z0-9_.-]{1,96}\.jar',filename) or filename in plugin_hashes:raise ValueError('Original plugin names')
@@ -215,7 +221,7 @@ def cleanup_all():
 
 def fixture_dependencies(manifest):
     """Only actual thin-image manifest classpath entries; no guessed paths."""
-    entries=re.findall(r'(?m)^Class-Path: ([^\r\n]+)$',manifest)
+    entries=[line.removeprefix('Class-Path: ') for line in manifest.splitlines() if line.startswith('Class-Path: ')]
     if len(entries)!=1:raise ValueError('Single unfolded manifest classpath required')
     paths=entries[0].split()
     patterns={'plugin-api':r'lib/plugin-api(?:-[A-Za-z0-9_.-]+)?\.jar',

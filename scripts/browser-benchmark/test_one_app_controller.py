@@ -30,6 +30,24 @@ class ControllerFailureTests(unittest.TestCase):
     def test_owner_write_failure_still_attempts_scoped_cleanup_and_persists_failure(self):self.run_failure(True,False)
     def test_artifact_failure_persists_distinct_confirmed_cleanup(self):self.run_failure(False,False)
     def test_cleanup_uncertainty_is_not_success_even_with_original_failure(self):self.run_failure(False,True)
+    def test_inventory_substage_is_persisted_before_failure_and_cleanup(self):
+        from contextlib import ExitStack
+        with tempfile.TemporaryDirectory()as directory:
+            root=Path(directory)/'owned-inputs';output=Path(directory)/'reports/result.json'
+            def fail_inventory(root,*,on_observation):
+                on_observation({'stage':'fixture-dependency-selection'})
+                raise ValueError('private manifest content')
+            def cleanup():
+                self.assertEqual(json.loads(output.read_text())['inventoryObservation'],{'stage':'fixture-dependency-selection'})
+            with ExitStack()as stack:
+                for p in self.fixture(root,output):stack.enter_context(p)
+                stack.enter_context(patch.object(runner,'download',return_value={}))
+                stack.enter_context(patch.object(runner,'inventory',side_effect=fail_inventory))
+                stack.enter_context(patch.object(runner,'cleanup_all',side_effect=cleanup))
+                with self.assertRaises(ValueError):runner.execute('sha256:'+'1'*64,output)
+            receipt=json.loads(output.read_text())
+            self.assertEqual(receipt['failure'],{'stage':'image-inventory','category':'ValueError'})
+            self.assertTrue(receipt['cleanupConfirmed']);self.assertNotIn('private',json.dumps(receipt))
     def test_preexisting_output_is_rejected_before_any_input_mutation(self):
         with tempfile.TemporaryDirectory()as directory:
             root=Path(directory)/'must-not-exist';output=Path(directory)/'existing.json';output.write_text('unchanged')

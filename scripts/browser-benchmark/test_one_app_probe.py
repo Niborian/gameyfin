@@ -12,6 +12,7 @@ class OneAppProbeTests(unittest.TestCase):
     def test_exact_manifest_dependencies_without_guessed_or_ambiguous_paths(self):
         text='Manifest-Version: 1.0\nClass-Path: lib/plugin-api-2.4.3.jar lib/pf4j-3.14.1.jar lib/kotlin-stdlib-2.2.0.jar lib/h2-2.4.240.jar\n'
         self.assertEqual(set(fixture_dependencies(text)),{'plugin-api','pf4j','kotlin-stdlib'})
+        self.assertEqual(fixture_dependencies(text.replace('\n','\r\n')),fixture_dependencies(text))
         for bad in [text.replace('lib/pf4j','../lib/pf4j'),text.replace('lib/h2','lib/pf4j-3.0.jar lib/h2'),text.replace('Class-Path:','Other:')]:
             with self.assertRaises(ValueError):fixture_dependencies(bad)
     def test_original_bundle_missing_or_mutated_fails_before_image_command(self):

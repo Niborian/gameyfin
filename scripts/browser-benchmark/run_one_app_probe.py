@@ -53,7 +53,9 @@ def execute(browser_image,output):
     try:
         root.mkdir(mode=0o700);root_created=True;info=root.stat()
         write(root/'OWNER.json',{'job':job_identity(),'device':info.st_dev,'inode':info.st_ino});create()
-        stage='artifact';report['artifact']=download(root);stage='image-inventory';evidence,direct,plugins=inventory(root)
+        stage='artifact';report['artifact']=download(root);stage='image-inventory'
+        def retain_inventory(observation):report['inventoryObservation']=observation;persist()
+        evidence,direct,plugins=inventory(root,on_observation=retain_inventory)
         report['inventory']={k:v for k,v in evidence.items()if k!='fixtureDependencies'}
         stage='fixture-provider';provider,report['providerBuild']=build_provider(root,evidence);persist()
         stage='application'

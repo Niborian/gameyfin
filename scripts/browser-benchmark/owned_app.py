@@ -320,16 +320,30 @@ class OwnedApp:
             'memoryBytes':int((cg/'memory.current').read_text()),'anonymousBytes':int(memory['anon']),
             'fileCacheBytes':int(memory['file']),'rssBytes':int(match[1])*1024,
             'containerLifetimePeakBytes':int((cg/'memory.peak').read_text())}
-    def final_gate(self):
-        row=self.inspect();logs=command('logs',self.id)
-        errors=sum(bool(re.search(r'\bERROR\b',line)) for line in logs.splitlines())
-        oom=sum(bool(re.search(r'\bOutOfMemoryError(?::|\s*$)',line)) for line in logs.splitlines())
-        status,_,body=self.client.raw('/actuator/health',management=True)
-        health=json.loads(body).get('status') if status==200 else None
-        gate={'unexpectedErrorCount':errors,'oomLogCount':oom,'oomKilled':row['State']['OOMKilled'],'restartCount':row['RestartCount'],'health':health}
-        if errors or oom or gate['oomKilled'] or gate['restartCount'] or health!='UP':raise ValueError('Final actual-app error/OOM/restart/health gate failed')
+    def final_gate(self,on_observation=lambda gate:None):
+        gate={'unexpectedErrorCount':None,'oomLogCount':None,'oomKilled':None,'restartCount':None,'health':None,'healthHttpStatus':None}
+        stage='inspection-unavailable'
+        try:
+            row=self.inspect();gate.update(oomKilled=row['State']['OOMKilled'],restartCount=row['RestartCount'])
+            stage='logs-unavailable';logs=command('logs',self.id)
+            gate['unexpectedErrorCount']=sum(bool(re.search(r'\bERROR\b',line)) for line in logs.splitlines())
+            gate['oomLogCount']=sum(bool(re.search(r'\bOutOfMemoryError(?::|\s*$)',line)) for line in logs.splitlines())
+            stage='health-unavailable';status,_,body=self.client.raw('/actuator/health',management=True)
+            gate['healthHttpStatus']=status if type(status)is int and 100<=status<=599 else None
+            health=json.loads(body).get('status') if status==200 else None
+            gate['health']=health if health in ('UP','DOWN','OUT_OF_SERVICE','UNKNOWN',None) else 'other'
+        except Exception as error:
+            status=getattr(error,'fixture_http_status',None)
+            if stage=='health-unavailable' and type(status)is int and 100<=status<=599:gate['healthHttpStatus']=status
+            on_observation({**gate,'failureCategory':stage})
+            raise ValueError('Final actual-app observation unavailable') from None
+        rejected=bool(gate['unexpectedErrorCount'] or gate['oomLogCount'] or gate['oomKilled'] or gate['restartCount'] or gate['health']!='UP')
+        gate['failureCategory']='criteria-rejected' if rejected else 'passed'
+        on_observation(dict(gate)) # Persist strict categories/counts BEFORE rejecting.
+        if rejected:raise ValueError('Final actual-app error/OOM/restart/health gate failed')
         return gate
     def close(self):
+        self.cleanup_completed=False
         success=False
         try:
             if (self.root/'ledger.json').exists():cleanup(self.root,self.owner,remove_root=True)
@@ -346,6 +360,7 @@ class OwnedApp:
                 self.watchdog.terminate()
                 try:self.watchdog.wait(timeout=2)
                 except subprocess.TimeoutExpired:self.watchdog.kill();self.watchdog.wait(timeout=2)
+        self.cleanup_completed=success
     def __enter__(self):return self
     def __exit__(self,*_):self.close()
 

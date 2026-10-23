@@ -31,7 +31,7 @@ def image_source(image,source):
     if len(rows)!=1 or rows[0]['Id']!=image or rows[0].get('Config',{}).get('Labels',{}).get('org.opencontainers.image.revision')!=source:
         raise ValueError('Actual locally built image source mismatch')
 
-def waiting_validation(app,before):
+def waiting_validation(app,before,on_observation=lambda gate:None):
     # Separate SINGLE library/game held correctness case, not all132 refresh.
     deadline=time.monotonic()+90
     while True:
@@ -51,7 +51,7 @@ def waiting_validation(app,before):
         if len(pinned)!=1 or pinned[0].get('default') is not True or pinned[0].get('defaultLocked') is not True:
             raise ValueError('Held fixture pinned defaults changed')
     verify_sources(app.root/'fixture',manifest);app.client.image_gate(app.cover_path)
-    downloads=app.client.downloads(manifest);gate=app.final_gate()
+    downloads=app.client.downloads(manifest);gate=app.final_gate(on_observation=on_observation)
     return {'scanCompleted':True,'failedLibraries':0,'retainedGameCount':132,'target33000Enriched':True,
         'all132PinnedDefaultsPresent':True,'sourceFileCount':924,'sourceHashesUnchanged':True,'coverAssociationStable':True,
         'unexpectedErrorCount':gate['unexpectedErrorCount'],'oomKilled':gate['oomKilled'],
@@ -65,7 +65,7 @@ def execute(args):
     output.parent.mkdir(parents=True,exist_ok=True)
     from ownership_index import create
     create()
-    reports=[]
+    reports=[];waiting_app=None
     summary={'scope':'Hosted synthetic original-UI benchmark; no real provider traffic, production or cutover acceptance',
         'sourceReceipt':receipt,'applicationResources':{'cpuLimit':.5,'memoryMiB':1024,'heapMiB':320},
         'browserResources':{'cpuLimit':1,'memoryMiB':768,'excludedFromAppSavings':True},
@@ -75,6 +75,8 @@ def execute(args):
         data=json.dumps(summary,indent=2)
         if len(data.encode())>4*1024*1024:raise ValueError('Sanitized report byte bound')
         pending=output.with_suffix('.pending');pending.write_text(data);pending.replace(output)
+    def retain_waiting_gate(gate):
+        summary['waitingFinalGate']=gate;persist()
     def browser(app,phase):
         cover_id=int(app.cover_path.rsplit('/',1)[1])
         value=HostedBrowser(app.owner,args.browser_image,app.network,app.ip,cover_id,app.fixture['image']['sha256'],
@@ -89,16 +91,22 @@ def execute(args):
         def retain_partial(report):
             row['report']=report
             persist()
+        app=None
+        def retain_gate(gate):
+            row['finalGate']=gate;persist()
         try:
             with OwnedApp(image,args.direct_plugin,args.metadata_plugin,expected_jar_sha=receipt[arm+'JarSha256'],
                 diagnostic_output=output.with_name(f'application-{pair}-{position}-{arm}.json')) as app:
                 row['fixtureManifestSha256']=app.fixture['manifestSha256']
                 row['report']=run_case(app.client,app.fixture,app.cover_path,lambda phase:browser(app,phase),app.resources,
                     lambda:verify_sources(app.root/'fixture',app.fixture['manifest']),persist_partial=retain_partial)
-                row['finalGate']=app.final_gate()
-            row['exactOwnedCleanupPassed']=True;persist()
+                row['finalGate']=app.final_gate(on_observation=retain_gate)
+            row['exactOwnedCleanupPassed']=True;row['cleanupOutcome']='complete';persist()
             return row['report']
         except Exception as error:
+            cleaned=getattr(app,'cleanup_completed',None)
+            row['exactOwnedCleanupPassed']=cleaned if type(cleaned)is bool else None
+            row['cleanupOutcome']='complete' if cleaned is True else 'incomplete' if cleaned is False else 'not-observed'
             row['failureClass']=type(error).__name__;persist();raise
     try:
         balanced=balanced_pairs(arm)
@@ -107,6 +115,7 @@ def execute(args):
         from original_app_waiting_case import run_case as held_case
         with OwnedApp(args.candidate_image,args.direct_plugin,args.waiting_plugin,
             expected_jar_sha=receipt['candidateJarSha256'],waiting=True,diagnostic_output=output.with_name('application-waiting.json')) as app:
+            waiting_app=app
             before=metrics(app.client)
             if before['active'] or before['draining']:raise ValueError('Held fixture starts nonidle')
             with browser(app,'waiting') as held_browser:
@@ -120,15 +129,20 @@ def execute(args):
                     # Logout already shared the held 15s sample budget. Remove
                     # its owned container before lengthy scan validation.
                     held_browser.close()
-                    return waiting_validation(app,before)
+                    return waiting_validation(app,before,on_observation=retain_waiting_gate)
                 summary['waitingProviderCorrectness']=held_case(app.waiting_root,app.client.request,held_browser.sample,
                     finish_waiting_case,prerequisites)
         summary['waitingExactOwnedCleanupPassed']=True
+        summary['waitingCleanupOutcome']='complete'
         summary['allCasesCompleted']=True
         summary['responsivenessAccepted']=responsiveness_accepted(reports,summary.get('waitingAuthenticationEvidence'))
         persist()
         if not summary['responsivenessAccepted']:raise ValueError('All measured cases retained but responsiveness overlap/deadline acceptance unmet')
     except Exception as error:
+        if waiting_app is not None:
+            cleaned=getattr(waiting_app,'cleanup_completed',None)
+            summary['waitingExactOwnedCleanupPassed']=cleaned if type(cleaned)is bool else None
+            summary['waitingCleanupOutcome']='complete' if cleaned is True else 'incomplete' if cleaned is False else 'not-observed'
         summary['failureClass']=type(error).__name__;summary.setdefault('allCasesCompleted',False);persist();raise
 
 def main():

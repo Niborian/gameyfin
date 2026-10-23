@@ -126,6 +126,17 @@ evidence**. Gauge brackets in ordinary cases do not prove continuous activity;
 unknown overlap and timeout remain explicit nonacceptance, not successful fast
 requests. Six synthetic cases do not establish production scan/cutover readiness.
 
+Run [39869913682](https://github.com/Niborian/gameyfin/actions/runs/39869913682)
+completed functional scan/metadata/image/exact-download checks and300-second
+recovery in four arms, then failed the fourth arm's final gate. The retained
+report does not identify which final criterion failed. All eight ordinary scan
+phases had unknown browser overlap: the first activity request timed out and
+the later observation was idle. Consequently this run proves neither browsing
+latency during active scans nor an accepted CPU/RAM improvement. Do not treat
+its historical synthetic control as the running production instance. Preserve
+sanitized final-gate observations before rejecting future runs; do not relax
+error, health, resource, timing or overlap acceptance to obtain a green result.
+
 The host starts an independent exact-ID browser deadline watchdog before start.
 Normal cleanup and workflow-final cleanup are additional fences. No process-name
 kill, broad prune, or guessed mount cleanup is used. Failed/uncertain cleanup

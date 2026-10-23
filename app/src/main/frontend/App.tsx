@@ -14,7 +14,7 @@ import {ToastProvider} from "@heroui/toast";
 import {initializePluginState} from "Frontend/state/PluginState";
 import {isAdmin} from "Frontend/util/utils";
 import {useRouteMetadata} from "Frontend/util/routing";
-import {useCallback, useEffect} from "react";
+import {useCallback, useEffect, useLayoutEffect} from "react";
 import {initializeGameRequestState} from "Frontend/state/GameRequestState";
 import {initializePlatformState} from "Frontend/state/PlatformState";
 import {initializeDownloadSessionState} from "Frontend/state/DownloadSessionState";
@@ -55,7 +55,9 @@ function ViewWithAuth() {
     const admin = isAdmin(auth);
     const authOnly = isAuthOnlyRoute(pathname);
 
-    useEffect(() => {
+    // Revoke the old startup generation during commit, before a new auth route or
+    // identity can expose layout callbacks while passive effect cleanup is pending.
+    useLayoutEffect(() => {
         if (auth.state.initializing || auth.state.loading || authOnly) return;
         const lifecycle = new AbortController();
 

@@ -198,11 +198,14 @@ test('actual user cache is cleared across administrator identities', async () =>
     users = [{id: 2}]; await mod.initializeUserState(new AbortController().signal);
     assert.deepEqual(Object.keys(mod.userState.state), ['2']);
 });
-test('actual App effect skips forms, retains public browse lifecycle across navigation, and aborts on identity change', () => {
+test('actual App layout ownership skips forms, retains public browse lifecycle, and aborts on identity change', () => {
     let pathname = '/login', auth = {state: {initializing: false, loading: false, user: undefined}};
     let previous, cleanup, pending; const calls = [];
     const mocks = {
-        'react': {useEffect(fn, deps) {if (!previous || deps.some((d, i) => d !== previous[i])) {pending = fn; previous = deps;}}},
+        'react': {
+            useEffect() {throw Error('Startup ownership must not wait for passive cleanup');},
+            useLayoutEffect(fn, deps) {if (!previous || deps.some((d, i) => d !== previous[i])) {pending = fn; previous = deps;}}
+        },
         'react-router': {useLocation: () => ({pathname})},
         '@phosphor-icons/react': {IconContext: {Provider: () => null}},
         'react/jsx-runtime': {jsx: () => null, jsxs: () => null},

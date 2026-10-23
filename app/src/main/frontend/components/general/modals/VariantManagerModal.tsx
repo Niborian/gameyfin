@@ -30,6 +30,7 @@ import FileDto from "Frontend/generated/org/gameyfin/app/core/filesystem/FileDto
 import {humanFileSize} from "Frontend/util/utils";
 import ContentPathPickerModal from "Frontend/components/general/modals/ContentPathPickerModal";
 import VariantRetirementControls from "Frontend/components/administration/VariantRetirementControls";
+import VariantDetailsEditor from "Frontend/components/administration/VariantDetailsEditor";
 import {gameState} from "Frontend/state/GameState";
 import {CheckIcon, FolderOpenIcon, PlusIcon, TrashIcon, XIcon} from "@phosphor-icons/react";
 
@@ -95,6 +96,7 @@ export default function VariantManagerModal({
     const [deletingContentId, setDeletingContentId] = useState<number>();
     const [removingSourceId, setRemovingSourceId] = useState<number>();
     const [settingDefaultVariantId, setSettingDefaultVariantId] = useState<number>();
+    const [detailsDirty, setDetailsDirty] = useState(false);
 
     const selectedVariant = variants.find((variant) => variant.id === selectedVariantId) ?? defaultVariant;
     const relevantSuggestions = useMemo(() => {
@@ -507,10 +509,13 @@ export default function VariantManagerModal({
     function contentTypeLabel(type: VariantContentType) {
         return type.replaceAll("_", " ");
     }
+    function discardDetailsIfConfirmed() {
+        return !detailsDirty || window.confirm("Discard unsaved variant details before leaving this editor?");
+    }
 
     return (
         <>
-            <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="5xl" scrollBehavior="inside">
+            <Modal isOpen={isOpen} onOpenChange={() => {if (discardDetailsIfConfirmed()) onOpenChange();}} size="5xl" scrollBehavior="inside">
                 <ModalContent>
                     {(onClose) => (
                         <>
@@ -519,12 +524,14 @@ export default function VariantManagerModal({
                                 {game && <span className="text-sm font-normal text-default-500">{game.title} · {game.metadata.path}</span>}
                             </ModalHeader>
                             <ModalBody>
+                                {isOpen && game && selectedVariant && <VariantDetailsEditor key={`${game.id}:${selectedVariant.id}`}
+                                    gameId={game.id} variant={selectedVariant} onChanged={onChanged} onDirtyChange={setDetailsDirty}/>}
                                 {game && (
                                     <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-4">
                                         <div className="flex flex-col gap-4">
                                             <section className="flex flex-col gap-2">
                                                 <div className="flex flex-row items-center justify-between">
-                                                    <p className="font-semibold">Current variants and content</p>
+                                                    <p className="font-semibold">Versions and included / selectable extras</p>
                                                     <Button size="sm" variant="flat" startContent={<PlusIcon/>} onPress={pathPicker.onOpen}>
                                                         Add path
                                                     </Button>
@@ -546,6 +553,7 @@ export default function VariantManagerModal({
                                                                 }
                                                                 {variant.latestForVariant && <Chip size="sm" variant="flat">latest</Chip>}
                                                                 <Button size="sm" variant="light" onPress={() => {
+                                                                    if (variant.id !== selectedVariant?.id && !discardDetailsIfConfirmed()) return;
                                                                     setSelectedVariantId(variant.id);
                                                                     setVariantName(variant.name);
                                                                     setVersion(variant.version);
@@ -728,7 +736,8 @@ export default function VariantManagerModal({
                                         </div>
 
                                         <div className="flex flex-col gap-3">
-                                            <p className="font-semibold">Add or classify content</p>
+                                            <p className="font-semibold">Add or classify included / selectable extras</p>
+                                            <p className="text-xs text-default-500">Required base files stay included. DLC, patches, server files and other extras use the content cards below; labels do not establish store ownership.</p>
                                             <Select
                                                 size="sm"
                                                 label="Attach to variant"
@@ -738,6 +747,7 @@ export default function VariantManagerModal({
                                                     const key = Array.from(keys)[0]?.toString();
                                                     const variant = variants.find((candidate) => candidate.id.toString() === key);
                                                     if (!variant) return;
+                                                    if (variant.id !== selectedVariant?.id && !discardDetailsIfConfirmed()) return;
                                                     setSelectedVariantId(variant.id);
                                                     setVariantName(variant.name);
                                                     setVersion(variant.version);

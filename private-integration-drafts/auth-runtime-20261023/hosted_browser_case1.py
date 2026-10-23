@@ -247,7 +247,7 @@ def validate_failure_receipt(value):
         flags={'anonymousRequestObserved','anonymousProfileWasNull','observationOverflow','loginDocumentObserved'}
         limits={'pendingCatalogHttp':128,'oldWebSockets':16,'anonymousAdminHttp':256,'authCatalogHttp':256}
         dom_flags={'originMatches','libraryPath','gamePath','loginPath','navPresent','signInControlUnique','usernamePresent','passwordPresent','submitPresent','submitEnabled','documentComplete','footerVersionMatches'}
-        if (value.get('phase')!='navigation' or not isinstance(data,dict) or set(data)!={'stage','dom','profileClassification','anonymousHttpStatus'}|flags|set(limits) or
+        if (value.get('phase')!='navigation' or not isinstance(data,dict) or set(data)!={'stage','dom','websocketLifecycle','profileClassification','anonymousHttpStatus'}|flags|set(limits) or
             data['profileClassification'] not in ('not-observed','pending','null','fixture-user','other','invalid','failed') or
             (data['anonymousHttpStatus'] is not None and (type(data['anonymousHttpStatus']) is not int or not 100<=data['anonymousHttpStatus']<=599)) or
             data['stage'] not in ('version','anonymous-profile','sign-in','login-form','settlement') or
@@ -255,7 +255,9 @@ def validate_failure_receipt(value):
             any(type(data[k]) is not int or not 0<=data[k]<=maximum for k,maximum in limits.items()) or
             (data['dom'] is not None and (not isinstance(data['dom'],dict) or set(data['dom'])!=dom_flags or any(type(v) is not bool for v in data['dom'].values())))):
             raise ValueError('Case1 failure boundary')
-        case1_failure={k:({**v} if k=='dom' and v is not None else v) for k,v in data.items()}
+        ws=data['websocketLifecycle'];ws_keys={'created','handshake101','handshakeNon101','frameError','closed'}
+        if not isinstance(ws,dict) or set(ws)!=ws_keys or any(type(v) is not int or not 0<=v<=16 or v>ws['created'] for v in ws.values()):raise ValueError('Case1 WebSocket diagnostic boundary')
+        case1_failure={k:({**v} if k in ('dom','websocketLifecycle') and v is not None else v) for k,v in data.items()}
         value={k:v for k,v in value.items() if k!='publicAuthCase1Failure'}
     base={'browserFailed','phase'}
     categories={'crashpad-database','readonly-filesystem','sandbox-unavailable','namespace-permission','missing-shared-library','missing-executable','launch-timeout','other'}

@@ -157,7 +157,7 @@ export async function main(argv){
 if(process.argv[1]?.endsWith('/browser_entry.draft.mjs'))main(process.argv.slice(2)).catch(()=>{emitFailure(failurePhase||currentPhase);process.stderr.write('Hosted browser operation failed\n');process.exitCode=1;});
 
 
-export const case1AdditionalEvents=Object.freeze(['Page.frameNavigated','Network.webSocketCreated','Network.webSocketClosed']);
+export const case1AdditionalEvents=Object.freeze(['Page.frameNavigated','Network.webSocketCreated','Network.webSocketClosed','Network.webSocketHandshakeResponseReceived','Network.webSocketFrameError']);
 const case1ObservationContracts=new WeakMap();
 export function case1ObservationReady(cdp){const contract=case1ObservationContracts.get(cdp);return contract?.domainsEnabled===true&&contract.failed===false;}
 export async function enableCase1Observation(cdp){
@@ -182,7 +182,9 @@ export function bindCase1ObservedEvents(session,cdp){
       cdp.onEvent?.(name,{frame:{url:p.frame.url,...(p.frame.parentId===undefined?{}:{parentId:p.frame.parentId})}});
     }else{
       if(!bounded(p?.requestId)||name==='Network.webSocketCreated'&&(typeof p.url!=='string'||p.url.length>4096)){invalid();return;}
-      cdp.onEvent?.(name,{requestId:p.requestId,...(name==='Network.webSocketCreated'?{url:p.url}:{})});
+      if(name==='Network.webSocketHandshakeResponseReceived'&&(!Number.isInteger(p.response?.status)||p.response.status<100||p.response.status>599)){invalid();return;}
+      // Do not forward handshake headers/statusText or frame error text/payload.
+      cdp.onEvent?.(name,{requestId:p.requestId,...(name==='Network.webSocketCreated'?{url:p.url}:{}),...(name==='Network.webSocketHandshakeResponseReceived'?{status:p.response.status}:{})});
     }
   });
   case1ObservationContracts.set(cdp,{domainsEnabled:false,failed:false});

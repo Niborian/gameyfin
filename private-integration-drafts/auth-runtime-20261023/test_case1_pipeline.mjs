@@ -22,6 +22,8 @@ async function fixture(options={}){
       session.emit('Network.responseReceived',{requestId:'anonymous',response:{url:origin+'/connect/UserEndpoint/getUserInfo',status:200,headers:{}}});
       session.emit('Network.loadingFinished',{requestId:'anonymous',encodedDataLength:4});
       session.emit('Network.webSocketCreated',{requestId:'public-ws',url:'ws://127.0.0.1:55203/HILLA/push'});
+      if(options.handshake)session.emit('Network.webSocketHandshakeResponseReceived',{requestId:'public-ws',response:{status:options.handshake,headers:{secret:'never-retain'},statusText:'never-retain'}});
+      if(options.frameError)session.emit('Network.webSocketFrameError',{requestId:'public-ws',errorMessage:'never-retain'});
       if(options.admin)request('admin',options.admin);
       if(options.overflow)for(let i=0;i<257;i++)session.emit('Page.frameNavigated',{frame:{url:origin+'/game/33000'}});
     }
@@ -44,6 +46,28 @@ test('post-browse failure reports strict boolean current DOM and bounded counts 
   assert.equal(diagnostic.stage,'settlement');assert.equal(diagnostic.oldWebSockets,1);
   assert.deepEqual(validateCase1Failure(diagnostic),diagnostic);
   for(const changed of [{stage:'arbitrary'},{pendingCatalogHttp:129},{privateText:'forbidden'},{dom:{...diagnostic.dom,rawUrl:'forbidden'}}])assert.throws(()=>validateCase1Failure({...diagnostic,...changed}));
+});
+test('actual copied event dispatcher projects only bounded WebSocket lifecycle and rejects malformed status',async()=>{
+  for(const handshake of [101,403]){
+    const f=await fixture({close:false,handshake,frameError:true});let diagnostic;
+    await assert.rejects(()=>runPublicAuthCase({driver:f.driver,cdp:f.cdp,publicPolicyEnabled:true,onFailure:value=>{diagnostic=value;}}),/settlement unproved/);
+    assert.deepEqual(diagnostic.websocketLifecycle,{created:1,handshake101:handshake===101?1:0,handshakeNon101:handshake===101?0:1,frameError:1,closed:0});
+    assert.equal(JSON.stringify(diagnostic).includes('never-retain'),false);
+    assert.throws(()=>validateCase1Failure({...diagnostic,websocketLifecycle:{...diagnostic.websocketLifecycle,headers:'never-retain'}}));
+    assert.throws(()=>validateCase1Failure({...diagnostic,websocketLifecycle:{...diagnostic.websocketLifecycle,closed:17}}));
+  }
+  for(const response of [null,{status:'101'},{status:99},{status:600}]){
+    const f=await fixture();f.session.emit('Network.webSocketHandshakeResponseReceived',{requestId:'known',response});
+    assert.equal(case1ObservationReady(f.cdp),false);
+  }
+  for(const name of ['Network.webSocketFrameError','Network.webSocketClosed','Network.webSocketHandshakeResponseReceived']){
+    const f=await fixture();f.session.emit(name,{requestId:'x'.repeat(129),response:{status:101},errorMessage:'never-retain'});
+    assert.equal(case1ObservationReady(f.cdp),false);
+  }
+  const f=await fixture({handshake:101,authCatalog:true});let diagnostic;
+  await assert.rejects(()=>runPublicAuthCase({driver:f.driver,cdp:f.cdp,publicPolicyEnabled:true,onFailure:value=>{diagnostic=value;}}),/settlement unproved/);
+  assert.equal(diagnostic.websocketLifecycle.closed,1);
+  assert.equal(diagnostic.oldWebSockets,0);
 });
 test('diagnostic DOM unavailability is null and never changes original failure',async()=>{
   const f=await fixture({close:false}),evaluate=f.driver.evaluate;let diagnostic;

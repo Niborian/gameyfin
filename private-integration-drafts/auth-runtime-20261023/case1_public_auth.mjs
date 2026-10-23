@@ -18,6 +18,7 @@ export async function runPublicAuthCase({driver, cdp, publicPolicyEnabled, onFai
   let loginDocumentObserved = false, overflow = false;
   let diagnosticStage = null;
   let profileClassification = 'not-observed';
+  const websocketStates = new Map();
   const boundedId = id => typeof id === 'string' && id.length <= 128;
   const parse = url => { try { const u = new URL(url); return u.origin === driver.origin ? u.pathname : null; } catch { return null; } };
   const ownedSocket = url => { try { const u = new URL(url); return u.protocol === 'ws:' && u.host === origin.host && !u.username && !u.password; } catch { return false; } };
@@ -49,10 +50,21 @@ export async function runPublicAuthCase({driver, cdp, publicPolicyEnabled, onFai
       if (method === 'Network.loadingFailed' && event.canceled === true) cancelled++;
     }
     if (method === 'Network.webSocketCreated') {
-      if (!boundedId(event.requestId) || sockets.size >= 16 || !ownedSocket(event.url)) overflow = true;
-      else sockets.add(event.requestId);
+      if (!boundedId(event.requestId) || sockets.size >= 16 || websocketStates.size >= 16 || websocketStates.has(event.requestId) || !ownedSocket(event.url)) overflow = true;
+      else { sockets.add(event.requestId); websocketStates.set(event.requestId,{handshake101:false,handshakeNon101:false,frameError:false,closed:false}); }
     }
-    if (method === 'Network.webSocketClosed') { sockets.delete(event.requestId); oldSockets.delete(event.requestId); }
+    if (method === 'Network.webSocketHandshakeResponseReceived') {
+      const state=websocketStates.get(event.requestId);
+      if(!state||!Number.isInteger(event.status)||event.status<100||event.status>599)overflow=true;
+      else state[event.status===101?'handshake101':'handshakeNon101']=true;
+    }
+    if (method === 'Network.webSocketFrameError') {
+      const state=websocketStates.get(event.requestId);if(!state)overflow=true;else state.frameError=true;
+    }
+    if (method === 'Network.webSocketClosed') {
+      const state=websocketStates.get(event.requestId);if(!state)overflow=true;else state.closed=true;
+      sockets.delete(event.requestId); oldSockets.delete(event.requestId);
+    }
   };
   cdp.onEvent = observe;
   try {
@@ -92,12 +104,13 @@ export async function runPublicAuthCase({driver, cdp, publicPolicyEnabled, onFai
       try {
         dom = await driver.evaluate(`(()=>{const u=document.querySelector('input[name="username"]'),p=document.querySelector('input[name="password"]'),b=u?.closest('form')?.querySelector('button[type="submit"]');return {originMatches:location.origin===${JSON.stringify(driver.origin)},libraryPath:location.pathname==='/library/27003',gamePath:location.pathname==='/game/33000',loginPath:location.pathname==='/login',navPresent:!!document.querySelector('nav'),signInControlUnique:[...document.querySelectorAll('nav button.gradient-primary:not(.size-8)')].filter(b=>b.getClientRects().length>0).length===1,usernamePresent:!!u,passwordPresent:!!p,submitPresent:!!b,submitEnabled:!!b&&!b.disabled,documentComplete:document.readyState==='complete',footerVersionMatches:[...document.querySelectorAll('p')].some(p=>p.textContent.trim()==='Unofficial Gameyfin 2.4.3')};})()`,Math.min(driver.totalDeadline,performance.now()+250));
       } catch { /* Unavailable observation is explicitly null; original error still fails. */ }
-      onFailure(validateCase1Failure({stage:diagnosticStage,dom,profileClassification,anonymousHttpStatus:Number.isInteger(anonymousStatus)&&anonymousStatus>=100&&anonymousStatus<=599?anonymousStatus:null,anonymousRequestObserved:anonymousId!==null,anonymousProfileWasNull:anonymousNull,observationOverflow:overflow,loginDocumentObserved,pendingCatalogHttp:Math.min(128,pending.size),oldWebSockets:Math.min(16,oldSockets.size),anonymousAdminHttp:Math.min(256,adminCalls),authCatalogHttp:Math.min(256,authCatalogCalls)}));
+      const websocketLifecycle={created:websocketStates.size,...Object.fromEntries(['handshake101','handshakeNon101','frameError','closed'].map(key=>[key,[...websocketStates.values()].filter(state=>state[key]).length]))};
+      onFailure(validateCase1Failure({stage:diagnosticStage,dom,websocketLifecycle,profileClassification,anonymousHttpStatus:Number.isInteger(anonymousStatus)&&anonymousStatus>=100&&anonymousStatus<=599?anonymousStatus:null,anonymousRequestObserved:anonymousId!==null,anonymousProfileWasNull:anonymousNull,observationOverflow:overflow,loginDocumentObserved,pendingCatalogHttp:Math.min(128,pending.size),oldWebSockets:Math.min(16,oldSockets.size),anonymousAdminHttp:Math.min(256,adminCalls),authCatalogHttp:Math.min(256,authCatalogCalls)}));
     }
     throw error;
   } finally {
     if (cdp.onEvent !== observe) throw new Error('Original CDP owner lost');
     cdp.onEvent = prior;
-    pending.clear(); sockets.clear(); oldSockets.clear();
+    pending.clear(); sockets.clear(); oldSockets.clear(); websocketStates.clear();
   }
 }

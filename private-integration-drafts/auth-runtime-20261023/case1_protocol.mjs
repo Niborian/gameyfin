@@ -7,11 +7,13 @@ export const CASE1_DOM_FLAGS=Object.freeze(['originMatches','libraryPath','gameP
 export function validateCase1Failure(value){
   const flags=['anonymousRequestObserved','anonymousProfileWasNull','observationOverflow','loginDocumentObserved'];
   const limits={pendingCatalogHttp:128,oldWebSockets:16,anonymousAdminHttp:256,authCatalogHttp:256};
-  const keys=['stage','dom','profileClassification','anonymousHttpStatus',...flags,...Object.keys(limits)];
+  const keys=['stage','dom','websocketLifecycle','profileClassification','anonymousHttpStatus',...flags,...Object.keys(limits)];
+  const ws=value?.websocketLifecycle,wsKeys=['created','handshake101','handshakeNon101','frameError','closed'];
+  if(!ws||typeof ws!=='object'||Object.keys(ws).length!==wsKeys.length||!wsKeys.every(k=>Number.isInteger(ws[k])&&ws[k]>=0&&ws[k]<=16&&ws[k]<=ws.created))throw new Error('Case1 WebSocket diagnostic boundary');
   if(!['not-observed','pending','null','fixture-user','other','invalid','failed'].includes(value?.profileClassification)||(value?.anonymousHttpStatus!==null&&(!Number.isInteger(value?.anonymousHttpStatus)||value.anonymousHttpStatus<100||value.anonymousHttpStatus>599)))throw new Error('Case1 profile diagnostic boundary');
   if(!value||typeof value!=='object'||Object.keys(value).length!==keys.length||!keys.every(k=>Object.hasOwn(value,k))||!CASE1_FAILURE_STAGES.includes(value.stage)||!flags.every(k=>typeof value[k]==='boolean')||!Object.entries(limits).every(([k,max])=>Number.isInteger(value[k])&&value[k]>=0&&value[k]<=max))throw new Error('Case1 failure boundary');
   if(value.dom!==null&&(!value.dom||typeof value.dom!=='object'||Object.keys(value.dom).length!==CASE1_DOM_FLAGS.length||!CASE1_DOM_FLAGS.every(k=>typeof value.dom[k]==='boolean')))throw new Error('Case1 DOM boundary');
-  return {...value,dom:value.dom===null?null:{...value.dom}};
+  return {...value,websocketLifecycle:{...ws},dom:value.dom===null?null:{...value.dom}};
 }
 export function parseCase1Arguments(argv){
   if(!Array.isArray(argv)||argv.length!==4||argv[3]!==CASE1_MODE)throw new Error('Exact public case1 mode required');

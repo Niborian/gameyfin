@@ -24,6 +24,11 @@ class AcquisitionLiveProviderTest {
             savePath = "/downloads/fixture-acquisition"
         }
         val indexer = requireNotNull(System.getenv("FIXTURE_INDEXER_ID"))
+        exercise(settings, indexer)
+    }
+
+    /** Shared real-adapter assertions; the owned CI fixture supplies only its fresh isolated pair. */
+    fun exercise(settings: AcquisitionProviderSettings, indexer: String) {
         val config = mockk<ConfigService>()
         every { config.get(ConfigProperties.Requests.Acquisition.ApprovedIndexerIds) } returns arrayOf(indexer)
         val provider = AcquisitionProvider(settings, AcquisitionScopePolicy(config, settings), JsonMapper.builder().build())

@@ -2,14 +2,14 @@
 
 Before changing the runtime or scanning production, retain its immutable image digest (or local `sha256:` image ID), database, application data, and deployment configuration. The database and data must be captured during the same stopped-service interval. A filesystem snapshot coordinated with the service stop is also suitable. Copying a live `.mv.db` file is not a consistent backup.
 
-The standalone `scripts/rehearsal/OfflineH2Rehearsal.java` tool operates on an offline source or isolated offline copy. It never connects to the source H2 database, starts Gameyfin, runs migrations, or scans game paths. It locks the source MVStore file during copying, refuses lock files and overlapping/existing destinations, hashes database and data inventories, restores into a fresh directory, and compares library/game/variant/content counts through read-only JDBC on the copies. The stopped-service confirmation is required; an OS file lock alone cannot prove application data is quiescent.
+The Kotlin `org.gameyfin.tools.OfflineH2Rehearsal` tool operates on an offline source or isolated offline copy, using the existing test runtime through `:app:offlineH2Rehearsal` (no tests run by this task). It never connects to the source H2 database, starts Gameyfin, runs migrations, or scans game paths. It locks the source MVStore file during copying, refuses lock files and overlapping/existing destinations, hashes database and data inventories, restores into a fresh directory, and compares library/game/variant/content counts through read-only JDBC on the copies. The stopped-service confirmation is required; an OS file lock alone cannot prove application data is quiescent.
 
 Use a Java runtime and H2 JAR compatible with the captured database, ideally those from the running image. Set `GAMEYFIN_REHEARSAL_DB_USER` and `GAMEYFIN_REHEARSAL_DB_PASSWORD` in the process environment through your existing secret mechanism. Do not put credentials in arguments, scripts, logs, or committed evidence. The backup itself contains sensitive application data and must remain private with access restrictions inherited from its protected parent directory.
 
 Example argument shape (replace all placeholders with isolated paths and the captured image reference):
 
 ```text
-java --class-path <matching-h2.jar> scripts/rehearsal/OfflineH2Rehearsal.java --offline-confirmed <offline-db-dir> <offline-data-dir> <new-backup-dir> <new-restore-dir> <database-basename> <image@sha256:digest-or-sha256:image-id>
+./gradlew :app:offlineH2Rehearsal -PrehearsalH2Jar=<matching-h2.jar> --args='--offline-confirmed <offline-db-dir> <offline-data-dir> <new-backup-dir> <new-restore-dir> <database-basename> <image@sha256:digest-or-sha256:image-id>' --no-daemon
 ```
 
 All four directories must be separate, with existing protected parent directories for the two new destinations. Symlinks are refused so the tool cannot follow mounts or links into torrent-managed paths. The data directory is Gameyfin application data, not the game library. Keep deployment configuration and the matching immutable image separately; the tool records the supplied image reference but does not retrieve or validate that image.

@@ -1,4 +1,13 @@
-// Run after frontend dependency preparation: node --test scripts/test-auth-startup.cjs
+// Node24 erasable types; after dependency preparation: node --test scripts/test-auth-startup.cts
+type Deferred<T = unknown> = {promise: Promise<T>; resolve: (value: T) => void};
+type StateName = 'Library' | 'Collection' | 'Platform' | 'GameRequest' | 'Plugin' | 'Game' | 'DownloadSession' | 'User';
+type EventCallback = (payload: unknown) => void;
+type RpcInit = {signal: AbortSignal};
+type InitializerCall = {name: StateName | 'Scan'; signal: AbortSignal};
+type ModuleMocks = Record<string, unknown>;
+// Evaluated application modules are deliberately an untyped VM boundary; fixture
+// ownership, signals and completion capabilities remain typed outside that boundary.
+type VmExports = Record<string, any>;
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -8,22 +17,22 @@ const {createRequire} = require('node:module');
 const appRequire = createRequire(path.resolve(__dirname, '../app/package.json'));
 const ts = process.env.TEST_TYPESCRIPT_MODULE ? require(process.env.TEST_TYPESCRIPT_MODULE) : appRequire('typescript');
 const frontend = path.resolve(__dirname, '../app/src/main/frontend');
-function load(file, mocks = {}, suffix = '') {
+function load<T extends object = VmExports>(file: string, mocks: ModuleMocks = {}, suffix: string = ''): T {
     const source = fs.readFileSync(path.join(frontend, file), 'utf8') + suffix;
     const compiled = ts.transpileModule(source, {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX}});
     const module = {exports: {}};
     vm.runInNewContext(compiled.outputText, {module, exports: module.exports, AbortController, console,
-        require(name) {
+        require(name: string) {
             if (name === 'Frontend/util/startupLifecycle') return lifecycle;
             if (name === 'valtio' || name === 'valtio/index') return {proxy: value => value};
             if (name in mocks) return mocks[name];
             return {};
         }});
-    return module.exports;
+    return module.exports as T;
 }
 const lifecycle = load('util/startupLifecycle.ts');
-function deferred() { let resolve; const promise = new Promise(r => {resolve = r;}); return {promise, resolve}; }
-const cases = ['Library', 'Collection', 'Platform', 'GameRequest', 'Plugin', 'Game', 'DownloadSession', 'User'];
+function deferred<T = unknown>(): Deferred<T> { let resolve!: (value: T) => void; const promise = new Promise<T>(r => {resolve = r;}); return {promise, resolve}; }
+const cases: StateName[] = ['Library', 'Collection', 'Platform', 'GameRequest', 'Plugin', 'Game', 'DownloadSession', 'User'];
 for (const name of cases) {
     test(`${name}: failed current fetch clears ownership and same owner can retry`, async () => {
         let requests = 0, attached = 0, cancelled = 0;
@@ -70,7 +79,7 @@ for (const name of cases) {
         owner.abort(); assert.equal(cancelled, attached);
     });
     test(`${name}: superseded unaborted owner cannot attach after replacement or clear it on abort`, async () => {
-        const pending = [deferred(), deferred()]; let requests = 0, attached = 0, cancelled = 0, callback;
+        const pending = [deferred(), deferred()]; let requests = 0, attached = 0, cancelled = 0, callback: EventCallback | undefined;
         const endpoint = new Proxy({}, {get: (_, method) => method.startsWith('subscribe')
             ? () => ({onNext(fn) {callback = fn; attached++; return {cancel() {cancelled++;}};}})
             : () => pending[requests++].promise});
@@ -106,7 +115,7 @@ test('standalone library calls remain single flight without a signal', async () 
 });
 
 test('replacing attached owner cancels exactly old handle and ignores its unaborted queued callback', async () => {
-    const callbacks = []; let cancelled = 0;
+    const callbacks: EventCallback[] = []; let cancelled = 0;
     const endpoint = {getAll: async () => [], subscribeToLibraryEvents: () => ({onNext(fn) {callbacks.push(fn); return {cancel() {cancelled++;}};}})};
     const mod = load('state/LibraryState.ts', {'Frontend/generated/endpoints': {LibraryEndpoint: endpoint}});
     const old = new AbortController(), current = new AbortController();
@@ -125,8 +134,8 @@ for (const name of cases) {
         await assert.rejects(mod[`initialize${name}State`](new AbortController().signal), error => error === failure);
     });
     test(`${name}: forwards same signal to RPC and suppresses only lifecycle-aborted rejection`, async () => {
-        let received;
-        const endpoint = new Proxy({}, {get: () => init => new Promise((_, reject) => {
+        let received: AbortSignal | undefined;
+        const endpoint = new Proxy({}, {get: () => (init: RpcInit) => new Promise((_, reject) => {
             received = init.signal;
             init.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {once: true});
         })});
@@ -159,7 +168,7 @@ test('public anonymous routes stay enabled; auth-only forms do not bootstrap cat
 });
 for (const name of cases.filter(name => name !== 'User')) {
     test(`${name}: already queued callback cannot mutate an aborted generation`, async () => {
-        let callback;
+        let callback!: EventCallback;
         const initial = name === 'Platform' ? {available: [], inUseByGames: [], inUseByLibraries: []} : [];
         const endpoint = new Proxy({}, {get: (_, method) => method.startsWith('subscribe')
             ? () => ({onNext(fn) {callback = fn; return {cancel() {}};}}) : async () => initial});
@@ -181,7 +190,7 @@ test('subscription cancellation clears owned cache, while old abort cannot clear
     current.abort(); assert.equal(cancelled, 1); assert.equal(state.subscription, undefined); assert.equal(Object.keys(state.records).length, 0);
 });
 test('actual library callback ignores late queued updates and next snapshot drops deleted records', async () => {
-    let callback; let cancelled = 0; let entries = [{id: 1}];
+    let callback!: EventCallback; let cancelled = 0; let entries = [{id: 1}];
     const endpoint = {getAll: async () => entries, subscribeToLibraryEvents: () => ({onNext(fn) {callback = fn; return {cancel() {cancelled++;}};}})};
     const mod = load('state/LibraryState.ts', {'Frontend/generated/endpoints': {LibraryEndpoint: endpoint}});
     const old = new AbortController(); await mod.initializeLibraryState(old.signal); const late = callback;
@@ -200,8 +209,8 @@ test('actual user cache is cleared across administrator identities', async () =>
 });
 test('actual App layout ownership skips forms, retains public browse lifecycle, and aborts on identity change', () => {
     let pathname = '/login', auth = {state: {initializing: false, loading: false, user: undefined}};
-    let previous, cleanup, pending; const calls = [];
-    const mocks = {
+    let previous: readonly unknown[] | undefined, cleanup: (() => void) | undefined, pending: (() => void | (() => void)) | null; const calls: InitializerCall[] = [];
+    const mocks: ModuleMocks = {
         'react': {
             useEffect() {throw Error('Startup ownership must not wait for passive cleanup');},
             useLayoutEffect(fn, deps) {if (!previous || deps.some((d, i) => d !== previous[i])) {pending = fn; previous = deps;}}

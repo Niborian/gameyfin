@@ -67,7 +67,7 @@ The loopback proxy port is configurable with `GAMEYFIN_STAGING_PORT` (default 39
 Neither value changes production settings. Run this fixture only on an authorized
 staging server or in CI; local Docker is not required for development checks.
 Complete initial setup with a staging-only administrator and keep anonymous access disabled.
-Run `./scripts/verify-exposure-fixture.ps1` after setup. Its checks verify the proxy login
+Run `GAMEYFIN_EXPOSURE_FIXTURE_ACK=true ./gradlew :app:verifyExposureFixture` after setup. Its read-only checks verify the proxy login
 page, anonymous root redirect, management denial, and backend port bindings. Use
 `-ConfigurationOnly` to validate isolation before starting containers.
 
@@ -149,39 +149,32 @@ synthetic grouped download manifest through that same proxy and verify exact arc
 members and hashes both with and without the optional content. Never use a production
 game or a large real download as the fixture.
 
-`scripts/proxy-download-smoke.py` provides a reusable bounded archive check after
-seeding an isolated staging fixture. Supply `--base-url`, `--manifest`, and the explicit
-`--isolated-synthetic-staging` acknowledgement. A manifest contains two to eight
-`cases`, each with a same-origin `/download/...` `path` and a `members` object mapping
-each expected archive member name to its SHA256. Include required-group-only and
-required-plus-optional selections. It rejects unexpected/duplicate members, wrong
-hashes, redirects to another origin, and responses or expanded archives over one MiB.
-Use HTTPS or an isolated loopback proxy; pass staging-only username/password through
-`GAMEYFIN_SMOKE_USERNAME`/`GAMEYFIN_SMOKE_PASSWORD` in the test process environment,
-not command arguments, repository files, or saved shell history. The script authenticates
-the expected identity before downloads and logs out after successful checks. If a check
-fails, destroy the disposable instance/session during cleanup. No credentials are written.
-Run `python scripts/test-proxy-download-smoke.py` for daemon-free validator tests.
-Passing these tests validates the harness, not a live proxy download; actual fixture
-execution and browser WebSocket evidence remain separate acceptance requirements.
+The Kotlin test-runtime `ProxyExposureFixture` provides the built-in `proxy-exposure`
+hook of the isolated actual-image scan rehearsal. It receives generated synthetic context
+and credentials directly in memory, never in command arguments, source files, receipts,
+or saved shell history. It verifies the actual authenticated identity and required-only
+and required-plus-optional ZIP selections using the manifest's exact archive-name mappings.
+Unexpected/duplicate/missing members, wrong SHA256, cross-origin redirects, and compressed
+responses or expanded archives over one MiB are refused. It performs a real logout and
+requires the resulting anonymous same-origin login redirect.
 
-`scripts/proxy-fixture-hook.py` integrates that smoke check into the isolated actual-image
-scan runner while its synthetic application and account are alive. It reads a JSON
-context on stdin containing the generated fixture manifest object, backend container
-name, internal network name, direct provider key, and immutable cached nginx image ID.
-The names must match the runner's generated synthetic-resource format, and Docker
-inspection must confirm the actual network is internal. It creates one uniquely named
-unpublished proxy with a 128 MiB limit. A bounded test-process TCP forwarder listens
-only on a dynamically assigned IPv4-loopback port and connects only to that newly
-created proxy's inspected internal IP. This avoids assuming Docker will honor published
-ports on an internal network without weakening network isolation. The hook
-never pulls an image, and mounts only its generated nginx configuration. Credentials
-are inherited by the smoke subprocess through its environment, never the stdin manifest.
-It returns sanitized acceptance JSON only and verifies removal of its exact proxy in
-`finally`, after closing its loopback forwarder; the outer runner retains ownership of
-application, network, and fixture cleanup.
-The original nginx configuration and both Python scripts must preserve repository-relative
-layout when transferred to staging. Hook availability alone is not runtime evidence.
+The hook requires the generated runner resource names, an actually internal Docker
+network, an unpublished backend, and an immutable cached nginx image. It creates only
+one unpublished 128 MiB proxy mounting a generated read-only nginx configuration. Its
+ephemeral IPv4-loopback relay targets only the inspected private proxy address and is
+limited to eight connections. It never pulls an image. A shared monotonic 180-second
+operation budget is followed by a separate bounded cleanup budget. Creation intent is
+recorded before Docker creation; cleanup revalidates exact identity, image, ownership
+label, network and mount before removal. Uncertain cleanup retains the registered
+temporary configuration instead of deleting beneath a possibly live container.
+
+`FixtureValidationTest` contains daemon-free Kotlin validator and exposure-binding
+rejection contracts, run with `./gradlew :app:test --tests '*FixtureValidationTest'`.
+The read-only `verifyExposureFixture` task supports `--configuration-only` through
+`--args=--configuration-only`; it inspects only the explicit synthetic Compose fixture.
+Neither source migration nor validator checks establish new runtime acceptance; actual
+proxy downloads and browser WebSocket evidence remain separate requirements. Historical
+runtime evidence below belongs to the earlier source version and is not silently renewed.
 
 ### Candidate grouped-download proxy acceptance
 
@@ -216,6 +209,11 @@ WebSocket/reconnect behavior, live exposure restrictions, required torrent-clien
 traffic, and production acceptance remain unproven. Issue #29 must remain open.
 
 ## Remaining user/environment choices
+
+For an explicitly isolated synthetic staging instance, `:app:proxyDownloadRehearsal`
+accepts `--args="--isolated-synthetic-staging --base-url <staging-url> --manifest <cases.json>"`.
+Supply disposable credentials only through `GAMEYFIN_SMOKE_USERNAME` and
+`GAMEYFIN_SMOKE_PASSWORD`; never use this utility as production acceptance evidence.
 
 Record the intended proxy hostname, where the proxy runs, and which network/interface it
 uses to reach Gameyfin. Confirm whether the built-in Gameyfin torrent plugin is used and

@@ -69,32 +69,14 @@ jobs:
       - name: Verify frontend startup lifecycle
         run: |
           npm ci --prefix app --ignore-scripts --no-audit --no-fund
-          node --test scripts/test-auth-startup.cjs
-          node --test scripts/test-login-redirect-owner.cjs
+          node --test scripts/test-auth-startup.cts
+          node --test scripts/test-login-redirect-owner.cts
 
-      - name: Verify bounded synthetic proxy smoke validators
-        run: |
-          python3 -B scripts/test-proxy-download-smoke.py
-          python3 -B scripts/test-proxy-fixture-hook.py
-          python3 -B scripts/test-junit-report-policy.py
-          pwsh -NoProfile -File scripts/test-exposure-fixture-bindings.ps1
+      - name: Verify read-only test report policy
+        run: node --test scripts/test-junit-report-policy.cts
 
       - name: Require Linux hardlink and variant scan fixture evidence
-        run: |
-          python3 - <<'PY'
-          import xml.etree.ElementTree as ET
-          from pathlib import Path
-          suites = [
-              'org.gameyfin.app.games.variants.HardlinkMirrorServiceTest',
-              'org.gameyfin.app.libraries.VariantScanIntegrityFixtureTest',
-          ]
-          for name in suites:
-              report = Path(f'app/build/test-results/test/TEST-{name}.xml')
-              root = ET.parse(report).getroot()
-              if int(root.get('tests', '0')) == 0 or any(int(root.get(key, '0')) for key in ('failures', 'errors', 'skipped')):
-                  raise SystemExit(f'Missing passing Linux filesystem evidence: {name}')
-              print(f'{name}: {root.get("tests")} passed, none skipped')
-          PY
+        run: ./gradlew :app:verifyFilesystemEvidence --no-daemon --console=plain
 
       - name: Publish test report
         if: always()
@@ -344,12 +326,9 @@ jobs:
           mapfile -t h2_jars < <(docker run --pull never --rm --network none --entrypoint find "$BUILT_IMAGE_ID" /opt/gameyfin/lib -maxdepth 1 -name 'h2-*.jar')
           test "${#h2_jars[@]}" -eq 1
           sha256sum plugins/steam/build/libs/steam-1.2.0.jar plugins/directdownload/build/libs/directdownload-1.0.2.jar
-          python3 -B scripts/rehearsal/run-image-scan.py \
-            --image "$BUILT_IMAGE_ID" --source-revision "$REVIEWED_HEAD" \
-            --h2-jar "${h2_jars[0]}" \
-            --metadata-plugin plugins/steam/build/libs/steam-1.2.0.jar \
-            --direct-plugin plugins/directdownload/build/libs/directdownload-1.0.2.jar \
-            --output app/build/reports/actual-image-scan.json --interrupt-scan --missing-root-fault --idle-seconds 300
+          ./gradlew :app:imageScanRehearsal \
+            --args="--image $BUILT_IMAGE_ID --source-revision $REVIEWED_HEAD --h2-jar ${h2_jars[0]} --metadata-plugin plugins/steam/build/libs/steam-1.2.0.jar --direct-plugin plugins/directdownload/build/libs/directdownload-1.0.2.jar --output app/build/reports/actual-image-scan.json --interrupt-scan --missing-root-fault --idle-seconds 300" \
+            --no-daemon --console=plain -x :app:vaadinBuildFrontend
 
       - name: Retain actual-image synthetic evidence
         if: always()

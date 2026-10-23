@@ -21,8 +21,51 @@ application {
     mainClass.set(appMainClass)
 }
 
-sourceSets.test {
-    java.srcDir(rootProject.file("scripts/rehearsal"))
+// Standalone rehearsal CLIs reuse the existing Kotlin test runtime, without running tests.
+for ((taskName, entry) in mapOf(
+    "generateScanFixture" to "ScanFixture",
+    "imageScanRehearsal" to "ImageScanRehearsal",
+    "offlineH2Rehearsal" to "OfflineH2Rehearsal",
+    "verifyExposureFixture" to "ExposureFixtureRehearsal",
+    "proxyDownloadRehearsal" to "ProxyDownloadRehearsal",
+)) {
+    tasks.register<JavaExec>(taskName) {
+        group = "verification"
+        dependsOn(tasks.named("testClasses"))
+        classpath = sourceSets.test.get().runtimeClasspath
+        mainClass.set("org.gameyfin.tools.$entry")
+        workingDir(rootProject.projectDir)
+        if (taskName == "offlineH2Rehearsal") doFirst {
+            val selected = file(providers.gradleProperty("rehearsalH2Jar").get())
+            require(selected.isFile) { "Supply -PrehearsalH2Jar=<matching H2 JAR>" }
+            classpath = sourceSets.test.get().runtimeClasspath.filter { !it.name.matches(Regex("h2-.*\\.jar")) } + files(selected)
+        }
+    }
+}
+
+tasks.register("verifyFilesystemEvidence") {
+    group = "verification"
+    doLast {
+        val factory = javax.xml.parsers.DocumentBuilderFactory.newInstance().apply {
+            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            setFeature("http://xml.org/sax/features/external-general-entities", false)
+            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+            setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "")
+            setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_SCHEMA, "")
+            isXIncludeAware = false
+            isExpandEntityReferences = false
+        }
+        for (name in listOf("org.gameyfin.app.games.variants.HardlinkMirrorServiceTest", "org.gameyfin.app.libraries.VariantScanIntegrityFixtureTest")) {
+            val report = layout.buildDirectory.file("test-results/test/TEST-$name.xml").get().asFile
+            require(report.isFile) { "Missing Linux filesystem evidence: $name" }
+            val suite = factory.newDocumentBuilder().parse(report).documentElement
+            require(suite.tagName == "testsuite" && suite.getAttribute("tests").toInt() > 0 &&
+                listOf("failures", "errors", "skipped").all { suite.getAttribute(it).toInt() == 0 }) {
+                "Missing passing Linux filesystem evidence: $name"
+            }
+            println("$name: ${suite.getAttribute("tests")} passed, none skipped")
+        }
+    }
 }
 
 springBoot {

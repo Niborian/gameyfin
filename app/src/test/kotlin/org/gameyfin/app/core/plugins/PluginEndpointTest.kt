@@ -22,7 +22,15 @@ class PluginEndpointTest {
     @BeforeEach
     fun setup() {
         pluginService = mockk()
-        pluginEndpoint = PluginEndpoint(pluginService)
+        val actor = mockk<PluginAudience> { every { administrator } returns true }
+        val access = mockk<PluginEndpointAccess>()
+        every { access.capture() } returns actor
+        every { access.captureAdministrator() } returns actor
+        every { access.requireCurrent(actor) } just Runs
+        every { access.stream<PluginUpdateDto>(actor, any(), any()) } answers {
+            secondArg<() -> Flux<List<PluginUpdateDto>>>()()
+        }
+        pluginEndpoint = PluginEndpoint(pluginService, access)
     }
 
     @AfterEach

@@ -115,6 +115,23 @@ class PluginServiceTest {
         assertTrue(service.getAll().isEmpty())
     }
 
+    @Test
+    fun `metadata list never reads configuration or invokes provider validation`() {
+        val wrapper = buildFullPluginWrapper("metadata-only")
+        every { pluginManager.plugins } returns listOf(wrapper)
+        clearMocks(pluginConfigRepository, pluginManager, answers = false, recordedCalls = true)
+
+        val dto = service.getAll(includeConfiguration = false).single()
+
+        assertEquals("metadata-only", dto.id)
+        assertNull(dto.config)
+        assertNull(dto.configMetadata)
+        assertNull(dto.configValidation)
+        verify(exactly = 0) { pluginConfigRepository.findAllByPluginId(any()) }
+        verify(exactly = 0) { pluginManager.validatePluginConfig(any<String>()) }
+        verify(exactly = 0) { pluginManager.validatePluginConfig(any<String>(), any<Map<String, String>>()) }
+    }
+
     // -----------------------------------------------------------------------
     // getAllByTypeAndState
     // -----------------------------------------------------------------------

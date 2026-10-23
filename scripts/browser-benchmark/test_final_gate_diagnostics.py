@@ -3,7 +3,7 @@ import json,tempfile,unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
-from owned_app import OwnedApp
+from owned_app import OwnedApp,classify_errors
 
 class FinalGateDiagnostics(unittest.TestCase):
     def app(self,health='UP'):
@@ -36,6 +36,30 @@ class FinalGateDiagnostics(unittest.TestCase):
         app=self.app();app.client.raw=lambda *a,**k:(_ for _ in()).throw(AssertionError('shared transport forbidden'))
         with patch('owned_app.command',return_value=''):
             self.assertEqual(OwnedApp.final_gate(app,health_reader=lambda:(200,{},b'{"status":"UP"}'))['health'],'UP')
+    def test_diagnostic_timeout_and_allowlisted_error_categories_never_retain_secrets(self):
+        seen=[];app=self.app();calls=[]
+        app.inspect=lambda **kw:(calls.append(kw)or {'State':{'OOMKilled':False},'RestartCount':0})
+        logs='2026-10-23T00:00:00 ERROR o.g.a.c.e.EndpointExceptionHandler : secret-token\njava.lang.IllegalStateException: secret-path\nCaused by: private.UnknownException: secret-user\nERROR private-logger secret-value\n'
+        with patch('owned_app.command',return_value=logs)as command:
+            with self.assertRaises(ValueError):OwnedApp.final_gate(app,seen.append,command_timeout=10)
+        self.assertEqual(calls,[{'command_timeout':10}]);command.assert_called_once_with('logs','owned',timeout=10)
+        self.assertEqual(seen[0]['errorClassification'],{'loggerCounts':{'ENDPOINT':1,'OTHER':1},'exceptionTypeCounts':{'ILLEGAL_STATE':1,'OTHER':1}})
+        self.assertNotIn('secret',json.dumps(seen));self.assertNotIn('private',json.dumps(seen))
+    def test_normal_gate_keeps_original_command_default_and_no_classification(self):
+        with patch('owned_app.command',return_value='')as command:
+            gate=OwnedApp.final_gate(self.app())
+        command.assert_called_once_with('logs','owned');self.assertNotIn('errorClassification',gate)
+    def test_resource_diagnostic_inspection_uses_ten_seconds_but_normal_stays_default(self):
+        app=SimpleNamespace(id='owned',root=Path('unused'),owner='owned',image='image',diagnostic_output=None)
+        with patch('owned_app.command',return_value='[{}]')as command,patch('owned_app.validate_owned'):
+            OwnedApp.inspect(app,command_timeout=10)
+            command.assert_called_once_with('inspect','owned',timeout=10)
+        with patch('owned_app.command',return_value='[{}]')as command,patch('owned_app.validate_owned'):
+            OwnedApp.inspect(app)
+            command.assert_called_once_with('inspect','owned')
+        calls=[];app.inspect=lambda **kw:(calls.append(kw)or {'State':{'Pid':0,'Running':False}})
+        with self.assertRaises(ValueError):OwnedApp.resources(app,command_timeout=10)
+        self.assertEqual(calls,[{'command_timeout':10}])
     def test_close_records_only_confirmed_success_or_failure(self):
         for fail in (False,True):
             with tempfile.TemporaryDirectory() as folder:

@@ -10,6 +10,31 @@ from cap_policy import caps_match
 
 JVM='-Xms32m -Xmx320m -XX:+UseG1GC -XX:G1HeapRegionSize=1m -XX:+UseStringDeduplication -XX:+UseCompactObjectHeaders -XX:G1PeriodicGCInterval=0 -XX:MinHeapFreeRatio=40 -XX:MaxHeapFreeRatio=70 -XX:MaxMetaspaceSize=256m -XX:MaxDirectMemorySize=64m -Xss512k -XX:+ExitOnOutOfMemoryError'
 
+def classify_errors(logs):
+    """Fixed categories only; stack type counts are not proof of error causality.
+
+    Console uses Spring Boot defaults; the file template also puts logger before
+    ` : `. Unknown/abbreviated/unrecognized headers deliberately remain OTHER.
+    """
+    logger_names={'EndpointExceptionHandler':'ENDPOINT','LibraryScanService':'SCAN','GameService':'GAME',
+                  'PluginManagerConfig':'PLUGIN_STARTUP','PlatformService':'PLATFORM','Application':'APPLICATION'}
+    exception_names={'OutOfMemoryError':'OOM','TimeoutException':'TIMEOUT','SocketTimeoutException':'TIMEOUT',
+                     'SQLTransientConnectionException':'SQL_CONNECTION','SQLException':'SQL',
+                     'LazyInitializationException':'LAZY_INITIALIZATION','IllegalStateException':'ILLEGAL_STATE',
+                     'AccessDeniedException':'ACCESS_DENIED'}
+    logger_counts={};exception_counts={}
+    for line in logs.splitlines():
+        if re.search(r'\bERROR\b',line):
+            header=line.split(' : ',1)[0]if ' : 'in line else ''
+            token=header.split()[-1].rsplit('.',1)[-1]if header.split()else ''
+            category=logger_names.get(token,'OTHER')
+            logger_counts[category]=logger_counts.get(category,0)+1
+        match=re.match(r'^\s*(?:Caused by: )?([A-Za-z_$][A-Za-z0-9_.$]*(?:Exception|Error))(?::|\s*$)',line)
+        if match:
+            category=exception_names.get(match[1].rsplit('.',1)[-1],'OTHER')
+            exception_counts[category]=exception_counts.get(category,0)+1
+    return {'loggerCounts':logger_counts,'exceptionTypeCounts':exception_counts}
+
 def lifecycle_failure(phase,error,elapsed):
     phases={'fixture-preparation','fixture-ownership','application-start','setup-readiness',
         'admin-plugin-bootstrap','stop-before-seed','stopped-h2-seed','seeded-restart',
@@ -313,14 +338,15 @@ class OwnedApp:
                 return
             except (OSError,RuntimeError):time.sleep(1)
         raise TimeoutError('Actual application startup deadline')
-    def inspect(self):
-        row=json.loads(command('inspect',self.id))[0]
+    def inspect(self,*,command_timeout=None):
+        if command_timeout not in(None,10):raise ValueError('Fixed diagnostic command timeout')
+        row=json.loads(command('inspect',self.id,**({'timeout':10}if command_timeout is not None else {})))[0]
         if self.diagnostic_output and not self.diagnostic_captured:
             from container_diagnostics import capture
             capture(self.diagnostic_output,row,self.owner,'application',self.image);self.diagnostic_captured=True
         validate_owned(row,self.root,self.owner,self.image,self.id);return row
-    def resources(self):
-        row=self.inspect();pid=row['State']['Pid']
+    def resources(self,*,command_timeout=None):
+        row=self.inspect(**({'command_timeout':command_timeout}if command_timeout is not None else {}));pid=row['State']['Pid']
         if not row['State']['Running'] or pid<=0:raise ValueError('Owned JVM not running')
         paths=[x.split(':',2)[2] for x in Path(f'/proc/{pid}/cgroup').read_text().splitlines() if x.startswith('0::')]
         if len(paths)!=1 or '..' in Path(paths[0]).parts:raise ValueError('Unified owned cgroup required')
@@ -332,14 +358,16 @@ class OwnedApp:
             'memoryBytes':int((cg/'memory.current').read_text()),'anonymousBytes':int(memory['anon']),
             'fileCacheBytes':int(memory['file']),'rssBytes':int(match[1])*1024,
             'containerLifetimePeakBytes':int((cg/'memory.peak').read_text())}
-    def final_gate(self,on_observation=lambda gate:None,*,health_reader=None):
+    def final_gate(self,on_observation=lambda gate:None,*,health_reader=None,command_timeout=None):
+        if command_timeout not in(None,10):raise ValueError('Fixed diagnostic command timeout')
         gate={'unexpectedErrorCount':None,'oomLogCount':None,'oomKilled':None,'restartCount':None,'health':None,'healthHttpStatus':None}
         stage='inspection-unavailable'
         try:
-            row=self.inspect();gate.update(oomKilled=row['State']['OOMKilled'],restartCount=row['RestartCount'])
-            stage='logs-unavailable';logs=command('logs',self.id)
+            row=self.inspect(**({'command_timeout':10}if command_timeout is not None else {}));gate.update(oomKilled=row['State']['OOMKilled'],restartCount=row['RestartCount'])
+            stage='logs-unavailable';logs=command('logs',self.id,**({'timeout':10}if command_timeout is not None else {}))
             gate['unexpectedErrorCount']=sum(bool(re.search(r'\bERROR\b',line)) for line in logs.splitlines())
             gate['oomLogCount']=sum(bool(re.search(r'\bOutOfMemoryError(?::|\s*$)',line)) for line in logs.splitlines())
+            if command_timeout is not None:gate['errorClassification']=classify_errors(logs)
             stage='health-unavailable';status,_,body=(health_reader()if health_reader is not None else self.client.raw('/actuator/health',management=True))
             gate['healthHttpStatus']=status if type(status)is int and 100<=status<=599 else None
             health=json.loads(body).get('status') if status==200 else None

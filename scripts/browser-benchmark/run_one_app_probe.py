@@ -52,13 +52,13 @@ def observe_failure(app,report,persist,remaining):
         if status!=200:raise ValueError('Diagnostic metrics status')
         return parse_metrics(body)
     for name,operation in (
-        ('resources',app.resources),
+        ('resources',lambda:app.resources(command_timeout=10)),
         ('metrics',read_metrics)):
         try:observation[name]=operation();observation[name+'Status']='observed'
         except Exception:observation[name+'Status']='unavailable'
         persist()
     def retain_gate(gate):observation['finalGate']=gate;persist()
-    try:app.final_gate(on_observation=retain_gate,health_reader=lambda:failure_http(app.ip,'/actuator/health'))
+    try:app.final_gate(on_observation=retain_gate,health_reader=lambda:failure_http(app.ip,'/actuator/health'),command_timeout=10)
     except Exception:observation['finalGateStatus']='unavailable-or-rejected'
     else:observation['finalGateStatus']='passed'
     persist()

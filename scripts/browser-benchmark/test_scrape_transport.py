@@ -1,5 +1,7 @@
 """Focused actual scrape-helper tests; no connections, Docker or app execution."""
 import socket
+import http.client
+import io
 import tempfile
 import unittest
 import urllib.error
@@ -13,7 +15,7 @@ import run_one_app_probe as runner
 
 
 class ScrapeTransportTests(unittest.TestCase):
-    def exercise(self, chunks, *, kind='filtered', late_eof=False, native_socket=True):
+    def exercise(self, chunks, *, kind='filtered', late_eof=False, native_socket=True, close_on_content=False):
         now = [0.0]
         owned = socket.socket()  # Unconnected, never bound or connected.
         captured = {}
@@ -24,6 +26,9 @@ class ScrapeTransportTests(unittest.TestCase):
         class Response:
             status = response.status
             fp = response.fp
+            closed = False
+
+            def isclosed(self):return self.closed
 
             def __enter__(self):
                 return self
@@ -34,6 +39,8 @@ class ScrapeTransportTests(unittest.TestCase):
             def read1(self, bound):
                 captured.setdefault('readBounds', []).append(bound)
                 value = remaining.pop(0) if remaining else b''
+                if close_on_content and value and not remaining:
+                    self.closed=True;self.fp=None;owned.close()
                 now[0] = 10.1 if late_eof and not value else now[0] + 0.1
                 return value
 
@@ -71,6 +78,46 @@ class ScrapeTransportTests(unittest.TestCase):
         self.assertIsNone(row['active'])
         self.assertGreater(row['completed'], 10)
 
+    def test_content_length_completion_closes_socket_before_redundant_eof_read(self):
+        row, seen = self.exercise([b'gameyfin_scans_active 1.0\n'],close_on_content=True)
+        self.assertEqual(row['category'],'observed')
+        self.assertEqual(row['active'],1.0)
+        self.assertEqual(len(seen['readBounds']),1)
+
+    def test_real_httpresponse_closes_native_socket_at_content_length(self):
+        owned=socket.socket();body=b'gameyfin_scans_active 1.0\n'
+        class Stream(io.BytesIO):
+            raw=SimpleNamespace(_sock=owned)
+            def close(self):owned.close();super().close()
+        stream=Stream(b'HTTP/1.1 200 OK\r\nContent-Length: '+str(len(body)).encode()+b'\r\n\r\n'+body)
+        response=http.client.HTTPResponse(SimpleNamespace(makefile=lambda *args:stream));response.begin()
+        opener=SimpleNamespace(open=lambda *args,**kwargs:response)
+        try:
+            with patch('concurrent_scrape_probe.urllib.request.build_opener',return_value=opener):
+                row=scrape('172.22.0.2','filtered')
+            self.assertTrue(response.isclosed());self.assertEqual(owned.fileno(),-1)
+            self.assertEqual(row['category'],'observed');self.assertEqual(row['active'],1.0)
+        finally:response.close();owned.close()
+
+    def test_real_httpresponse_rejects_truncated_declared_length_and_accepts_chunked_eof(self):
+        body=b'gameyfin_scans_active 1.0\n'
+        cases=[(b'Content-Length: '+str(len(body)+10).encode()+b'\r\n',body,'invalid-or-unavailable'),
+               (b'Transfer-Encoding: chunked\r\n',hex(len(body))[2:].encode()+b'\r\n'+body+b'\r\n0\r\n\r\n','observed')]
+        for headers,payload,expected in cases:
+            with self.subTest(expected=expected):
+                owned=socket.socket()
+                class Stream(io.BytesIO):
+                    raw=SimpleNamespace(_sock=owned)
+                    def close(self):owned.close();super().close()
+                stream=Stream(b'HTTP/1.1 200 OK\r\n'+headers+b'\r\n'+payload)
+                response=http.client.HTTPResponse(SimpleNamespace(makefile=lambda *args:stream));response.begin()
+                try:
+                    with patch('concurrent_scrape_probe.urllib.request.build_opener',return_value=SimpleNamespace(open=lambda *a,**k:response)):
+                        row=scrape('172.22.0.2','filtered')
+                    self.assertEqual(row['category'],expected)
+                    self.assertEqual(row['active'],1.0 if expected=='observed'else None)
+                finally:response.close();owned.close()
+
     def test_byte_bounds_and_duplicate_gauge_remain_invalid(self):
         for chunks, kind in [([b'x' * 8193], 'filtered'),
                              ([b'x' * (1024 * 1024 + 1)], 'unfiltered'),
@@ -83,6 +130,23 @@ class ScrapeTransportTests(unittest.TestCase):
         row, _ = self.exercise([b'gameyfin_scans_active 1\n'], native_socket=False)
         self.assertEqual(row['category'], 'invalid-or-unavailable')
         self.assertIsNone(row['active'])
+        self.assertEqual(row['stage'], 'socket')
+
+    def test_singleton_metric_grammar_and_safe_failure_stages(self):
+        for body in (b'gameyfin_scans_active 0.0\r\n', b'gameyfin_scans_active{scope="scan"} 1.0E0\n'):
+            row, _ = self.exercise([body])
+            self.assertEqual(row['category'], 'observed')
+            self.assertEqual(row['activeGaugeLineCount'], 1)
+        for body, stage, count in ((b'# HELP unrelated\n', 'gauge-selection', 0),
+                                   (b'gameyfin_scans_active 5.0\n', 'gauge-value', 1),
+                                   (b'gameyfin_scans_active 1.5\n', 'gauge-value', 1),
+                                   (b'gameyfin_scans_active NaN\n', 'gauge-value', 1),
+                                   (b'gameyfin_scans_active 0\ngameyfin_scans_active{x="y"} 1\n', 'gauge-selection', 2)):
+            row, _ = self.exercise([body])
+            self.assertEqual(row['category'], 'invalid-or-unavailable')
+            self.assertIsNone(row['active'])
+            self.assertEqual(row['stage'], stage)
+            self.assertEqual(row['activeGaugeLineCount'], count)
 
     def test_http_rejection_keeps_only_status_not_private_error_text(self):
         error = urllib.error.HTTPError('http://private.invalid', 302, 'private-detail', {}, None)

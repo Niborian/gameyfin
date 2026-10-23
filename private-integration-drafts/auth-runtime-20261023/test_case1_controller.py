@@ -39,7 +39,7 @@ class ProtocolTest(unittest.TestCase):
     @unittest.skipUnless(os.name=='posix','Actual private-file permission guard requires POSIX; hosted CI executes this fixture')
     def test_real_reader_persists_validated_failure_and_rejects_unknown_fields(self):
         data={'stage':'anonymous-profile','dom':None,'anonymousRequestObserved':False,'anonymousProfileWasNull':False,'observationOverflow':False,'loginDocumentObserved':False,'pendingCatalogHttp':0,'oldWebSockets':0,'anonymousAdminHttp':0,'authCatalogHttp':0}
-        data.update(profileClassification='not-observed',anonymousHttpStatus=None,websocketLifecycle=dict.fromkeys(['created','handshake101','handshakeNon101','frameError','closed'],0))
+        data.update(profileClassification='not-observed',anonymousHttpStatus=None,browserTunnelCheckpoint=None,websocketLifecycle=dict.fromkeys(['created','handshake101','handshakeNon101','frameError','closed'],0))
         good={'browserFailed':True,'phase':'navigation','publicAuthCase1Failure':data}
         self.assertEqual(good,draft.validate_failure_receipt(good))
         for bad in [dict(good,private='forbidden'),dict(good,publicAuthCase1Failure=dict(data,rawUrl='forbidden'))]:

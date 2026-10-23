@@ -1,6 +1,7 @@
 // DRAFT ONLY: explicit hosted case1 CLI; no current harness/workflow imports this copy.
 // Hosted-container only. Normal UI login; private stdin, sanitized stdout.
 import {runPublicAuthCase} from './case1_public_auth.mjs';
+import {bookmarkBrowserTunnelCohort} from './passive_tunnel_cohort.mjs';
 import {parseCase1Arguments,CASE1_COMMAND,case1Receipt,validateCase1Failure} from './case1_protocol.mjs';
 import {fixedFixtureTransports} from '../../scripts/browser-benchmark/frontend_fixture_transport.mjs';
 import fs from 'node:fs/promises';
@@ -142,7 +143,7 @@ export async function main(argv){
     currentPhase='input';
     if(await readLine()!==CASE1_COMMAND)throw new Error('Exact case1 controller command required');
     currentPhase='navigation';
-    const proof=await runPublicAuthCase({driver,cdp,publicPolicyEnabled:true,onFailure:value=>{publicAuthCase1Failure=validateCase1Failure(value);}});
+    const proof=await runPublicAuthCase({driver,cdp,publicPolicyEnabled:true,bookmarkTunnels:()=>bookmarkBrowserTunnelCohort(proxy),onFailure:value=>{publicAuthCase1Failure=validateCase1Failure(value);}});
     if(timedOut)throw new Error('Controller deadline');
     emit(case1Receipt(proof,proxy.diagnostics()));
 

@@ -6,7 +6,7 @@ import {validateCase1Failure} from './case1_protocol.mjs';
 const CATALOG = /^\/connect\/(Library|Collection|Platform|GameRequest|Plugin|Game)Endpoint\//;
 const ADMIN_LIST = /^\/connect\/(?:UserEndpoint\/getAllUsers|BandwidthMonitoringEndpoint\/getActiveSessions|LibraryEndpoint\/subscribeToScanProgressEvents)$/;
 
-export async function runPublicAuthCase({driver, cdp, publicPolicyEnabled, onFailure=()=>{}}) {
+export async function runPublicAuthCase({driver, cdp, publicPolicyEnabled, bookmarkTunnels=()=>null, onFailure=()=>{}}) {
   if (!(driver instanceof FixtureUiDriver) || driver.cdp !== cdp || !case1ObservationReady(cdp) || typeof cdp?.onEvent !== 'function' || publicPolicyEnabled !== true || driver.authRound !== 0 || driver.navigations !== 0)
     throw new Error('Fresh original driver and verified owned public-policy lease required');
   const origin = new URL(driver.origin);
@@ -19,6 +19,7 @@ export async function runPublicAuthCase({driver, cdp, publicPolicyEnabled, onFai
   let diagnosticStage = null;
   let profileClassification = 'not-observed';
   const websocketStates = new Map();
+  let tunnelCohort = null, browserTunnelCheckpoint = null;
   const boundedId = id => typeof id === 'string' && id.length <= 128;
   const parse = url => { try { const u = new URL(url); return u.origin === driver.origin ? u.pathname : null; } catch { return null; } };
   const ownedSocket = url => { try { const u = new URL(url); return u.protocol === 'ws:' && u.host === origin.host && !u.username && !u.password; } catch { return false; } };
@@ -81,10 +82,12 @@ export async function runPublicAuthCase({driver, cdp, publicPolicyEnabled, onFai
     pendingAtSignIn = pending.size;
     for (const id of sockets) oldSockets.add(id);
     diagnosticStage = 'sign-in';
+    tunnelCohort = bookmarkTunnels(); // Passive exact browser-side cohort, immediately before actual UI click.
     const clicked = await driver.evaluate(`(()=>{const buttons=[...document.querySelectorAll('nav button.gradient-primary:not(.size-8)')].filter(b=>b.getClientRects().length>0);if(location.origin!==${JSON.stringify(driver.origin)}||buttons.length!==1)return false;buttons[0].click();return true;})()`);
     if (clicked !== true) throw new Error('Actual anonymous Sign In control unavailable');
     diagnosticStage = 'login-form';
     await driver.poll(loginFormExpression()); // Original readiness; no artificial delay.
+    browserTunnelCheckpoint = tunnelCohort?.inspect() ?? null; // SAME first enabled form checkpoint, not later diagnostic DOM.
     diagnosticStage = 'settlement';
     if (!loginDocumentObserved || overflow || adminCalls || authCatalogCalls || pending.size || oldSockets.size)
       throw new Error('Auth-document bootstrap/old-document settlement unproved');
@@ -105,12 +108,16 @@ export async function runPublicAuthCase({driver, cdp, publicPolicyEnabled, onFai
         dom = await driver.evaluate(`(()=>{const u=document.querySelector('input[name="username"]'),p=document.querySelector('input[name="password"]'),b=u?.closest('form')?.querySelector('button[type="submit"]');return {originMatches:location.origin===${JSON.stringify(driver.origin)},libraryPath:location.pathname==='/library/27003',gamePath:location.pathname==='/game/33000',loginPath:location.pathname==='/login',navPresent:!!document.querySelector('nav'),signInControlUnique:[...document.querySelectorAll('nav button.gradient-primary:not(.size-8)')].filter(b=>b.getClientRects().length>0).length===1,usernamePresent:!!u,passwordPresent:!!p,submitPresent:!!b,submitEnabled:!!b&&!b.disabled,documentComplete:document.readyState==='complete',footerVersionMatches:[...document.querySelectorAll('p')].some(p=>p.textContent.trim()==='Unofficial Gameyfin 2.4.3')};})()`,Math.min(driver.totalDeadline,performance.now()+250));
       } catch { /* Unavailable observation is explicitly null; original error still fails. */ }
       const websocketLifecycle={created:websocketStates.size,...Object.fromEntries(['handshake101','handshakeNon101','frameError','closed'].map(key=>[key,[...websocketStates.values()].filter(state=>state[key]).length]))};
-      onFailure(validateCase1Failure({stage:diagnosticStage,dom,websocketLifecycle,profileClassification,anonymousHttpStatus:Number.isInteger(anonymousStatus)&&anonymousStatus>=100&&anonymousStatus<=599?anonymousStatus:null,anonymousRequestObserved:anonymousId!==null,anonymousProfileWasNull:anonymousNull,observationOverflow:overflow,loginDocumentObserved,pendingCatalogHttp:Math.min(128,pending.size),oldWebSockets:Math.min(16,oldSockets.size),anonymousAdminHttp:Math.min(256,adminCalls),authCatalogHttp:Math.min(256,authCatalogCalls)}));
+      onFailure(validateCase1Failure({stage:diagnosticStage,dom,browserTunnelCheckpoint,websocketLifecycle,profileClassification,anonymousHttpStatus:Number.isInteger(anonymousStatus)&&anonymousStatus>=100&&anonymousStatus<=599?anonymousStatus:null,anonymousRequestObserved:anonymousId!==null,anonymousProfileWasNull:anonymousNull,observationOverflow:overflow,loginDocumentObserved,pendingCatalogHttp:Math.min(128,pending.size),oldWebSockets:Math.min(16,oldSockets.size),anonymousAdminHttp:Math.min(256,adminCalls),authCatalogHttp:Math.min(256,authCatalogCalls)}));
     }
     throw error;
   } finally {
-    if (cdp.onEvent !== observe) throw new Error('Original CDP owner lost');
-    cdp.onEvent = prior;
-    pending.clear(); sockets.clear(); oldSockets.clear(); websocketStates.clear();
+    try { tunnelCohort?.dispose(); }
+    finally {
+      const ownerLost = cdp.onEvent !== observe;
+      cdp.onEvent = prior;
+      pending.clear(); sockets.clear(); oldSockets.clear(); websocketStates.clear();
+      if (ownerLost) throw new Error('Original CDP owner lost');
+    }
   }
 }

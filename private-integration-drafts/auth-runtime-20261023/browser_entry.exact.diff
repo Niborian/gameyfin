@@ -1,15 +1,16 @@
 diff --git a/scripts/browser-benchmark/browser_entry.mjs b/private-integration-drafts/auth-runtime-20261023/browser_entry.draft.mjs
-index 7ca83061..cdd935e2 100644
+index 7ca83061..36382aac 100644
 --- a/scripts/browser-benchmark/browser_entry.mjs
 +++ b/private-integration-drafts/auth-runtime-20261023/browser_entry.draft.mjs
 @@ -0,0 +1 @@
 +// DRAFT ONLY: explicit hosted case1 CLI; no current harness/workflow imports this copy.
-@@ -2 +3,3 @@
+@@ -2 +3,4 @@
 -import {fixedFixtureTransports} from './frontend_fixture_transport.mjs';
 +import {runPublicAuthCase} from './case1_public_auth.mjs';
++import {bookmarkBrowserTunnelCohort} from './passive_tunnel_cohort.mjs';
 +import {parseCase1Arguments,CASE1_COMMAND,case1Receipt,validateCase1Failure} from './case1_protocol.mjs';
 +import {fixedFixtureTransports} from '../../scripts/browser-benchmark/frontend_fixture_transport.mjs';
-@@ -5,5 +8,5 @@ import {createRequire} from 'node:module';
+@@ -5,5 +9,5 @@ import {createRequire} from 'node:module';
 -import {LoopbackProxy} from './frontend_loopback_proxy.mjs';
 -import {chromeProxyFlags} from './frontend_proxy_policy.mjs';
 -import {FixtureUiDriver,safeAuthDiagnostics,safeProxyDiagnostics} from './frontend_ui_driver.mjs';
@@ -20,24 +21,24 @@ index 7ca83061..cdd935e2 100644
 +import {FixtureUiDriver,safeAuthDiagnostics,safeProxyDiagnostics} from '../../scripts/browser-benchmark/frontend_ui_driver.mjs';
 +import {createCdpTransport,recordFirstAuthCdpFailure} from '../../scripts/browser-benchmark/frontend_cdp_failures.mjs';
 +export {classifyCdpFailure,recordFirstAuthCdpFailure} from '../../scripts/browser-benchmark/frontend_cdp_failures.mjs';
-@@ -78 +81 @@ export function failureReceipt(phase,category=null,diagnostics=null,stage=null,c
+@@ -78 +82 @@ export function failureReceipt(phase,category=null,diagnostics=null,stage=null,c
 -let uiRounds=1,uiRound=1;
 +let uiRounds=1,uiRound=1,publicAuthCase1Failure=null;
-@@ -80 +83 @@ function emit(value){process.stdout.write(JSON.stringify(uiRounds===3?{uiRound,r
+@@ -80 +84 @@ function emit(value){process.stdout.write(JSON.stringify(uiRounds===3?{uiRound,r
 -function emitFailure(phase){if(!failureEmitted){failureEmitted=true;emit(failureReceipt(phase,launchFailureCategory,launchDiagnostics,authStage,failureCounters,authDiagnostics));}}
 +function emitFailure(phase){if(!failureEmitted){failureEmitted=true;const receipt=failureReceipt(phase,launchFailureCategory,launchDiagnostics,authStage,failureCounters,authDiagnostics);if(publicAuthCase1Failure!==null){if(phase!=='navigation')throw new Error('Case1 failure phase');receipt.publicAuthCase1Failure=validateCase1Failure(publicAuthCase1Failure);}emit(receipt);}}
-@@ -103,4 +106,2 @@ export async function main(argv){
+@@ -103,4 +107,2 @@ export async function main(argv){
 -  if(argv.length===5&&argv[3]==='--ui-version=2.4.3'&&argv[4]==='--ui-rounds=3'){uiRounds=3;argv=argv.slice(0,4);}
 -  const uiVersionOnly=argv.length===4&&argv[3]==='--ui-version=2.4.3';
 -  if(uiVersionOnly)argv=argv.slice(0,3);
 -  const identity=validateArguments(argv);
 +  const identity=validateArguments(parseCase1Arguments(argv));
 +  uiRounds=1;
-@@ -138 +139,2 @@ export async function main(argv){
+@@ -138 +140,2 @@ export async function main(argv){
 -    for(const name of observedNetworkEvents)session.on(name,p=>cdp.onEvent?.(name,p));
 +    bindCase1ObservedEvents(session,cdp);
 +    await enableCase1Observation(cdp);
-@@ -140,23 +142,7 @@ export async function main(argv){
+@@ -140,23 +143,7 @@ export async function main(argv){
 -    for(uiRound=1;uiRound<=uiRounds;uiRound++){
 -    currentPhase='input';let username=await readLine(),password=await readLine();
 -    if(username.length<1||username.length>128||password.length<16||password.length>256||/[\x00-\x1f\x7f]/.test(username+password))throw new Error('Private credentials boundary');
@@ -64,11 +65,11 @@ index 7ca83061..cdd935e2 100644
 +    currentPhase='input';
 +    if(await readLine()!==CASE1_COMMAND)throw new Error('Exact case1 controller command required');
 +    currentPhase='navigation';
-+    const proof=await runPublicAuthCase({driver,cdp,publicPolicyEnabled:true,onFailure:value=>{publicAuthCase1Failure=validateCase1Failure(value);}});
++    const proof=await runPublicAuthCase({driver,cdp,publicPolicyEnabled:true,bookmarkTunnels:()=>bookmarkBrowserTunnelCohort(proxy),onFailure:value=>{publicAuthCase1Failure=validateCase1Failure(value);}});
 +    if(timedOut)throw new Error('Controller deadline');
 +    emit(case1Receipt(proof,proxy.diagnostics()));
 +
-@@ -171 +157,35 @@ export async function main(argv){
+@@ -171 +158,35 @@ export async function main(argv){
 -if(process.argv[1]?.endsWith('/browser_entry.mjs'))main(process.argv.slice(2)).catch(()=>{emitFailure(failurePhase||currentPhase);process.stderr.write('Hosted browser operation failed\n');process.exitCode=1;});
 +if(process.argv[1]?.endsWith('/browser_entry.draft.mjs'))main(process.argv.slice(2)).catch(()=>{emitFailure(failurePhase||currentPhase);process.stderr.write('Hosted browser operation failed\n');process.exitCode=1;});
 +

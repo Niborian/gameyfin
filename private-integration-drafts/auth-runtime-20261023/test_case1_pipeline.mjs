@@ -6,6 +6,51 @@ import {FixtureUiDriver} from '../../scripts/browser-benchmark/frontend_ui_drive
 import {observedNetworkEvents,bindCase1ObservedEvents,enableCase1Observation,case1ObservationReady} from './browser_entry.draft.mjs';
 import {runPublicAuthCase} from './case1_public_auth.mjs';
 import {parseCase1Arguments,validateCase1Result,validateCase1Failure,CASE1_DOM_FLAGS} from './case1_protocol.mjs';
+import {LoopbackProxy} from '../../scripts/browser-benchmark/frontend_loopback_proxy.mjs';
+import {bookmarkBrowserTunnelCohort} from './passive_tunnel_cohort.mjs';
+
+test('passive exact browser-side cohort distinguishes close events, destruction and new sockets',()=>{
+  const proxy=Object.create(LoopbackProxy.prototype);Object.assign(proxy,{closed:false,inbound:new Map(),sockets:new Set()});
+  const socket=()=>Object.assign(new EventEmitter(),{destroyed:false,closed:false,destroy(){throw new Error('Observer must never destroy');}});
+  const a=socket(),b=socket(),http=socket();
+  for(const [s,tunnel] of [[a,true],[b,true],[http,false]]){proxy.inbound.set(s,{tunnel});proxy.sockets.add(s);}
+  const cohort=bookmarkBrowserTunnelCohort(proxy);
+  assert.deepEqual(cohort.inspect(),{existing:2,open:2,closed:0,unknown:0,upstreamClosureProven:false});
+  // A later auth socket is not a member; removing an entry is NOT a close event.
+  const later=socket();proxy.inbound.set(later,{tunnel:true});proxy.sockets.add(later);proxy.inbound.delete(a);
+  a.destroyed=true;
+  assert.deepEqual(cohort.inspect(),{existing:2,open:1,closed:0,unknown:1,upstreamClosureProven:false});
+  b.emit('close');a.emit('close');
+  assert.deepEqual(cohort.inspect(),{existing:2,open:0,closed:2,unknown:0,upstreamClosureProven:false});
+  cohort.dispose();assert.equal(a.listenerCount('close'),0);assert.throws(()=>cohort.inspect());
+  assert.throws(()=>bookmarkBrowserTunnelCohort({inbound:new Map(),sockets:new Set()}));
+});
+test('invalid partial cohort leaves no listeners; either physical close order is counted',()=>{
+  for(const reverse of [false,true]){
+    const proxy=Object.create(LoopbackProxy.prototype);Object.assign(proxy,{closed:false,inbound:new Map(),sockets:new Set()});
+    const a=Object.assign(new EventEmitter(),{destroyed:false,closed:false}),b=Object.assign(new EventEmitter(),{destroyed:false,closed:false});
+    for(const s of [a,b]){proxy.inbound.set(s,{tunnel:true});proxy.sockets.add(s);}
+    b.closed=undefined;assert.throws(()=>bookmarkBrowserTunnelCohort(proxy));assert.equal(a.listenerCount('close'),0);
+    b.closed=false;const once=b.once;b.once=()=>{throw new Error('synthetic attachment failure');};
+    assert.throws(()=>bookmarkBrowserTunnelCohort(proxy),/synthetic attachment failure/);assert.equal(a.listenerCount('close'),0);
+    b.once=once;const cohort=bookmarkBrowserTunnelCohort(proxy);
+    (reverse?b:a).emit('close');assert.equal(cohort.inspect().closed,1);assert.equal(cohort.inspect().open,1);
+    (reverse?a:b).emit('close');assert.equal(cohort.inspect().closed,2);cohort.dispose();
+  }
+});
+test('diagnostic dispose failure cannot strand original CDP event owner',async()=>{
+  const f=await fixture({close:false}),owner=f.cdp.onEvent;
+  const bookmarkTunnels=()=>({inspect(){return null;},dispose(){throw new Error('synthetic dispose failure');}});
+  await assert.rejects(()=>runPublicAuthCase({driver:f.driver,cdp:f.cdp,publicPolicyEnabled:true,bookmarkTunnels}),/synthetic dispose failure/);
+  assert.equal(f.cdp.onEvent,owner);
+});
+test('cohort observation uses first enabled login checkpoint and does not repair CDP failure',async()=>{
+  const f=await fixture({close:false});let diagnostic,inspections=0,disposed=false;
+  const bookmarkTunnels=()=>({inspect(){inspections++;return {existing:1,open:0,closed:1,unknown:0,upstreamClosureProven:false};},dispose(){disposed=true;}});
+  await assert.rejects(()=>runPublicAuthCase({driver:f.driver,cdp:f.cdp,publicPolicyEnabled:true,bookmarkTunnels,onFailure:value=>{diagnostic=value;}}),/settlement unproved/);
+  assert.equal(inspections,1);assert.equal(disposed,true);assert.equal(diagnostic.browserTunnelCheckpoint.closed,1);assert.equal(diagnostic.oldWebSockets,1);
+  for(const changed of [{unknown:17},{upstreamClosureProven:true},{open:1},{socketId:'forbidden'}])assert.throws(()=>validateCase1Failure({...diagnostic,browserTunnelCheckpoint:{...diagnostic.browserTunnelCheckpoint,...changed}}));
+});
 
 async function fixture(options={}){
   const session=new EventEmitter(), calls=[], origin='http://127.0.0.1:55203';

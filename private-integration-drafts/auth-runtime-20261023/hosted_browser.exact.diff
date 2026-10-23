@@ -1,5 +1,5 @@
 diff --git a/scripts/browser-benchmark/hosted_browser.py b/private-integration-drafts/auth-runtime-20261023/hosted_browser_case1.py
-index dd02458b..a4aea904 100644
+index dd02458b..1b6b6555 100644
 --- a/scripts/browser-benchmark/hosted_browser.py
 +++ b/private-integration-drafts/auth-runtime-20261023/hosted_browser_case1.py
 @@ -6,0 +7,4 @@ stdin. Caller is responsible for a <=15s held-provider callback budget.
@@ -7,14 +7,14 @@ index dd02458b..a4aea904 100644
 +import sys
 +from pathlib import Path
 +sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts' / 'browser-benchmark'))
-@@ -239,0 +244,18 @@ def validate_failure_receipt(value):
+@@ -239,0 +244,20 @@ def validate_failure_receipt(value):
 +    case1_failure=None
 +    if isinstance(value,dict) and 'publicAuthCase1Failure' in value:
 +        data=value['publicAuthCase1Failure']
 +        flags={'anonymousRequestObserved','anonymousProfileWasNull','observationOverflow','loginDocumentObserved'}
 +        limits={'pendingCatalogHttp':128,'oldWebSockets':16,'anonymousAdminHttp':256,'authCatalogHttp':256}
 +        dom_flags={'originMatches','libraryPath','gamePath','loginPath','navPresent','signInControlUnique','usernamePresent','passwordPresent','submitPresent','submitEnabled','documentComplete','footerVersionMatches'}
-+        if (value.get('phase')!='navigation' or not isinstance(data,dict) or set(data)!={'stage','dom','websocketLifecycle','profileClassification','anonymousHttpStatus'}|flags|set(limits) or
++        if (value.get('phase')!='navigation' or not isinstance(data,dict) or set(data)!={'stage','dom','browserTunnelCheckpoint','websocketLifecycle','profileClassification','anonymousHttpStatus'}|flags|set(limits) or
 +            data['profileClassification'] not in ('not-observed','pending','null','fixture-user','other','invalid','failed') or
 +            (data['anonymousHttpStatus'] is not None and (type(data['anonymousHttpStatus']) is not int or not 100<=data['anonymousHttpStatus']<=599)) or
 +            data['stage'] not in ('version','anonymous-profile','sign-in','login-form','settlement') or
@@ -24,30 +24,32 @@ index dd02458b..a4aea904 100644
 +            raise ValueError('Case1 failure boundary')
 +        ws=data['websocketLifecycle'];ws_keys={'created','handshake101','handshakeNon101','frameError','closed'}
 +        if not isinstance(ws,dict) or set(ws)!=ws_keys or any(type(v) is not int or not 0<=v<=16 or v>ws['created'] for v in ws.values()):raise ValueError('Case1 WebSocket diagnostic boundary')
-+        case1_failure={k:({**v} if k in ('dom','websocketLifecycle') and v is not None else v) for k,v in data.items()}
++        tunnel=data['browserTunnelCheckpoint'];tunnel_keys={'existing','open','closed','unknown'}
++        if tunnel is not None and (not isinstance(tunnel,dict) or set(tunnel)!=tunnel_keys|{'upstreamClosureProven'} or tunnel['upstreamClosureProven'] is not False or any(type(tunnel[k]) is not int or not 0<=tunnel[k]<=16 for k in tunnel_keys) or tunnel['open']+tunnel['closed']+tunnel['unknown']!=tunnel['existing']):raise ValueError('Case1 browser tunnel boundary')
++        case1_failure={k:({**v} if k in ('dom','websocketLifecycle','browserTunnelCheckpoint') and v is not None else v) for k,v in data.items()}
 +        value={k:v for k,v in value.items() if k!='publicAuthCase1Failure'}
-@@ -288 +310 @@ def validate_failure_receipt(value):
+@@ -288 +312 @@ def validate_failure_receipt(value):
 -    return value
 +    return {**value,**({'publicAuthCase1Failure':case1_failure} if case1_failure is not None else {})}
-@@ -291 +313 @@ class HostedBrowser:
+@@ -291 +315 @@ class HostedBrowser:
 -    def __init__(self,owner,image,network,app_ip,cover_id,cover_sha,*,app_id,app_image,fixture_root,waiting=False,diagnostic_output=None,ui_version=False,ui_rounds=1):
 +    def __init__(self,owner,image,network,app_ip,cover_id,cover_sha,*,app_id,app_image,fixture_root,waiting=False,diagnostic_output=None,ui_version=False,ui_rounds=1,public_case1=False):
-@@ -306,0 +329,5 @@ class HostedBrowser:
+@@ -306,0 +331,5 @@ class HostedBrowser:
 +        if public_case1 is not True or ui_version or ui_rounds != 1:raise ValueError('Exact public case1 browser mode required')
 +        expected_entry=['node','/opt/gameyfin-browser/private-integration-drafts/auth-runtime-20261023/browser_entry.draft.mjs']
 +        image_config=image_rows[0].get('Config',{})
 +        if image_config.get('Entrypoint')!=expected_entry or image_config.get('Labels',{}).get('org.gameyfin.browser.auth-case')!='public-auth-case1-v1':raise ValueError('Actual reviewed case1 browser entry required')
 +        self.public_case1=public_case1
-@@ -312 +339 @@ class HostedBrowser:
+@@ -312 +341 @@ class HostedBrowser:
 -            self.id=command(*creation_args(owner,image,network,app_ip,cover_id,cover_sha),*(['--ui-version=2.4.3'] if ui_version else []),*(['--ui-rounds=3'] if ui_rounds==3 else [])).strip()
 +            self.id=command(*creation_args(owner,image,network,app_ip,cover_id,cover_sha),*(['--ui-version=2.4.3'] if ui_version else []),*(['--ui-rounds=3'] if ui_rounds==3 else []),'--public-auth-case1').strip()
-@@ -326 +353 @@ class HostedBrowser:
+@@ -326 +355 @@ class HostedBrowser:
 -            self.watchdog=subprocess.Popen([sys.executable,str(Path(__file__).with_name('owned_container_watchdog.py')),
 +            self.watchdog=subprocess.Popen([sys.executable,str((Path(__file__).resolve().parents[2] / 'scripts' / 'browser-benchmark' / 'owned_container_watchdog.py')),
-@@ -359 +386 @@ class HostedBrowser:
+@@ -359 +388 @@ class HostedBrowser:
 -                        validate_failure_receipt(value)
 +                        value=validate_failure_receipt(value)
-@@ -381,0 +409,8 @@ class HostedBrowser:
+@@ -381,0 +411,8 @@ class HostedBrowser:
 +    def public_auth_case1(self):
 +        if getattr(self,'public_case1',False) is not True:raise ValueError('Case1 mode required')
 +        if getattr(self,'case1_complete',False):raise ValueError('Case1 may run only once')
@@ -56,7 +58,7 @@ index dd02458b..a4aea904 100644
 +        self.case1_complete=True
 +        return receipt
 +
-@@ -457,0 +493,20 @@ class HostedBrowser:
+@@ -457,0 +495,20 @@ class HostedBrowser:
 +
 +
 +CASE1_WINDOW='login-document-start-to-first-enabled-login-form-checkpoint'

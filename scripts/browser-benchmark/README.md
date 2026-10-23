@@ -130,8 +130,9 @@ Run [39869913682](https://github.com/Niborian/gameyfin/actions/runs/39869913682)
 completed functional scan/metadata/image/exact-download checks and300-second
 recovery in four arms, then failed the fourth arm's final gate. The retained
 report does not identify which final criterion failed. All eight ordinary scan
-phases had unknown browser overlap: the first activity request timed out and
-the later observation was idle. Consequently this run proves neither browsing
+phases had unknown browser overlap: cold-phase first activity requests timed
+out; repeat-phase first requests returned idle after2.7–4.3 seconds. Later
+observations were idle throughout. Consequently this run proves neither browsing
 latency during active scans nor an accepted CPU/RAM improvement. Do not treat
 its historical synthetic control as the running production instance. Preserve
 sanitized final-gate observations before rejecting future runs; do not relax

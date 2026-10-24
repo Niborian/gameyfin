@@ -45,6 +45,7 @@ for ((taskName, entry) in mapOf(
 
 tasks.register("verifyFilesystemEvidence") {
     group = "verification"
+    val reportDirectory = layout.buildDirectory.dir("test-results/test")
     doLast {
         val factory = javax.xml.parsers.DocumentBuilderFactory.newInstance().apply {
             setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
@@ -55,8 +56,8 @@ tasks.register("verifyFilesystemEvidence") {
             isXIncludeAware = false
             isExpandEntityReferences = false
         }
-        for (name in listOf("org.gameyfin.app.games.variants.HardlinkMirrorServiceTest", "org.gameyfin.app.libraries.VariantScanIntegrityFixtureTest")) {
-            val report = layout.buildDirectory.file("test-results/test/TEST-$name.xml").get().asFile
+        for (name in listOf("org.gameyfin.app.games.variants.HardlinkMirrorServiceTest", "org.gameyfin.app.libraries.VariantScanIntegrityFixtureTest", "org.gameyfin.app.games.variants.VariantLocalVersionDetectorTest")) {
+            val report = reportDirectory.get().file("TEST-$name.xml").asFile
             require(report.isFile) { "Missing Linux filesystem evidence: $name" }
             val suite = factory.newDocumentBuilder().parse(report).documentElement
             require(suite.tagName == "testsuite" && suite.getAttribute("tests").toInt() > 0 &&

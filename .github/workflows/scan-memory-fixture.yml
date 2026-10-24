@@ -1,15 +1,8 @@
 name: Measure synthetic scan memory
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - app/src/main/kotlin/org/gameyfin/app/libraries/**
-      - app/src/main/kotlin/org/gameyfin/app/core/filesystem/**
-      - app/src/test/kotlin/org/gameyfin/app/libraries/ScanMemoryBenchmarkTest.kt
-      - app/build.gradle.kts
-      - app/src/test/kotlin/org/gameyfin/tools/**
-      - .github/workflows/scan-memory-fixture.yml
+  # Retained historical fixture, opt-in only. The active delivery plan does not
+  # authorize automatic benchmark campaigns on ordinary implementation PRs.
   workflow_dispatch:
 
 permissions:

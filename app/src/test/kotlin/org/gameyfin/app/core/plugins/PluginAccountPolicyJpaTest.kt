@@ -2,10 +2,15 @@ package org.gameyfin.app.core.plugins
 
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.unmockkObject
 import jakarta.persistence.EntityManager
 import org.gameyfin.app.core.Role
+import org.gameyfin.app.core.security.EncryptionUtils
 import org.gameyfin.app.users.entities.User
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.AfterEach
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest
 import org.springframework.context.annotation.Import
@@ -28,6 +33,11 @@ class PluginAccountPolicyJpaTest @Autowired constructor(
     private val em: EntityManager, manager: PlatformTransactionManager, private val policy: PluginAccountPolicy,
 ) {
     private val tx = TransactionTemplate(manager)
+    @BeforeEach fun syntheticEncryptionKey() {
+        mockkObject(EncryptionUtils)
+        every { EncryptionUtils.getAppKey() } returns "MDEyMzQ1Njc4OWFiY2RlZg=="
+    }
+    @AfterEach fun releaseEncryptionMock() { unmockkObject(EncryptionUtils) }
     private fun user(oidc: String? = null): User = tx.execute {
         val name = UUID.randomUUID().toString()
         User(username = name, email = "$name@example.invalid", enabled = true, oidcProviderId = oidc,
@@ -66,7 +76,11 @@ class PluginAccountPolicyJpaTest @Autowired constructor(
     @Test fun `deleted current numeric identity does not adopt replacement username`() {
         val user = user()
         val id = requireNotNull(user.id)
-        tx.executeWithoutResult { em.remove(em.find(User::class.java, id)) }
+        // Exercise fresh policy lookup after deletion, not unrelated application event listeners.
+        tx.executeWithoutResult {
+            em.createNativeQuery("DELETE FROM USER_ROLES WHERE USER_ID = :id").setParameter("id", id).executeUpdate()
+            em.createNativeQuery("DELETE FROM USERS WHERE ID = :id").setParameter("id", id).executeUpdate()
+        }
         assertNull(policy.current(id))
     }
 }

@@ -8,11 +8,12 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Publish a version candidate or promote a reviewed digest to latest
+        description: Run focused checks, publish a candidate, or promote a reviewed digest
         required: true
         type: choice
-        default: candidate
+        default: verify
         options:
+          - verify
           - candidate
           - promote
       version:
@@ -64,7 +65,26 @@ jobs:
           echo "value=$gradle_version" >> "$GITHUB_OUTPUT"
 
       - name: Run automated tests
+        if: github.event_name != 'workflow_dispatch' || inputs.operation != 'verify'
         run: ./gradlew :app:test --no-daemon --console=plain
+
+      - name: Run focused candidate checks without benchmarks or publication
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'verify'
+        run: >-
+          ./gradlew :app:test --no-daemon --console=plain --max-workers=2
+          --tests org.gameyfin.app.games.variants.VariantLocalVersionDetectorTest
+          --tests org.gameyfin.app.games.variants.VariantDetailsServiceJpaTest
+          --tests org.gameyfin.app.core.plugins.PluginEndpointTest
+          --tests org.gameyfin.app.core.plugins.PluginServiceTest
+          --tests org.gameyfin.app.core.plugins.PluginConfigBoundaryTest
+          --tests org.gameyfin.app.core.plugins.PluginAccountPolicyJpaTest
+          --tests org.gameyfin.app.core.download.files.DownloadServiceTest
+          --tests org.gameyfin.app.games.variants.GameVariantGroupingServiceTest
+          --tests org.gameyfin.app.games.variants.HardlinkMirrorServiceTest
+          --tests org.gameyfin.app.libraries.VariantScanIntegrityFixtureTest
+          --tests org.gameyfin.app.libraries.OfflineBackupRehearsalTest
+          --tests org.gameyfin.tools.FixtureValidationTest
+          --tests org.gameyfin.tools.ImageScanContractsTest
 
       - name: Verify frontend startup lifecycle
         run: |

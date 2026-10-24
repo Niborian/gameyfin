@@ -105,11 +105,14 @@ subprojects {
         // Only enable if password is present
         onlyIf { keystorePassword.isNotEmpty() }
 
+        // Keep the password out of process arguments and command-line diagnostics.
+        environment(keystorePasswordEnvironmentVariable, keystorePassword)
+
         commandLine(
             "jarsigner",
             "-keystore", keystorePath,
             "-storetype", keystoreType,
-            "-storepass", keystorePassword,
+            "-storepass:env", keystorePasswordEnvironmentVariable,
             jarFile.absolutePath,
             keystoreAlias
         )

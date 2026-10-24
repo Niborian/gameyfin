@@ -23,7 +23,7 @@ internal fun qbConfiguration(password: String, secureCookie: Boolean? = null): S
 internal fun fixtureSecret() = ByteArray(24).also(java.security.SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
 internal fun FixtureHttp.qb(path: String, fields: Map<String, String>? = null): ByteArray {
     val reply = request("/api/v2/$path", fields?.let(FixtureHttp::form), mapOf("Referer" to origin, "Content-Type" to "application/x-www-form-urlencoded"), seconds = 10)
-    check(reply.status == 200) { "Synthetic qB API refusal" }; return reply.bytes
+    check(reply.status in 200..299) { "Synthetic qB API refusal" }; return reply.bytes
 }
 
 /** Same authenticated readiness for both isolated HTTP clients, including persisted restart state. */
@@ -36,7 +36,7 @@ internal fun FixtureHttp.awaitQbAuthentication(password: String, seconds: Long, 
             attempts++; stage = "TRANSPORT_UNAVAILABLE"; loginStatus = null; probeStatus = null
             val login = request("/api/v2/auth/login", FixtureHttp.form(mapOf("username" to "fixture", "password" to password)), mapOf("Referer" to origin, "Content-Type" to "application/x-www-form-urlencoded"), seconds = minOf(10, deadline.remaining()))
             loginStatus = login.status
-            if (login.status != 200) { stage = "LOGIN_HTTP_REFUSED"; return@await false }
+            if (login.status !in listOf(200, 204)) { stage = "LOGIN_HTTP_REFUSED"; return@await false }
             if (login.bytes.toString(Charsets.UTF_8).trim() !in listOf("", "Ok.")) { stage = "LOGIN_REFUSED"; return@await false }
             if (!cookies.cookieStore.cookies.any { (it.name == "SID" || it.name.matches(Regex("QBT_SID_[1-9][0-9]{0,4}"))) && it.value.isNotEmpty() && !it.hasExpired() }) { stage = "SESSION_COOKIE_ABSENT"; return@await false }
             stage = "AUTHENTICATED_PROBE_UNAVAILABLE"

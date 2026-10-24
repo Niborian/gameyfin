@@ -13,16 +13,51 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import tools.jackson.databind.node.ObjectNode
 
-internal fun qbConfiguration(password: String): String {
+internal fun qbConfiguration(password: String, secureCookie: Boolean? = null): String {
     val salt = ByteArray(16).also(java.security.SecureRandom()::nextBytes)
     val derived = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA512").generateSecret(PBEKeySpec(password.toCharArray(), salt, 100000, 512)).encoded
     val encoded = Base64.getEncoder().encodeToString(salt) + ":" + Base64.getEncoder().encodeToString(derived)
-    return "[LegalNotice]\nAccepted=true\n[Preferences]\nWebUI\\Address=*\nWebUI\\Username=fixture\nWebUI\\Password_PBKDF2=\"@ByteArray($encoded)\"\nWebUI\\LocalHostAuth=true\nWebUI\\CSRFProtection=true\nWebUI\\HostHeaderValidation=false\nConnection\\UPnP=false\n[BitTorrent]\nSession\\DHTEnabled=false\nSession\\PeXEnabled=false\nSession\\LSDEnabled=false\n"
+    val transport = secureCookie?.let { "WebUI\\SecureCookie=$it\n" }.orEmpty()
+    return "[LegalNotice]\nAccepted=true\n[Preferences]\nWebUI\\Address=*\nWebUI\\Username=fixture\nWebUI\\Password_PBKDF2=\"@ByteArray($encoded)\"\nWebUI\\LocalHostAuth=true\nWebUI\\CSRFProtection=true\n${transport}WebUI\\HostHeaderValidation=false\nConnection\\UPnP=false\n[BitTorrent]\nSession\\DHTEnabled=false\nSession\\PeXEnabled=false\nSession\\LSDEnabled=false\n"
 }
 internal fun fixtureSecret() = ByteArray(24).also(java.security.SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
 internal fun FixtureHttp.qb(path: String, fields: Map<String, String>? = null): ByteArray {
     val reply = request("/api/v2/$path", fields?.let(FixtureHttp::form), mapOf("Referer" to origin, "Content-Type" to "application/x-www-form-urlencoded"), seconds = 10)
     check(reply.status == 200) { "Synthetic qB API refusal" }; return reply.bytes
+}
+
+/** Same authenticated readiness for both isolated HTTP clients, including persisted restart state. */
+internal fun FixtureHttp.awaitQbAuthentication(password: String, seconds: Long, inspectState: () -> tools.jackson.databind.JsonNode, ready: () -> Boolean = { true }) {
+    val deadline = FixtureDeadline(seconds)
+    var stage = "TRANSPORT_UNAVAILABLE"
+    var loginStatus: Int? = null; var probeStatus: Int? = null; var attempts = 0
+    try {
+        FixtureRuntime.await(seconds, { deadline.remaining() }) {
+            attempts++; stage = "TRANSPORT_UNAVAILABLE"; loginStatus = null; probeStatus = null
+            val login = request("/api/v2/auth/login", FixtureHttp.form(mapOf("username" to "fixture", "password" to password)), mapOf("Referer" to origin, "Content-Type" to "application/x-www-form-urlencoded"), seconds = minOf(10, deadline.remaining()))
+            loginStatus = login.status
+            if (login.status != 200) { stage = "LOGIN_HTTP_REFUSED"; return@await false }
+            if (login.bytes.toString(Charsets.UTF_8).trim() !in listOf("", "Ok.")) { stage = "LOGIN_REFUSED"; return@await false }
+            if (!cookies.cookieStore.cookies.any { (it.name == "SID" || it.name.matches(Regex("QBT_SID_[1-9][0-9]{0,4}"))) && it.value.isNotEmpty() && !it.hasExpired() }) { stage = "SESSION_COOKIE_ABSENT"; return@await false }
+            stage = "AUTHENTICATED_PROBE_UNAVAILABLE"
+            val probe = request("/api/v2/app/version", headers = mapOf("Referer" to origin), seconds = minOf(10, deadline.remaining()))
+            probeStatus = probe.status
+            if (probe.status != 200 || !probe.bytes.toString(Charsets.UTF_8).matches(Regex("v[0-9]+\\.[0-9]+\\.[0-9]+"))) { stage = "AUTHENTICATED_PROBE_REFUSED"; return@await false }
+            stage = "OWNED_STATE_NOT_READY"
+            ready().also { if (it) stage = "AUTHENTICATED" }
+        }
+    } catch (failure: Exception) {
+        val diagnostic = linkedMapOf<String, Any?>("scope" to "owned-synthetic-qb-authentication", "stage" to stage, "attempts" to attempts, "loginHttpStatus" to loginStatus, "probeHttpStatus" to probeStatus, "secureCookieExplicitlyDisabledForLoopback" to true)
+        try {
+            val actual = inspectState()
+            diagnostic["containerRunning"] = actual["Running"].booleanValue()
+            diagnostic["containerExitCode"] = actual["ExitCode"].asInt()
+            diagnostic["containerOomKilled"] = actual["OOMKilled"].booleanValue()
+        } catch (_: Exception) { diagnostic["containerInspectionUnavailable"] = true }
+        // Never retain bodies, cookie names/values, credentials or raw container logs.
+        println(FixtureRuntime.json.writeValueAsString(diagnostic))
+        throw failure
+    }
 }
 
 /** Real pinned providers; invented trackerless magnet, internal network, fresh configuration only. */
@@ -45,7 +80,7 @@ class AcquisitionPairFixtureTest {
         val owned = FixtureContainers(root)
         try {
             val password = fixtureSecret(); val key = fixtureSecret()
-            val qb = Files.createDirectories(root.resolve("qb/qBittorrent")); Files.writeString(qb.resolve("qBittorrent.conf"), qbConfiguration(password))
+            val qb = Files.createDirectories(root.resolve("qb/qBittorrent")); Files.writeString(qb.resolve("qBittorrent.conf"), qbConfiguration(password, secureCookie = false))
             val prowlarr = Files.createDirectory(root.resolve("prowlarr"))
             Files.writeString(prowlarr.resolve("config.xml"), "<Config><BindAddress>*</BindAddress><Port>9696</Port><ApiKey>$key</ApiKey><AuthenticationMethod>External</AuthenticationMethod><AuthenticationRequired>DisabledForLocalAddresses</AuthenticationRequired></Config>")
             val downloads = Files.createDirectory(root.resolve("downloads"))
@@ -74,8 +109,8 @@ class AcquisitionPairFixtureTest {
             }
             val indexerId = api("indexer", FixtureRuntime.json.writeValueAsString(indexer))["id"].asText()
             val client = FixtureHttp(qbOrigin)
-            fun login() { require(client.qb("auth/login", mapOf("username" to "fixture", "password" to password)).toString(Charsets.UTF_8).trim() in listOf("", "Ok.")); require(client.cookies.cookieStore.cookies.any { it.name == "SID" || it.name.matches(Regex("QBT_SID_[1-9][0-9]{0,4}")) }) }
-            FixtureRuntime.await(120) { login(); true }
+            fun inspectQb() = FixtureRuntime.tree(owned.docker("inspect", qbId))[0]["State"]
+            client.awaitQbAuthentication(password, 120, ::inspectQb)
             client.qb("torrents/createCategory", mapOf("category" to "fixture-acquisition", "savePath" to "/downloads/fixture-acquisition"))
             require(api("search?indexerIds=$indexerId&query=fixture&type=search").size() > 0)
             val settings = AcquisitionProviderSettings().apply {
@@ -85,8 +120,8 @@ class AcquisitionPairFixtureTest {
             }
             AcquisitionLiveProviderTest().exercise(settings, indexerId)
             owned.docker("restart", qbId)
-            FixtureRuntime.await(120) {
-                login(); val torrents = FixtureRuntime.tree(client.qb("torrents/info").toString(Charsets.UTF_8))
+            client.awaitQbAuthentication(password, 120, ::inspectQb) {
+                val torrents = FixtureRuntime.tree(client.qb("torrents/info").toString(Charsets.UTF_8))
                 torrents.size() == 1 && torrents[0]["hash"].asText() == "a".repeat(40) && torrents[0]["state"].asText() == "stoppedDL"
             }
             Files.walk(downloads).use { paths -> require(paths.noneMatch { Files.isRegularFile(it) }) { "Synthetic magnet created payload" } }

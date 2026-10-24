@@ -14,7 +14,9 @@ class QbCreatorFixtureTest {
         try {
             val password = fixtureSecret()
             val config = Files.createDirectories(root.resolve("config/qBittorrent/config"))
-            Files.writeString(config.resolve("qBittorrent.conf"), qbConfiguration(password))
+            // Restore the predecessor's explicit cookie transport setting only for this isolated
+            // loopback HTTP fixture. Production client settings are unchanged.
+            Files.writeString(config.resolve("qBittorrent.conf"), qbConfiguration(password, secureCookie = false))
             val fixtures = Files.createDirectory(root.resolve("fixtures")); val originals = Files.createDirectory(root.resolve("originals"))
             val members = linkedMapOf("Grouped/base-a.bin" to "first synthetic base".toByteArray(), "Grouped/base-b.bin" to "second synthetic base".toByteArray(), "Grouped/.hidden.bin" to "selected hidden content".toByteArray(), "Optional/soundtrack.bin" to "synthetic soundtrack".toByteArray())
             for ((name, data) in members) { val path = originals.resolve(name); Files.createDirectories(path.parent); Files.write(path, data) }
@@ -30,10 +32,7 @@ class QbCreatorFixtureTest {
             require(state["NetworkSettings"]["Networks"].size() == 1)
             relay = FixtureRelay(owned.address(id), 8080)
             val client = FixtureHttp(relay.origin)
-            FixtureRuntime.await(30) {
-                client.qb("auth/login", mapOf("username" to "fixture", "password" to password))
-                client.cookies.cookieStore.cookies.any { it.name == "SID" || it.name.matches(Regex("QBT_SID_[1-9][0-9]{0,4}")) }
-            }
+            client.awaitQbAuthentication(password, 30, { FixtureRuntime.tree(owned.docker("inspect", id))[0]["State"] })
             val version = client.qb("app/version").toString(Charsets.UTF_8); require(version.matches(Regex("v[0-9]+\\.[0-9]+\\.[0-9]+")))
             cases.forEachIndexed { index, selected ->
                 val task = FixtureRuntime.tree(client.qb("torrentcreator/addTask", mapOf("sourcePath" to "/fixture/$index", "private" to "true", "format" to "v1", "startSeeding" to "false", "ignoreDotfiles" to "false", "torrentFilePath" to "/config/fixture-$index.torrent")).toString(Charsets.UTF_8))["taskID"].asText()

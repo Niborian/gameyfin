@@ -27,8 +27,27 @@ Status: preparation only, not deployment approval. Keep the existing
   including CSS/HTML and shell wrappers in the denominator; this is not GitHub Linguist.
 - No local Docker, server workload, live scan or production configuration change.
 
-Final 2.4.4 artifact build and exact-head Linux verification are pending. Record the
-immutable artifact checksum and CI run before calling this a reviewed release candidate.
+The final normal `2.4.4` production build passed, as did the TypeScript type check.
+All five plugin JAR signatures verified. Local application artifact:
+`app/build/libs/app-2.4.4.jar`, SHA256
+`155398146934044cfc65c9a1659651a15ef79f9d9f747672e1437024db68dd0c`.
+Its embedded build metadata reports `2.4.4`. This JAR checksum is not a container digest.
+
+Linux verification on `d24cbf84` passed: 160/160 focused Kotlin tests, zero skips,
+80 frontend/auth/report checks, plus the hardlink, scan and local detector evidence
+gate with configuration caching. Run:
+https://github.com/Niborian/gameyfin/actions/runs/40142010399
+The initial gate's configuration-cache capture bug was fixed without weakening its
+checks. Subsequent commit `9aef2687` changes only the existing CodeQL workflow to
+allow manual production-class analysis without full tests/packaging. Candidate
+CodeQL passed on `9aef2687`, and the branch open-alert query returned none:
+https://github.com/Niborian/gameyfin/actions/runs/40142151194
+
+Generated bundle outputs remain local build products, not additional server versions.
+No image has been published, no latest tag changed and no production smoke check run.
+The remaining release steps are source review/integration, separately approved image
+publication with provenance/SBOM, and approved maintenance/smoke checks below. Green
+builds and static analysis alone are not full browser/OIDC or production acceptance.
 
 ## Cutover checklist — requires separate approval
 

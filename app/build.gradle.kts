@@ -1,4 +1,5 @@
 import org.apache.tools.ant.filters.ReplaceTokens
+import java.io.File
 
 group = "org.gameyfin"
 version = rootProject.version
@@ -35,10 +36,20 @@ for ((taskName, entry) in mapOf(
         classpath = sourceSets.test.get().runtimeClasspath
         mainClass.set("org.gameyfin.tools.$entry")
         workingDir(rootProject.projectDir)
-        if (taskName == "offlineH2Rehearsal") doFirst {
-            val selected = file(providers.gradleProperty("rehearsalH2Jar").get())
-            require(selected.isFile) { "Supply -PrehearsalH2Jar=<matching H2 JAR>" }
+        if (taskName == "offlineH2Rehearsal") {
+            val baseDirectory = layout.projectDirectory
+            val selected = objects.fileProperty().apply {
+                set(layout.file(providers.gradleProperty("rehearsalH2Jar").map { path ->
+                    val candidate = File(path)
+                    if (candidate.isAbsolute) candidate else baseDirectory.asFile.resolve(candidate)
+                }))
+            }
+            // Configure the classpath now; only the explicit matching H2 JAR is included.
             classpath = sourceSets.test.get().runtimeClasspath.filter { !it.name.matches(Regex("h2-.*\\.jar")) } + files(selected)
+            doFirst {
+                // Capture a supported file property, never Project or this build script at execution.
+                require(selected.orNull?.asFile?.isFile == true) { "Supply -PrehearsalH2Jar=<matching H2 JAR>" }
+            }
         }
     }
 }

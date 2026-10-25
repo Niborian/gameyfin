@@ -27,11 +27,10 @@ Status: preparation only, not deployment approval. Keep the existing
   including CSS/HTML and shell wrappers in the denominator; this is not GitHub Linguist.
 - No local Docker, server workload, live scan or production configuration change.
 
-The final normal `2.4.4` production build passed, as did the TypeScript type check.
-All five plugin JAR signatures verified. Local application artifact:
-`app/build/libs/app-2.4.4.jar`, SHA256
-`155398146934044cfc65c9a1659651a15ef79f9d9f747672e1437024db68dd0c`.
-Its embedded build metadata reports `2.4.4`. This JAR checksum is not a container digest.
+The normal `2.4.4` production build and TypeScript type check passed; all five
+plugin JAR signatures verified. That local build predates the subsequent review
+fixes and is not the shipping artifact. Release preparation must use the reviewed
+CI image and its immutable registry digest, not an old local JAR with the same version.
 
 Linux verification on `d24cbf84` passed: 160/160 focused Kotlin tests, zero skips,
 80 frontend/auth/report checks, plus the hardlink, scan and local detector evidence
@@ -48,6 +47,28 @@ No image has been published, no latest tag changed and no production smoke check
 The remaining release steps are source review/integration, separately approved image
 publication with provenance/SBOM, and approved maintenance/smoke checks below. Green
 builds and static analysis alone are not full browser/OIDC or production acceptance.
+
+## PR review follow-up
+
+PR #160's real provider fixtures exposed a Kotlin port mismatch: both qBittorrent
+images returned login HTTP 204 while the helper required 200. The helper now accepts
+the successful response while requiring an unexpired session cookie and authenticated
+version HTTP 200. Five small loopback protocol cases passed; both pinned real-provider
+fixtures subsequently passed on `ea3f33a6`.
+
+GitHub review also identified two valid blockers: a default/list refresh could unmount
+a dirty variant editor, and the offline backup task captured Gradle script state.
+The editor now preserves a valid selected variant and existing drafts across those
+refreshes; focused checks exercise the actual transpiled modal. The offline task
+constructs its classpath during configuration and captures only a file property in
+its execution guard. Cache store/reuse is checked by intentionally invalid arguments,
+refused by the CLI before any environment, path, lock or database access. This is
+task-dispatch/cache evidence, not a new production backup rehearsal.
+
+The normal image check no longer requests a five-minute post-task idle sample.
+Correctness, interruption recovery, exact selections and source-integrity checks
+remain enabled. The user approved version-only `2.4.4` publication after review and
+CI pass; this does not approve latest promotion or deployment.
 
 ## Cutover checklist — requires separate approval
 

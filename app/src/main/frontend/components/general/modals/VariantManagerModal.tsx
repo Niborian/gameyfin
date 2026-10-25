@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useState} from "react";
+import React, {useEffect, useMemo, useRef, useState} from "react";
 import {
     addToast,
     Button,
@@ -63,6 +63,11 @@ const contentTypes = [
     VariantContentType.EXTRA
 ];
 
+/** A changed default or a newly attached variant must not select a different editor. */
+export function preserveSelectedVariantId(ids: number[], selected: number | undefined, fallback: number | undefined) {
+    return selected !== undefined && ids.includes(selected) ? selected : fallback;
+}
+
 export default function VariantManagerModal({
                                                 game,
                                                 libraryGames,
@@ -97,6 +102,7 @@ export default function VariantManagerModal({
     const [removingSourceId, setRemovingSourceId] = useState<number>();
     const [settingDefaultVariantId, setSettingDefaultVariantId] = useState<number>();
     const [detailsDirty, setDetailsDirty] = useState(false);
+    const initializedGameId = useRef<number | undefined>(undefined);
 
     const selectedVariant = variants.find((variant) => variant.id === selectedVariantId) ?? defaultVariant;
     const relevantSuggestions = useMemo(() => {
@@ -107,6 +113,18 @@ export default function VariantManagerModal({
     }, [game?.id, suggestions]);
 
     useEffect(() => {
+        const gameChanged = initializedGameId.current !== game?.id;
+        initializedGameId.current = game?.id;
+        const nextSelection = preserveSelectedVariantId(variants.map(variant => variant.id), selectedVariantId, defaultVariant?.id);
+        if (!gameChanged && selectedVariantId !== undefined && nextSelection === selectedVariantId) {
+            // Keep the mounted details editor and all its unsaved metadata. Initialize
+            // new content cards without replacing existing content drafts on refresh.
+            setContentDrafts(current => Object.fromEntries(variants.flatMap(variant =>
+                (variant.contents ?? []).map((content: VariantContentDto) =>
+                    [content.id, current[content.id] ?? createDraftFromContent(content)])
+            )));
+            return;
+        }
         setSelectedVariantId(defaultVariant?.id);
         setVariantName(defaultVariant?.name ?? "Normal");
         setVersion(defaultVariant?.version ?? "0");
@@ -114,7 +132,7 @@ export default function VariantManagerModal({
             (variant.contents ?? []).map((content: VariantContentDto) => [content.id, createDraftFromContent(content)])
         )));
         clearDraft();
-    }, [game?.id, defaultVariant?.id, variants.length]);
+    }, [game?.id, defaultVariant?.id, game?.variants]);
 
     function preferredVariant(variants: GameVariantDto[]) {
         return variants.find((variant) => variant.defaultLocked)

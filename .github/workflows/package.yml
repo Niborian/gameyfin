@@ -91,6 +91,7 @@ jobs:
           npm ci --prefix app --ignore-scripts --no-audit --no-fund
           node --test scripts/test-auth-startup.cts
           node --test scripts/test-login-redirect-owner.cts
+          node --test scripts/test-variant-editor-selection.cts
 
       - name: Verify read-only test report policy
         run: node --test scripts/test-junit-report-policy.cts
@@ -350,7 +351,7 @@ jobs:
           test "${#h2_jars[@]}" -eq 1
           sha256sum plugins/steam/build/libs/steam-1.2.0.jar plugins/directdownload/build/libs/directdownload-1.0.2.jar
           ./gradlew :app:imageScanRehearsal \
-            --args="--image $BUILT_IMAGE_ID --source-revision $REVIEWED_HEAD --h2-jar ${h2_jars[0]} --metadata-plugin plugins/steam/build/libs/steam-1.2.0.jar --direct-plugin plugins/directdownload/build/libs/directdownload-1.0.2.jar --output app/build/reports/actual-image-scan.json --interrupt-scan --missing-root-fault --idle-seconds 300" \
+            --args="--image $BUILT_IMAGE_ID --source-revision $REVIEWED_HEAD --h2-jar ${h2_jars[0]} --metadata-plugin plugins/steam/build/libs/steam-1.2.0.jar --direct-plugin plugins/directdownload/build/libs/directdownload-1.0.2.jar --output app/build/reports/actual-image-scan.json --interrupt-scan --missing-root-fault" \
             --no-daemon --console=plain -x :app:vaadinBuildFrontend
 
       - name: Retain actual-image synthetic evidence

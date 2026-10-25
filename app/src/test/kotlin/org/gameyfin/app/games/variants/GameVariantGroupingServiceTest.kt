@@ -796,6 +796,10 @@ class GameVariantGroupingServiceTest {
         game.variants.add(variant)
         val base = root.resolve("Game.v1.zip").createFile()
         val patch = root.resolve("Multiplayer.zip").createFile()
+        val retainedPath = root.resolve("ExistingMultiplayer.zip").createFile()
+        val retained = VariantContent(id = 120L, variant = variant, name = "Multiplayer", path = retainedPath.toString(),
+            type = VariantContentType.PATCH, tags = mutableSetOf("manual"))
+        variant.contents.add(retained)
         every { gameRepository.findById(1L) } returns Optional.of(game)
         every { gameRepository.save(game) } returns game
         every { filesystemService.calculateFileSize(any()) } returns 5L
@@ -804,11 +808,14 @@ class GameVariantGroupingServiceTest {
             sourceGameId = null, sourceRootPath = root.toString(), targetVariantId = 10L,
             variantName = null, version = null, replaceContentId = 110L,
             entries = listOf(
-                AttachVariantContentEntryDto(base.toString(), "Base", VariantContentType.BASE, true, true, emptySet()),
+                AttachVariantContentEntryDto(base.toString(), "Base game", VariantContentType.BASE, true, true, emptySet()),
                 AttachVariantContentEntryDto(patch.toString(), "Multiplayer", VariantContentType.PATCH, false, true, emptySet())
             )
         ))
-        assertEquals(listOf(base.toString(), patch.toString()), variant.contents.map { it.path })
+        assertEquals(setOf(retainedPath.toString(), base.toString(), patch.toString()), variant.contents.map { it.path }.toSet())
+        assertEquals("Base game", variant.contents.single { it.type == VariantContentType.BASE }.name)
+        assertEquals(setOf("manual"), retained.tags)
+        assertEquals(retainedPath.toString(), retained.path)
         assertEquals(root.toString(), game.metadata.path)
         assertEquals(root.toString(), variant.path)
         assertTrue(java.nio.file.Files.exists(base) && java.nio.file.Files.exists(patch))

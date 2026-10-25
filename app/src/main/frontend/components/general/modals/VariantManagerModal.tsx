@@ -108,6 +108,7 @@ export default function VariantManagerModal({
     const [detailsDirty, setDetailsDirty] = useState(false);
     const [replaceContentId, setReplaceContentId] = useState<number>();
     const previewGeneration = useRef(0);
+    const canonicalContentDrafts = useRef<Record<number, DraftEntry>>({});
     const initializedGameId = useRef<number | undefined>(undefined);
 
     useEffect(() => {
@@ -126,23 +127,25 @@ export default function VariantManagerModal({
     useEffect(() => {
         const gameChanged = initializedGameId.current !== game?.id;
         initializedGameId.current = game?.id;
+        const previousCanonical = canonicalContentDrafts.current;
+        const nextCanonical = Object.fromEntries(variants.flatMap(variant =>
+            (variant.contents ?? []).map(content => [content.id, createDraftFromContent(content)])));
+        canonicalContentDrafts.current = nextCanonical;
         const nextSelection = preserveSelectedVariantId(variants.map(variant => variant.id), selectedVariantId, defaultVariant?.id);
         if (!gameChanged && selectedVariantId !== undefined && nextSelection === selectedVariantId) {
-            // Keep the mounted details editor and all its unsaved metadata. Initialize
-            // new content cards without replacing existing content drafts on refresh.
-            setContentDrafts(current => Object.fromEntries(variants.flatMap(variant =>
-                (variant.contents ?? []).map((content: VariantContentDto) =>
-                    [content.id, current[content.id] ?? createDraftFromContent(content)])
-            )));
+            // Refresh clean cards on every mutation; retain only genuinely unsaved drafts.
+            setContentDrafts(current => Object.fromEntries(Object.entries(nextCanonical).map(([id, saved]) => {
+                const key = Number(id);
+                const dirty = current[key] && previousCanonical[key] && JSON.stringify(current[key]) !== JSON.stringify(previousCanonical[key]);
+                return [key, dirty ? current[key] : saved];
+            })));
             return;
         }
         const initialVariant = variants.find(variant => variant.id === initialVariantId) ?? defaultVariant;
         setSelectedVariantId(initialVariant?.id);
         setVariantName(initialVariant?.name ?? "Normal");
         setVersion(initialVariant?.version ?? "0");
-        setContentDrafts(Object.fromEntries(variants.flatMap((variant) =>
-            (variant.contents ?? []).map((content: VariantContentDto) => [content.id, createDraftFromContent(content)])
-        )));
+        setContentDrafts(nextCanonical);
         clearDraft();
     }, [game?.id, defaultVariant?.id, game?.variants]);
 
@@ -169,6 +172,16 @@ export default function VariantManagerModal({
         setGroupDefaultSelected(true);
         setShareWithAllVariants(false);
         setEntries([]);
+    }
+
+    function selectTarget(variant: GameVariantDto) {
+        if (variant.id !== selectedVariant?.id && !discardDetailsIfConfirmed()) return;
+        previewGeneration.current++;
+        setIsLoadingChildren(false);
+        setReplaceContentId(undefined);
+        setSelectedVariantId(variant.id);
+        setVariantName(variant.name);
+        setVersion(variant.version);
     }
 
     function gameLabel(gameId: number, fallbackTitle?: string | null, fallbackPath?: string | null) {
@@ -482,6 +495,8 @@ export default function VariantManagerModal({
             });
             // @ts-ignore Hilla returns the admin shape for admins.
             gameState.state[updated.id] = updated;
+            const shared = updated.variants?.flatMap(value => value.contents ?? []).find(value => value.id === content.id);
+            if (shared) setContentDrafts(current => ({...current, [content.id]: createDraftFromContent(shared)}));
             onChanged?.();
             addToast({
                 title: "Content shared",
@@ -634,10 +649,7 @@ export default function VariantManagerModal({
                                                                 }
                                                                 {variant.latestForVariant && <Chip size="sm" variant="flat">latest</Chip>}
                                                                 <Button size="sm" variant="light" onPress={() => {
-                                                                    if (variant.id !== selectedVariant?.id && !discardDetailsIfConfirmed()) return;
-                                                                    setSelectedVariantId(variant.id);
-                                                                    setVariantName(variant.name);
-                                                                    setVersion(variant.version);
+                                                                    selectTarget(variant);
                                                                 }}>
                                                                     Use as target
                                                                 </Button>
@@ -837,10 +849,7 @@ export default function VariantManagerModal({
                                                     const key = Array.from(keys)[0]?.toString();
                                                     const variant = variants.find((candidate) => candidate.id.toString() === key);
                                                     if (!variant) return;
-                                                    if (variant.id !== selectedVariant?.id && !discardDetailsIfConfirmed()) return;
-                                                    setSelectedVariantId(variant.id);
-                                                    setVariantName(variant.name);
-                                                    setVersion(variant.version);
+                                                    selectTarget(variant);
                                                 }}
                                             >
                                                 {variants.map((variant) => (
@@ -857,13 +866,7 @@ export default function VariantManagerModal({
                                                 size="sm"
                                                 label="Source root path"
                                                 value={sourceRootPath}
-                                                onValueChange={(value) => {
-                                                    setSourceGameId(undefined);
-                                                    setSourceRootPath(value);
-                                                    if (value && entries.length === 0) {
-                                                        setEntries([createEntry(value, value.split(/[\\/]/).filter(Boolean).pop() ?? "Content", newEntriesType)]);
-                                                    }
-                                                }}
+                                                onValueChange={onPathSelected}
                                                 endContent={
                                                     <Tooltip content="Pick path">
                                                         <Button isIconOnly size="sm" variant="light" onPress={pathPicker.onOpen}>

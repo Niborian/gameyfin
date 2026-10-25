@@ -206,10 +206,15 @@ class GameVariantGroupingService(
 
         val variants = resolveAttachVariants(target, request, sourceRootPath)
         variants.forEach { variant ->
-            request.entries.forEach { entry -> addContentEntry(variant, entry) }
+            request.entries.forEach { entry -> addContentEntry(variant, entry, reuseExisting = replacing == null) }
             // One transaction replaces catalogue selections. Keep the source root identity;
             // no path, file, torrent or game row is removed by this operation.
-            if (replacing != null) variant.contents.remove(replacing)
+            if (replacing != null) {
+                variant.contents.remove(replacing)
+                require(variant.contents.any { it.type == VariantContentType.BASE && it.required }) {
+                    "A required BASE selection must remain after replacement"
+                }
+            }
             variant.scanManaged = false
             refreshVariantFileSize(variant)
         }
@@ -609,13 +614,13 @@ class GameVariantGroupingService(
             )
     }
 
-    private fun addContentEntry(variant: GameVariant, entry: AttachVariantContentEntryDto) {
+    private fun addContentEntry(variant: GameVariant, entry: AttachVariantContentEntryDto, reuseExisting: Boolean = true) {
         val normalizedTags = normalizeTags(entry.tags)
         val entryPaths = requestedPaths(entry.path, entry.paths)
         val primaryPath = entryPaths.first()
-        val content = variant.contents.firstOrNull { it.path == primaryPath }
-            ?: variant.contents.firstOrNull { it.type == entry.contentType && it.name == entry.contentName }
-            ?: VariantContent(
+        val existing = if (reuseExisting) variant.contents.firstOrNull { it.path == primaryPath }
+            ?: variant.contents.firstOrNull { it.type == entry.contentType && it.name == entry.contentName } else null
+        val content = existing ?: VariantContent(
                 variant = variant,
                 type = entry.contentType,
                 name = entry.contentName,

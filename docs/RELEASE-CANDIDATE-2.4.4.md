@@ -70,6 +70,30 @@ Correctness, interruption recovery, exact selections and source-integrity checks
 remain enabled. The user approved version-only `2.4.4` publication after review and
 CI pass; this does not approve latest promotion or deployment.
 
+### Transport compatibility gate
+
+Installed Hilla/Atmosphere review subsequently identified another blocker: the
+WebSocket frame dispatch restores authentication but does not bind Spring servlet
+request attributes. The new privileged-session guard must therefore capture the
+actual trusted transport request/session without weakening its checks; otherwise
+legitimate administrator subscriptions are rejected. The focused fix decorates
+only the existing Hilla handler through Atmosphere's public registration API,
+retaining its mapping, broadcaster and interceptors. A non-inheritable request
+binding exists only around the handler invocation and is cleared in `finally`.
+The transport principal must be the captured authentication by reference; fresh
+account, persisted session and registry checks are unchanged. Independent source
+and installed-API review found no blocking issue in this fix.
+
+Five focused regressions exercise installed Hilla message parsing and dispatch
+through the modified Atmosphere registration, absent persisted sessions, mismatched
+principals, exception cleanup and registration preservation. Endpoint reflection
+dispatch and account lookup are controlled collaborators. All five passed locally
+with the twelve existing configuration-boundary cases (17/17, zero skips). The
+initial fixture used an interface mock where Atmosphere requires its concrete
+resource type; the corrected fixture passed without changing production guards.
+These cases do not claim a real socket handshake, browser or OIDC provider test.
+Exact-head verification is required before merge and publication.
+
 ## Cutover checklist — requires separate approval
 
 1. Review the exact source head and successful focused Linux checks; check candidate

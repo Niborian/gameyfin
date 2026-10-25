@@ -61,7 +61,11 @@ class PluginEndpointAccess(
         val auth = getCurrentAuth()?.takeIf { it.isAuthenticated && it !is AnonymousAuthenticationToken }
         if (auth == null) return PluginAudience(null, null, null, null, false).also(::requireCurrent)
         val administrator = auth.isAdmin()
-        val request = (RequestContextHolder.getRequestAttributes() as? ServletRequestAttributes)?.request
+        val transport = PluginPushSessionBridge.currentRequest()
+        // Hilla obtains Authentication from precisely this Atmosphere request before invoking us.
+        // A mismatched worker context must not borrow another transport's persisted session.
+        if (transport != null && transport.userPrincipal !== auth) denied()
+        val request = transport ?: (RequestContextHolder.getRequestAttributes() as? ServletRequestAttributes)?.request
         val session = request?.getSession(false)
         val account = accounts.resolve(auth) ?: denied()
         return PluginAudience(auth, session, session?.id, account, administrator).also(::requireCurrent)

@@ -60,7 +60,7 @@ export default function GameView() {
     const game = gameId ? state.state[parseInt(gameId)] : undefined;
     const collections = useSnapshot(collectionState).state;
 
-    const [downloadOptions, setDownloadOptions] = useState<Record<string, ComboButtonOption>>();
+    const [downloadProviders, setDownloadProviders] = useState<Awaited<ReturnType<typeof DownloadProviderEndpoint.getProviders>>>();
     const [selectedVariantId, setSelectedVariantId] = useState<number>();
     const [selectedContentIds, setSelectedContentIds] = useState<Set<number>>(new Set());
     const [expandedContentGroups, setExpandedContentGroups] = useState<Set<string>>(new Set());
@@ -113,27 +113,32 @@ export default function GameView() {
     }, [game?.id, variants.length, effectiveDefaultVariant?.id]);
 
     useEffect(() => {
+        let active = true;
         DownloadProviderEndpoint.getProviders().then((providers) => {
-            const options: Record<string, ComboButtonOption> = providers.reduce((acc, provider) => {
-                acc[provider.key] = {
-                    label: provider.name,
-                    description: provider.shortDescription ?? provider.description,
-                    action: () => {
-                        if (gameId) {
-                            DownloadEndpoint.downloadGame(
-                                parseInt(gameId),
-                                provider.key,
-                                selectedVariant?.id,
-                                selectedContents.map((content) => content.id)
-                            );
-                        }
-                    },
-                };
-                return acc;
-            }, {} as Record<string, ComboButtonOption>);
-            setDownloadOptions(options);
+            if (active) setDownloadProviders(providers);
         });
-    }, [gameId, selectedVariantId, selectedContentIds]);
+        return () => {active = false;};
+    }, []);
+
+    // Derive actions from this render's canonical contents, not an earlier RPC's
+    // closure. Editor saves can replace content IDs without changing the variant.
+    const downloadOptions = downloadProviders?.reduce((options, provider) => {
+        options[provider.key] = {
+            label: provider.name,
+            description: provider.shortDescription ?? provider.description,
+            action: () => {
+                if (gameId) {
+                    DownloadEndpoint.downloadGame(
+                        parseInt(gameId),
+                        provider.key,
+                        selectedVariant?.id,
+                        selectedContents.map((content) => content.id)
+                    );
+                }
+            },
+        };
+        return options;
+    }, {} as Record<string, ComboButtonOption>);
 
     useEffect(() => {
         if (state.isLoaded && (!gameId || !state.state[parseInt(gameId)])) {

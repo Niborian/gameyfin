@@ -4,6 +4,85 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const {createRequire} = require('node:module');
 const ts = process.env.TEST_TYPESCRIPT_MODULE ? require(process.env.TEST_TYPESCRIPT_MODULE) : createRequire(path.resolve(__dirname,'../app/package.json'))('typescript');
+
+function gameDownloadFixture(delayedProviders = false) {
+    const slots: any[] = []; let cursor = 0, effects: (() => void)[] = [];
+    let nodes: {type: string; props: any}[] = [], providerCalls = 0;
+    const downloads: any[][] = [];
+    let resolveProviders!: (value: any[]) => void;
+    const providers = [{key: 'direct', name: 'Direct', description: 'Fixture'}];
+    const providerPromise = delayedProviders ? new Promise<any[]>(resolve => {resolveProviders = resolve;}) : Promise.resolve(providers);
+    const state: any = {isLoaded:true, state:{1:{id:1,title:'Synthetic',metadata:{fileSize:1},collectionIds:[],variants:[]}}};
+    const react = {
+        lazy: () => 'VariantManagerModal',
+        useState(initial: any) {const i = cursor++; if (!(i in slots)) slots[i] = initial;
+            return [slots[i], (value: any) => {slots[i] = typeof value === 'function' ? value(slots[i]) : value;}];},
+        useEffect(callback: () => any, deps: any[]) {const i = cursor++, previous = slots[i];
+            if (!previous || deps.some((value,index) => !Object.is(value,previous.deps[index]))) effects.push(() => {
+                previous?.cleanup?.(); slots[i] = {deps, cleanup:callback()};
+            });}
+    };
+    function jsx(type: string, props: any) {nodes.push({type,props}); return {type,props};}
+    const module = {exports:{} as {default: () => unknown}};
+    const source = fs.readFileSync(path.resolve(__dirname,'../app/src/main/frontend/views/GameView.tsx'),'utf8');
+    const code = ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
+    vm.runInNewContext(code,{module,exports:module.exports,document:{title:''},require(name: string) {
+        if (name === 'react') return {...react,default:react};
+        if (name === 'react/jsx-runtime') return {jsx,jsxs:jsx};
+        if (name === 'react-router') return {useParams:() => ({gameId:'1'}),useNavigate:() => () => {}};
+        if (name === 'valtio/react') return {useSnapshot:(value: any) => value};
+        if (name.endsWith('/GameState')) return {gameState:state};
+        if (name.endsWith('/CollectionState')) return {collectionState:{state:{}}};
+        if (name.endsWith('/auth')) return {useAuth:() => ({})};
+        if (name.endsWith('/utils')) return {isAdmin:() => false,humanFileSize:String,starRatingAsString:() => ''};
+        if (name === 'Frontend/generated/endpoints') return {DownloadProviderEndpoint:{getProviders:() => {providerCalls++;return providerPromise;}},GameEndpoint:{}};
+        if (name === 'Frontend/endpoints/endpoints') return {DownloadEndpoint:{downloadGame:(...args: any[]) => downloads.push(args)}};
+        if (name === '@heroui/react') return new Proxy({useDisclosure:() => ({isOpen:false})} as any,{get:(value,key) => value[key] ?? key});
+        if (name.endsWith('/VariantContentType')) return {default:Object.fromEntries(['BASE','DLC','PATCH','MOD','EXTRA','DEDICATED_SERVER'].map(value => [value,value]))};
+        if (name.endsWith('/ComboButton')) return {default:'ComboButton'};
+        return {default:name};
+    }});
+    return {
+        render() {cursor=0;effects=[];nodes=[];module.exports.default();effects.forEach(effect => effect());},
+        setVariants(variants: any[]) {state.state[1] = {...state.state[1],variants};},
+        download() {nodes.find(node => node.type === 'ComboButton')!.props.options.direct.action();},
+        selectVariant(id: number) {nodes.find(node => node.type === 'Select' && node.props.label === 'Version')!.props.onSelectionChange(new Set([String(id)]));},
+        toggleOptional(selected: boolean) {nodes.find(node => node.type === 'Checkbox' && !node.props.isDisabled)!.props.onValueChange(selected);},
+        resolveProviders() {resolveProviders(providers);},
+        unmount() {slots.forEach(slot => slot?.cleanup?.());},
+        get downloads() {return downloads;}, get providerCalls() {return providerCalls;}
+    };
+}
+
+function downloadVariant(id: number, contents: any[]) {
+    return {...variant(id,id===1),tags:[],contents};
+}
+
+test('game-page action immediately uses replacement canonical base IDs without reopening', async () => {
+    const f=gameDownloadFixture(); f.setVariants([downloadVariant(1,[baseContent(101,'Broad base')])]);
+    f.render(); await Promise.resolve(); f.render(); await Promise.resolve(); f.render();
+    f.download(); assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[101]);
+    f.setVariants([downloadVariant(1,[baseContent(201,'Base child')])]);
+    f.render(); f.download();
+    assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[201]);
+    assert.equal(f.downloads.at(-1)![2],1);
+});
+
+test('late provider lookup uses current variant and explicit optional selection', async () => {
+    const f=gameDownloadFixture(true);
+    const optional={...baseContent(202,'Optional patch'),type:'PATCH',required:false,defaultSelected:false};
+    const first=downloadVariant(1,[baseContent(101,'First')]);
+    const second=downloadVariant(2,[baseContent(201,'Second'),optional]);
+    f.setVariants([first,second]); f.render(); f.render();
+    f.selectVariant(2); f.render(); f.toggleOptional(true); f.render();
+    f.resolveProviders(); await Promise.resolve(); f.render(); f.download();
+    assert.equal(f.downloads.at(-1)![2],2);
+    assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[201,202]);
+    f.toggleOptional(false); f.render(); f.download();
+    assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[201]);
+    assert.equal(f.providerCalls,1);
+    f.unmount();
+});
 type Variant = {id: number; name: string; version: string; default: boolean; defaultLocked: boolean; contents: unknown[]};
 type Editor = {key: string; variant: Variant; onDirtyChange: (value: boolean) => void};
 type EffectSlot = {deps: unknown[]};
@@ -42,7 +121,7 @@ function fixture(initialVariantId?: number, listContents?: (path: string) => Pro
     return {render, setGame(value: typeof game) {game=value;}, get game() {return game;}, get nodes() {return nodes;}};
 }
 
-function baseContent(id: number, name: string) {return {id, name, path: `/fixture/${id}`, paths: [], type:'BASE', required:true, defaultSelected:true, tags:[], pathCount:1, fileSize:1};}
+function baseContent(id: number, name: string) {return {id, name, path: `/fixture/${id}`, paths: [], memberNames:[], type:'BASE', required:true, defaultSelected:true, tags:[], pathCount:1, fileSize:1};}
 
 test('same-ID canonical refresh updates clean cards and preserves dirty unrelated cards', () => {
     const f = fixture();

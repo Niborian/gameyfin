@@ -23,8 +23,8 @@ Status: preparation only, not deployment approval. Keep the existing
   and download-related fields. All 39 existing download-service checks passed.
 - Windows skipped seven secure-directory detector cases and one symlink case.
   Linux execution is still required; skips are not evidence of those behaviors.
-- Recognized tracked source-byte inventory was approximately 99.3% Kotlin/TypeScript,
-  including CSS/HTML and shell wrappers in the denominator; this is not GitHub Linguist.
+- The earlier extension-only 99.3% inventory was incomplete and is superseded by
+  the exact Git-blob inventory below. No language masking or filler was added.
 - No local Docker, server workload, live scan or production configuration change.
 
 The normal `2.4.4` production build and TypeScript type check passed; all five
@@ -93,6 +93,27 @@ initial fixture used an interface mock where Atmosphere requires its concrete
 resource type; the corrected fixture passed without changing production guards.
 These cases do not claim a real socket handshake, browser or OIDC provider test.
 Exact-head verification is required before merge and publication.
+
+## Tooling composition audit
+
+The corrected inventory includes the extensionless Gradle wrapper, Windows wrapper,
+Dockerfile, shell/PowerShell and CSS/HTML as well as Kotlin/TypeScript. Before the
+last cleanup this was 3,352,643 / 3,388,702 bytes (98.9359%). Two redundant image
+builder wrappers accounted for 4,031 Git-blob bytes; removing them leaves
+3,352,643 / 3,384,671 bytes, **99.0537% Kotlin/TypeScript**. This counts tracked
+blob sizes, not working-copy line endings or an assertion about GitHub's exact
+Linguist result. No `.gitattributes` overrides were introduced.
+
+SQL migrations and XML/MJML templates remain untouched. They are data languages
+in [GitHub's language definitions](https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml),
+not executable-language bytes in this inventory; assets, configuration and prose
+are likewise not programming-source bytes. Existing runtime shell scripts and
+both Gradle wrappers remain counted. This does not claim 99% of every repository
+file or total asset/data size.
+
+Reference review found only two documentation consumers of the deleted builders;
+both now use the normal Gradle build and existing reviewed image workflow. CI,
+Dockerfile, runtime entrypoint, signing and recovery behavior do not invoke them.
 
 ## Cutover checklist — requires separate approval
 

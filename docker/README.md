@@ -49,31 +49,30 @@ Use the [H2 backup and restore rehearsal checklist](BACKUP-RESTORE.md) before
 any live image or scan change. A backup is not considered ready until a copy
 has been restored and checked in isolation.
 
-Use these scripts when you want to build a local Gameyfin image from this checkout and replace your running container with it.
+## Build the application
+
+Use the existing Gradle wrapper; separate PowerShell/Bash image-builder helpers
+are no longer maintained. Configure the plugin signing environment variables
+(`GAMEYFIN_KEYSTORE_PATH`, `GAMEYFIN_KEYSTORE_TYPE`, `GAMEYFIN_KEYSTORE_PASSWORD`)
+privately before a production build. Do not put signing passwords in command arguments.
 
 ## Windows PowerShell
 
 ```powershell
-.\docker\build-image.ps1 -ImageName gameyfin -ImageTag variant-local
+.\gradlew.bat build "-Pvaadin.productionMode=true"
 ```
 
 ## Linux/macOS
 
 ```bash
-./docker/build-image.sh --image gameyfin --tag variant-local
+./gradlew build -Pvaadin.productionMode=true
 ```
 
-The scripts run `clean build`, copy the executable app JAR to `app/build/libs/app.jar`, and build `docker/Dockerfile.ubuntu` with the correct `JAR_FILE` build argument.
-
-To build a production-mode image with signed plugins, provide `GAMEYFIN_KEYSTORE_PASSWORD` and pass `-Production` on PowerShell or `--production` on Bash.
-
-Example compose replacement:
-
-```yaml
-services:
-  gameyfin:
-    image: gameyfin:variant-local
-```
+The application JAR is produced under `app/build/libs`; plugin JARs remain in their
+existing module build directories. The reviewed GitHub Actions candidate workflow
+builds `docker/Dockerfile.ubuntu`, signs the existing plugins and publishes the
+versioned image with provenance and an SBOM. Keep the running service named
+`gameyfin`; a successful build is not permission to replace it or promote `latest`.
 
 ## Readiness and scan failures
 

@@ -46,7 +46,9 @@ class QbDistributionPairFixtureTest @Autowired internal constructor(private val 
         var api: QbDistributionApi? = null
         val leases = mutableListOf<OwnedSnapshotLease>()
         var primary: Throwable? = null
+        var childrenBefore: Set<Pair<Long, java.time.Instant>>? = null
         try {
+            childrenBefore = liveFixtureChildren()
             // Rejected parents/deletion cannot create an unregistered fixture or erase a
             // sibling. These checks share the exact actual hosted ownership helper.
             val home = root.parent
@@ -127,7 +129,17 @@ class QbDistributionPairFixtureTest @Autowired internal constructor(private val 
                 assertEquals(expected.map { FixtureRuntime.sha(it) }.sorted(), lease.manifest.members.map { it.digest }.sorted())
                 val row = lifecycle.reserve(lease); lifecycle.create(row.id, lease)
                 FixtureRuntime.await(30, { deadline.remaining() }) { lifecycle.validate(row.id, lease); true }
-                lifecycle.addStopped(row.id, lease); lifecycle.recheck(row.id, lease)
+                lifecycle.addStopped(row.id, lease)
+                val addDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+                while (true) {
+                    deadline.remaining()
+                    try { lifecycle.reconcileAdded(row.id, lease); break }
+                    catch (_: QbDistributionPendingConfirmation) {
+                        check(System.nanoTime() < addDeadline) { "Owned add confirmation deadline" }
+                        Thread.sleep(1000)
+                    }
+                }
+                lifecycle.recheck(row.id, lease)
                 FixtureRuntime.await(30, { deadline.remaining() }) { lifecycle.confirmChecked(row.id, lease); true }
                 try { lifecycle.start(row.id, lease) } catch (failure: Exception) {
                     if (journal.get(row.id).state != QbDistributionState.STARTING) throw failure
@@ -179,15 +191,34 @@ class QbDistributionPairFixtureTest @Autowired internal constructor(private val 
             println("""{"scope":"owned-qb-distribution-pair","version":"v5.2.3","exactSelectionCases":2,"originalHashesAndLinksUnchanged":true,"readonlyCacheMount":true,"seederDownloadedBytes":0,"sameTokenQbRestartAndWorkerReopen":true,"leasesReleased":true,"retirementConfirmed":true}""")
         } catch (failure: Throwable) { primary = failure; throw failure }
         finally {
-            // Container removal first physically ends all remote readers. Failed lifecycle
-            // ownership/retirement is never papered over by releasing DB leases or chmod.
+            // Teardown is not successful lifecycle/retention proof. End exact remote and
+            // worker processes before test-only immutable-directory cleanup; DB ownership
+            // is never forged or released just to make a failed fixture look successful.
             var cleanup: Throwable? = null
             fun attempt(action: () -> Unit) { try { action() } catch (failure: Throwable) { if (cleanup == null) cleanup = failure else cleanup!!.addSuppressed(failure) } }
             attempt { api?.close() }; attempt { seedRelay?.close() }; attempt { receiverRelay?.close() }
-            leases.forEach { attempt { it.close() } }
-            attempt { owned.close() }
+            attempt { owned.closeImmutableFixture {
+                var workerFailure: Throwable? = null
+                for (lease in leases) try { lease.closeAndRequireExit() } catch (failure: Throwable) {
+                    if (workerFailure == null) workerFailure = failure else workerFailure.addSuppressed(failure)
+                }
+                workerFailure?.let { throw it }
+                require(liveFixtureChildren().all { it in requireNotNull(childrenBefore) }) { "Fixture child exit remains unproven" }
+            } }
             cleanup?.let { if (primary != null) primary!!.addSuppressed(it) else throw it }
         }
+    }
+
+    /** Read-only bounded census, no process discovery/kill by name or broad termination. */
+    private fun liveFixtureChildren(): Set<Pair<Long, java.time.Instant>> = ProcessHandle.current().descendants().use { descendants ->
+        val children = descendants.limit(129).toList()
+        require(children.size <= 128) { "Fixture child census exceeds bound" }
+        children.mapNotNull { child ->
+            if (!child.isAlive) null else {
+                val start = child.info().startInstant().orElse(null)
+                if (!child.isAlive) null else child.pid() to requireNotNull(start) { "Fixture child identity unavailable" }
+            }
+        }.toSet()
     }
 
     private fun addReceiver(client: FixtureHttp, metadata: ByteArray, path: String) {

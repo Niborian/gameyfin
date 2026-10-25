@@ -43,6 +43,7 @@ internal class OwnedSnapshotRecord(
     @Lob @Column(nullable = false) val request: ByteArray,
     @Column(nullable = false, length = 64) val requestDigest: String,
     @Column(nullable = false) val reservedBytes: Long,
+    @Column(length = 64, updatable = false) val hostRequestDigest: String? = null,
     @Column(nullable = false) val createdAt: Instant = Instant.now(),
 ) {
     @Enumerated(EnumType.STRING) @JdbcTypeCode(SqlTypes.VARCHAR) @Column(nullable = false)
@@ -128,7 +129,7 @@ internal interface OwnedSnapshotConsumerRepository : JpaRepository<OwnedSnapshot
 internal data class SnapshotRecordView(val id: UUID, val operation: UUID, val gameId: Long, val variantId: Long,
     val request: ByteArray, val requestDigest: String, val state: OwnedSnapshotState, val manifest: ByteArray?, val manifestDigest: String?,
     val creator: SnapshotProcessIdentity? = null, val worker: SnapshotProcessIdentity? = null, val workerExitProvedAt: Instant? = null,
-    val preparation: ByteArray? = null)
+    val preparation: ByteArray? = null, val hostRequestDigest: String? = null)
 
 @Service
 internal class OwnedSnapshotRegistry(private val snapshots: OwnedSnapshotRepository,
@@ -137,8 +138,10 @@ internal class OwnedSnapshotRegistry(private val snapshots: OwnedSnapshotReposit
     private val transaction = TransactionTemplate(manager).apply { propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW }
     fun reserve(id: UUID, operation: UUID, gameId: Long, variantId: Long, request: ByteArray,
         creator: SnapshotProcessIdentity? = null, worker: SnapshotProcessIdentity? = null,
-        maxUnretiredSnapshots: Int = 256, maxUnretiredBytes: Long = 1024L * 1024 * 1024 * 1024): SnapshotRecordView = commit {
+        maxUnretiredSnapshots: Int = 256, maxUnretiredBytes: Long = 1024L * 1024 * 1024 * 1024,
+        hostRequestDigest: String? = null): SnapshotRecordView = commit {
         require(request.size in 1..org.gameyfin.snapshot.SnapshotProtocol.MAX_FRAME)
+        require(hostRequestDigest == null || hostRequestDigest.matches(Regex("[0-9a-f]{64}")))
         require(maxUnretiredSnapshots in 1..256 && maxUnretiredBytes in 1..4L * 1024 * 1024 * 1024 * 1024)
         val parsed = org.gameyfin.snapshot.SnapshotProtocol.decode(request) {
             require(readInt() == org.gameyfin.snapshot.SnapshotProtocol.VERSION && readInt() == org.gameyfin.snapshot.SnapshotProtocol.CAPTURE)
@@ -152,12 +155,16 @@ internal class OwnedSnapshotRegistry(private val snapshots: OwnedSnapshotReposit
         val used = snapshots.unretiredBytes()
         check(used >= 0) { "Invalid reserved byte accounting" }
         if (parsed.byteLimit > maxUnretiredBytes - used) throw SnapshotAdmissionRefused("Aggregate snapshot copy budget exhausted")
-        view(snapshots.saveAndFlush(OwnedSnapshotRecord(id, operation, gameId, variantId, request.copyOf(), org.gameyfin.snapshot.SnapshotProtocol.digest(request), parsed.byteLimit).apply {
+        view(snapshots.saveAndFlush(OwnedSnapshotRecord(id, operation, gameId, variantId, request.copyOf(), org.gameyfin.snapshot.SnapshotProtocol.digest(request), parsed.byteLimit, hostRequestDigest).apply {
             creator?.let { creatorScope = it.scope; creatorPid = it.pid; creatorStartedMillis = it.startedMillis }
             worker?.let { workerScope = it.scope; workerPid = it.pid; workerStartedMillis = it.startedMillis }
         }))
     }
     fun get(id: UUID): SnapshotRecordView = commit { view(requireNotNull(snapshots.locked(id))) }
+    /** null means a successful authoritative lookup found no exact operation.
+     * Database/lock failures propagate and must never be interpreted as absence.
+     */
+    fun find(id: UUID): SnapshotRecordView? = transaction.execute { snapshots.locked(id)?.let(::view) }
     fun begin(id: UUID) = update(id) { require(it.state == OwnedSnapshotState.RESERVED); it.state = OwnedSnapshotState.IN_FLIGHT }
     fun uncertain(id: UUID) = update(id) {
         require(it.state != OwnedSnapshotState.RETIRED) { "Retired snapshot cannot be reactivated" }
@@ -367,7 +374,7 @@ internal class OwnedSnapshotRegistry(private val snapshots: OwnedSnapshotReposit
     private fun view(row: OwnedSnapshotRecord) = SnapshotRecordView(row.id, row.operation, row.gameId, row.variantId,
         row.request.copyOf(), row.requestDigest, row.state, row.manifest?.copyOf(), row.manifestDigest,
         identity(row.creatorScope, row.creatorPid, row.creatorStartedMillis), identity(row.workerScope, row.workerPid, row.workerStartedMillis), row.workerExitProvedAt,
-        row.preparation?.copyOf())
+        row.preparation?.copyOf(), row.hostRequestDigest)
     private fun <T : Any> commit(action: () -> T): T = requireNotNull(transaction.execute { action() })
     private fun identity(scope: String?, pid: Long?, started: Long?): SnapshotProcessIdentity? =
         if (scope != null && pid != null && started != null) SnapshotProcessIdentity(scope, pid, started) else null

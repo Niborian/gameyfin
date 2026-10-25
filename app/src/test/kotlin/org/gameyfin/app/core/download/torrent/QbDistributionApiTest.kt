@@ -151,4 +151,39 @@ class QbDistributionApiTest {
             }
         } finally { server.stop(0) }
     }
+
+    @Test fun `revocation during delayed client proof prevents every following mutation POST`() {
+        val posts = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val authorized = java.util.concurrent.atomic.AtomicBoolean(true)
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/api/v2/") { exchange ->
+            val route = exchange.requestURI.path.removePrefix("/api/v2/")
+            if (exchange.requestMethod == "POST") posts += route
+            val response = when (route) {
+                "auth/login" -> { exchange.responseHeaders.add("Set-Cookie", "SID=disposable-fixture; HttpOnly; Path=/"); "Ok." }
+                "app/version" -> "v5.2.3"
+                "app/webapiVersion" -> "2.11.0"
+                "app/preferences" -> {
+                    // Model authority changing while the actual HTTP proof is in flight.
+                    authorized.set(false)
+                    """{"dht":false,"pex":false,"lsd":false,"upnp":false,"random_port":false,"ip_filter_enabled":true}"""
+                }
+                else -> error("Unexpected mutation reached transport")
+            }.toByteArray()
+            exchange.sendResponseHeaders(200, response.size.toLong()); exchange.responseBody.use { it.write(response) }
+        }
+        server.start()
+        try {
+            QbDistributionApi(policy(server.address.port), QbDistributionCredentials("fixture", "disposable"),
+                { check(authorized.get()) { "Synthetic caller revoked" } }).use { api ->
+                api.verifyClient()
+                val snapshot = UUID.randomUUID(); val operation = UUID.randomUUID(); val hash = "a".repeat(40)
+                val actions: List<() -> Unit> = listOf({ api.create(snapshot, operation); Unit },
+                    { api.addStopped(snapshot, operation, byteArrayOf(1)) }, { api.start(hash) }, { api.stop(hash) },
+                    { api.recheck(hash) }, { api.remove(hash) }, { api.deleteTask("task") })
+                actions.forEach { action -> assertFailsWith<IllegalStateException> { action() } }
+                assertEquals(listOf("auth/login"), posts)
+            }
+        } finally { server.stop(0) }
+    }
 }

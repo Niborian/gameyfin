@@ -4,6 +4,7 @@ import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.UUID
 import kotlin.test.*
@@ -154,14 +155,21 @@ class LinuxSnapshotBoundaryTest {
     @Test fun `renamed pending directory never publishes or deletes foreign replacement`() = fixture { source, cache ->
         Files.writeString(source.resolve("base.bin"), "AAAA")
         lateinit var request: SnapshotCapture
+        var replacementInstalled = false
         val hooks = AcquisitionHooks(beforePublication = {
             val pending = cache.resolve("pending-${request.operation}")
-            Files.move(pending, cache.resolve("retained-owned"))
+            // JDK's non-atomic move checks W_OK on the source directory itself.
+            // Atomic same-parent rename exercises the intended name-rebinding
+            // race without loosening the immutable directory's permissions.
+            Files.move(pending, cache.resolve("retained-owned"), ATOMIC_MOVE)
             Files.createDirectory(pending); Files.writeString(pending.resolve("sentinel"), "FOREIGN")
+            replacementInstalled = true
         })
         LinuxDescriptors().use { native -> WorkerSession(native, hooks).use { session ->
             request = capture(session, source, cache)
-            assertFails { session.capture(request, SnapshotProtocol.digest(request.bytes())) }
+            val failure = assertFailsWith<IllegalArgumentException> { session.capture(request, SnapshotProtocol.digest(request.bytes())) }
+            assertTrue(replacementInstalled, "The replacement must exist before testing the worker rejection")
+            assertEquals("Pending name rebound", failure.message)
             assertFalse(Files.exists(cache.resolve(request.snapshotId.toString())))
         } }
         assertEquals("FOREIGN", Files.readString(cache.resolve("pending-${request.operation}/sentinel")))
@@ -190,7 +198,10 @@ class LinuxSnapshotBoundaryTest {
             session.capture(request, SnapshotProtocol.digest(request.bytes()))
         } }
         val original = cache.resolve(prepared.snapshotId.toString())
-        Files.move(original, cache.resolve("retained-original"))
+        val originalPermissions = Files.getPosixFilePermissions(original)
+        val retained = cache.resolve("retained-original")
+        Files.move(original, retained, ATOMIC_MOVE)
+        assertEquals(originalPermissions, Files.getPosixFilePermissions(retained), "Rebinding must not chmod the owned snapshot")
         Files.createDirectory(original); Files.writeString(original.resolve("sentinel"), "FOREIGN")
         LinuxDescriptors().use { native -> WorkerSession(native).use { session ->
             session.hello(cache.toString(), prepared.cacheIdentity)

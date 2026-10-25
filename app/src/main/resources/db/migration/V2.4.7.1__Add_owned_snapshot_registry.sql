@@ -9,6 +9,7 @@ CREATE TABLE owned_snapshot_record (
     request BLOB NOT NULL,
     request_digest VARCHAR(64) NOT NULL,
     reserved_bytes BIGINT NOT NULL CHECK (reserved_bytes > 0),
+    host_request_digest VARCHAR(64) CHECK (host_request_digest IS NULL OR REGEXP_LIKE(host_request_digest, '^[0-9a-f]{64}$')),
     created_at TIMESTAMP(6) WITH TIME ZONE NOT NULL,
     state VARCHAR(32) NOT NULL CHECK (CASE state WHEN 'RESERVED' THEN TRUE WHEN 'IN_FLIGHT' THEN TRUE WHEN 'READY' THEN TRUE WHEN 'UNCERTAIN' THEN TRUE WHEN 'RETIRING' THEN TRUE WHEN 'RETIRED' THEN TRUE ELSE FALSE END),
     manifest BLOB,

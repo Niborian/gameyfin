@@ -17,6 +17,7 @@ export function OwnedTorrentSettings() {
     const [requestId, setRequestId] = useState("");
     const [retryRemoval, setRetryRemoval] = useState(false);
     const [retained, setRetained] = useState<Awaited<ReturnType<typeof OwnedTorrentEndpoint.retained>>>([]);
+    const [exitAttestation, setExitAttestation] = useState("");
     const load = async () => {
         setBusy(true);
         try {
@@ -76,6 +77,27 @@ export function OwnedTorrentSettings() {
                     .finally(() => setBusy(false));
             }}>Inspect exact request</button>
             <p>Recovery only acknowledges existing remote state; it never repeats create/add/start. After recovery, inspect and retire explicitly.</p>
+            <button type="button" disabled={busy || !/^[0-9a-f-]{36}$/.test(requestId)} onClick={() => {
+                setBusy(true);
+                void OwnedTorrentEndpoint.creatorIdentity(requestId).then((identity) => {
+                    setExitAttestation(JSON.stringify({expectedScope: identity.scope, expectedPid: identity.pid,
+                        expectedStartedMillis: identity.startedMillis, originalContainerId: "", originalContainerRemoved: false,
+                        allOldWorkersExited: false, evidenceSha256: ""}, null, 2));
+                    setMessage("Identity loaded. A receipt must prove this exact original container and all old workers are gone; live/unknown same-scope creators cannot be overridden.");
+                }).catch(() => setMessage("Unable to load exact creator identity."))
+                    .finally(() => setBusy(false));
+            }}>Load resource-free cancellation identity</button>
+            <label>Optional foreign-scope exit receipt (JSON; leave blank for independently proved local creator exit)
+                <textarea rows={8} className="w-full font-mono" value={exitAttestation} disabled={busy}
+                    onChange={(event) => setExitAttestation(event.target.value)}/></label>
+            <button type="button" disabled={busy || !/^[0-9a-f-]{36}$/.test(requestId)} onClick={() => {
+                setBusy(true);
+                void Promise.resolve().then(() => OwnedTorrentEndpoint.cancelResourceFree(requestId,
+                    exitAttestation.trim() ? JSON.parse(exitAttestation) : undefined))
+                    .then(() => setMessage("Resource-free request cancelled after exact exit and absence proofs; no resource was deleted."))
+                    .catch(() => setMessage("Cancellation refused: prove original creator exit and reconcile any existing planned snapshot/intent first."))
+                    .finally(() => setBusy(false));
+            }}>Cancel only a proved resource-free request</button>
             {Object.values(OwnedTorrentRecoveryAction).map((action) => <button key={action} type="button"
                 disabled={busy || !/^[0-9a-f-]{36}$/.test(requestId)} onClick={() => {
                     setBusy(true);

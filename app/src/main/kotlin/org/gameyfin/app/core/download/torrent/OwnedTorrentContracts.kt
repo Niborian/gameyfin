@@ -4,6 +4,9 @@ package org.gameyfin.app.core.download.torrent
 data class OwnedTorrentSelection(val gameId: Long, val variantId: Long?, val contentIds: List<Long>?, val explicitSelection: Boolean = false)
 data class OwnedTorrentStatus(val id: String, val state: String, val downloadUrl: String?)
 enum class OwnedTorrentRecoveryAction { RECONCILE_CREATION, VALIDATE_CREATION, RECONCILE_ADD }
+data class OwnedTorrentCreatorIdentity(val requestId: String, val scope: String?, val pid: Long?, val startedMillis: Long?)
+data class OwnedTorrentRequestExitAttestation(val expectedScope: String, val expectedPid: Long, val expectedStartedMillis: Long,
+    val originalContainerId: String, val originalContainerRemoved: Boolean, val allOldWorkersExited: Boolean, val evidenceSha256: String)
 
 /** Administrator configuration only. Admission confirmations are not deployment/parity evidence. */
 data class OwnedTorrentConfiguration(

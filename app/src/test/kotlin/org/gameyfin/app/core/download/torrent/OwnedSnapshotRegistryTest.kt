@@ -28,20 +28,29 @@ class OwnedSnapshotRegistryTest @Autowired internal constructor(private val regi
     private val snapshots: OwnedSnapshotRepository, private val leases: OwnedSnapshotLeaseRepository,
     private val manager: PlatformTransactionManager, private val entityManager: EntityManager,
     private val consumers: OwnedSnapshotConsumerRepository, private val admission: OwnedSnapshotAdmissionRepository) {
-    private fun reserve(): SnapshotRecordView {
+    private fun reserve(hostRequestDigest: String? = null): SnapshotRecordView {
         val request = SnapshotCapture(UUID.randomUUID(), UUID.randomUUID(), "/source", "/cache", "owned-root",
             listOf(SnapshotSelection("base.bin", "content-1")), 1024, 8, 0)
-        return registry.reserve(request.snapshotId, request.operation, 42, 84, request.bytes())
+        return registry.reserve(request.snapshotId, request.operation, 42, 84, request.bytes(), hostRequestDigest = hostRequestDigest)
     }
     private fun manifest(record: SnapshotRecordView) = SnapshotManifest(record.id, record.operation, record.requestDigest,
         "owned-root", "owned-directory", listOf(SnapshotMember("content-1", 3, "a".repeat(64), "copied", "original"))).bytes()
 
     @Test fun `committed operation survives outer rollback and cannot begin twice`() {
-        val reserved = reserve()
+        val reserved = reserve("e".repeat(64))
+        assertEquals("e".repeat(64), reserved.hostRequestDigest)
+        assertEquals(reserved.id, registry.find(reserved.id)?.id)
+        assertNull(registry.find(UUID.randomUUID()))
+        // A durable planned caller ID cannot silently adopt/re-copy an old operation.
+        assertFails { registry.reserve(reserved.id, reserved.operation, reserved.gameId, reserved.variantId, reserved.request,
+            hostRequestDigest = "f".repeat(64)) }
+        assertEquals(reserved.requestDigest, registry.get(reserved.id).requestDigest)
+        assertEquals("e".repeat(64), registry.find(reserved.id)?.hostRequestDigest)
         TransactionTemplate(manager).execute { outer -> registry.begin(reserved.id); outer.setRollbackOnly() }
         TransactionTemplate(manager).execute { entityManager.clear() }
         val restarted = OwnedSnapshotRegistry(snapshots, leases, manager, consumers, admission)
         assertEquals(OwnedSnapshotState.IN_FLIGHT, restarted.get(reserved.id).state)
+        assertEquals("e".repeat(64), restarted.get(reserved.id).hostRequestDigest)
         assertFails { restarted.begin(reserved.id) }
         restarted.uncertain(reserved.id)
         assertFails { restarted.begin(reserved.id) }

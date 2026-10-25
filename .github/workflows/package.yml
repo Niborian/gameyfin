@@ -69,6 +69,14 @@ jobs:
         # restricted to the minimal worker test JVM, never the application JVM.
         run: ./gradlew :snapshot-worker:test :snapshot-worker:verifyNativeEvidence --no-daemon --console=plain --max-workers=2
 
+      - name: Retain exact native worker results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-worker-native-test-results
+          path: snapshot-worker/build/test-results/test/TEST-*.xml
+          retention-days: 7
+
       - name: Run automated tests
         if: github.event_name != 'workflow_dispatch' || inputs.operation != 'verify'
         run: ./gradlew :app:test --no-daemon --console=plain

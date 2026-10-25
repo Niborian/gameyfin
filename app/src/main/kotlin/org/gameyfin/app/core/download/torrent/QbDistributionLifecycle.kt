@@ -4,12 +4,16 @@ import org.gameyfin.snapshot.SnapshotProtocol
 import tools.jackson.databind.JsonNode
 import java.util.UUID
 
+/** A proved owned ADD is still checking. This is not permission to add or start again. */
+internal class QbDistributionPendingConfirmation : IllegalStateException("Owned add still checking")
+
 /** Host-only lifecycle. No endpoint/provider is registered. A caller owns one lease and
  * serializes operations for it; durable compare-and-transition also refuses duplicate I/O.
  * Every uncertain outcome retains its client-bound lease. Never automatically re-add/start.
  */
 internal class QbDistributionLifecycle(private val policy: QbDistributionPolicy,
-    private val api: QbDistributionApi, private val journal: QbDistributionJournal) {
+    private val api: QbDistributionApi, private val journal: QbDistributionJournal,
+    private val authorityCheckpoint: () -> Unit = {}) {
     private val validator = TorrentMetadataValidator(TorrentNetworkPolicy(policy.approvedTrackers, true))
 
     fun reserve(lease: OwnedSnapshotLease, operationId: UUID? = null): QbDistributionRecord {
@@ -25,7 +29,7 @@ internal class QbDistributionLifecycle(private val policy: QbDistributionPolicy,
         val row = checked(id, lease); require(row.state == QbDistributionState.RESERVED)
         api.verifyClient(); lease.verifyForClient(policy.cacheIdentity)
         journal.transition(id, setOf(row.state), QbDistributionState.CREATING)
-        val taskId = api.create(row.snapshotId, row.id)
+        val taskId = mutateRemote { api.create(row.snapshotId, row.id) }
         api.ownedTask(taskId, row.snapshotId, row.id)
         return journal.transition(id, setOf(QbDistributionState.CREATING), QbDistributionState.CREATED, taskId = taskId)
     }
@@ -59,14 +63,21 @@ internal class QbDistributionLifecycle(private val policy: QbDistributionPolicy,
         require(api.find(requireNotNull(row.infoHash)) == null) { "Existing torrent is not adopted" }
         validateMetadata(requireNotNull(row.metadata), lease)
         journal.transition(id, setOf(row.state), QbDistributionState.ADDING)
-        api.addStopped(row.snapshotId, id, row.metadata)
-        verifyOwned(row, lease, requireComplete = false, requireStopped = true)
-        return journal.transition(id, setOf(QbDistributionState.ADDING), QbDistributionState.STOPPED)
+        mutateRemote { api.addStopped(row.snapshotId, id, row.metadata) }
+        // HTTP acknowledgement is not physical stopped-state acknowledgement. Initial
+        // qB checking is asynchronous; the caller confirms separately without another add.
+        return journal.get(id)
     }
 
     fun reconcileAdded(id: UUID, lease: OwnedSnapshotLease): QbDistributionRecord {
         val row = checked(id, lease); require(row.state == QbDistributionState.ADDING)
-        api.verifyClient(); verifyOwned(row, lease, requireComplete = false, requireStopped = true)
+        api.verifyClient()
+        val info = verifyOwned(row, lease, requireComplete = false, requireStopped = false)
+        when (info["state"]?.asText()) {
+            "checkingUP", "checkingDL", "checkingResumeData" -> throw QbDistributionPendingConfirmation()
+            "stoppedUP", "stoppedDL" -> Unit
+            else -> error("Owned add is not stopped")
+        }
         return journal.transition(id, setOf(row.state), QbDistributionState.STOPPED)
     }
 
@@ -75,7 +86,7 @@ internal class QbDistributionLifecycle(private val policy: QbDistributionPolicy,
         val row = checked(id, lease); require(row.state == QbDistributionState.STOPPED)
         api.verifyClient(); verifyOwned(row, lease, requireComplete = false, requireStopped = true)
         journal.transition(id, setOf(row.state), QbDistributionState.CHECKING)
-        api.recheck(requireNotNull(row.infoHash))
+        mutateRemote { api.recheck(requireNotNull(row.infoHash)) }
         return journal.get(id)
     }
 
@@ -90,7 +101,7 @@ internal class QbDistributionLifecycle(private val policy: QbDistributionPolicy,
         api.verifyClient(); verifyOwned(row, lease, requireComplete = true, requireStopped = true)
         lease.verifyForClient(policy.cacheIdentity)
         journal.transition(id, setOf(row.state), QbDistributionState.STARTING)
-        api.start(requireNotNull(row.infoHash))
+        mutateRemote { api.start(requireNotNull(row.infoHash)) }
         return confirmSeeding(id, lease)
     }
 
@@ -111,7 +122,7 @@ internal class QbDistributionLifecycle(private val policy: QbDistributionPolicy,
         require(row.state in setOf(QbDistributionState.STOPPED, QbDistributionState.CHECKING, QbDistributionState.STARTING, QbDistributionState.SEEDING))
         api.verifyClient(); verifyOwned(row, lease, requireComplete = false, requireStopped = false)
         journal.transition(id, setOf(row.state), QbDistributionState.STOPPING)
-        api.stop(requireNotNull(row.infoHash))
+        mutateRemote { api.stop(requireNotNull(row.infoHash)) }
         return journal.get(id)
     }
 
@@ -119,7 +130,7 @@ internal class QbDistributionLifecycle(private val policy: QbDistributionPolicy,
         val row = checked(id, lease); require(row.state == QbDistributionState.STOPPING)
         api.verifyClient(); verifyOwned(row, lease, requireComplete = false, requireStopped = true)
         journal.transition(id, setOf(row.state), QbDistributionState.REMOVING)
-        api.remove(requireNotNull(row.infoHash))
+        mutateRemote { api.remove(requireNotNull(row.infoHash)) }
         return journal.get(id)
     }
 
@@ -131,7 +142,7 @@ internal class QbDistributionLifecycle(private val policy: QbDistributionPolicy,
         val task = tasks.singleOrNull { it["taskID"]?.asText() == taskId }
         if (task != null) {
             api.ownedTask(taskId, row.snapshotId, id)
-            api.deleteTask(taskId)
+            mutateRemote { api.deleteTask(taskId) }
         }
         require(api.tasks().none { it["taskID"]?.asText() == taskId || it["comment"]?.asText() == policy.comment(id) }) { "Creator removal not acknowledged" }
         val removed = if (row.state == QbDistributionState.REMOVED) row else journal.transition(id, setOf(row.state), QbDistributionState.REMOVED)
@@ -144,7 +155,7 @@ internal class QbDistributionLifecycle(private val policy: QbDistributionPolicy,
     fun retryRemoval(id: UUID, lease: OwnedSnapshotLease): QbDistributionRecord {
         val row = checked(id, lease); require(row.state == QbDistributionState.REMOVING)
         api.verifyClient(); verifyOwned(row, lease, requireComplete = false, requireStopped = true)
-        api.remove(requireNotNull(row.infoHash))
+        mutateRemote { api.remove(requireNotNull(row.infoHash)) }
         return journal.get(id)
     }
 
@@ -185,7 +196,7 @@ internal class QbDistributionLifecycle(private val policy: QbDistributionPolicy,
         if (tasks.isNotEmpty()) {
             require(row.state == QbDistributionState.CANCELLING) { "Creator reappeared after cancellation" }
             requireFinishedCreator(row)
-            api.deleteTask(requireNotNull(row.taskId))
+            mutateRemote { api.deleteTask(requireNotNull(row.taskId)) }
         }
         require(boundCreatorTasks(row).isEmpty()) { "Creator cancellation not acknowledged" }
         val cancelled = if (row.state == QbDistributionState.CANCELLED) row else
@@ -256,6 +267,13 @@ internal class QbDistributionLifecycle(private val policy: QbDistributionPolicy,
     }
     private fun intersects(first: String, second: String): Boolean =
         first == "/" || second == "/" || first == second || first.startsWith("$second/") || second.startsWith("$first/")
+
+    private fun <T> mutateRemote(action: () -> T): T {
+        check(!Thread.currentThread().isInterrupted) { "Distribution cancelled" }
+        authorityCheckpoint()
+        check(!Thread.currentThread().isInterrupted) { "Distribution cancelled" }
+        return action()
+    }
 
     /** Host restart recovery uses the same persisted lease token, never a replacement. */
     fun resume(id: UUID, snapshots: OwnedSnapshotAcquisitionService): OwnedSnapshotLease {

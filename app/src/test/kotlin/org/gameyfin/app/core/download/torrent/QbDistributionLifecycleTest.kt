@@ -232,4 +232,86 @@ class QbDistributionLifecycleTest {
         verify(exactly = 0) { snapshots.releaseUnboundLeaseAfterExit(any(), any(), any()) }
         verify(exactly = 0) { api.verifyClient() }
     }
+
+    @Test fun `revocation after delayed proof retains committed creator uncertainty without POST`() {
+        val api = mockk<QbDistributionApi>(); val journal = mockk<QbDistributionJournal>(); val lease = mockk<OwnedSnapshotLease>()
+        var authorized = true
+        var row = record(QbDistributionState.RESERVED)
+        every { lease.snapshotId } returns snapshot; every { lease.leaseId } returns token; every { lease.manifest } returns manifest
+        every { lease.retainForClient(policy.clientId, id) } just Runs; every { lease.verifyForClient(policy.cacheIdentity) } just Runs
+        every { journal.get(id) } answers { row }
+        every { journal.transition(id, setOf(QbDistributionState.RESERVED), QbDistributionState.CREATING, any(), any(), any()) } answers {
+            row = row.copy(state = QbDistributionState.CREATING); row
+        }
+        every { api.verifyClient() } answers { authorized = false }
+        val lifecycle = QbDistributionLifecycle(policy, api, journal) { check(authorized) { "Synthetic caller revoked" } }
+        assertFailsWith<IllegalStateException> { lifecycle.create(id, lease) }
+        assertEquals(QbDistributionState.CREATING, row.state)
+        verify(exactly = 0) { api.create(any(), any()) }
+        verify(exactly = 0) { lease.close() }
+        verify(exactly = 0) { lease.releaseAfterClientRemoval(any(), any()) }
+    }
+
+    @Test fun `revocation while creator ownership proof waits prevents deletion and lease release`() {
+        val api = mockk<QbDistributionApi>(); val journal = mockk<QbDistributionJournal>(); val lease = mockk<OwnedSnapshotLease>()
+        var authorized = true
+        val row = record(QbDistributionState.REMOVING)
+        val task = JsonMapper.builder().build().readTree("""{"taskID":"task","status":"Finished"}""")
+        every { lease.snapshotId } returns snapshot; every { lease.leaseId } returns token; every { lease.manifest } returns manifest
+        every { lease.retainForClient(policy.clientId, id) } just Runs
+        every { journal.get(id) } returns row
+        every { api.verifyClient() } just Runs; every { api.find(requireNotNull(row.infoHash)) } returns null
+        every { api.tasks() } returns listOf(task)
+        every { api.ownedTask("task", snapshot, id) } answers { authorized = false; task }
+        val lifecycle = QbDistributionLifecycle(policy, api, journal) { check(authorized) { "Synthetic caller revoked" } }
+        assertFailsWith<IllegalStateException> { lifecycle.reconcileRemoval(id, lease) }
+        verify(exactly = 0) { api.deleteTask(any()) }
+        verify(exactly = 0) { lease.releaseAfterClientRemoval(any(), any()) }
+        verify(exactly = 0) { journal.transition(any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test fun `one acknowledged add stays ADDING while owned client checks and confirms only actual stopped state`() {
+        val api = mockk<QbDistributionApi>(); val journal = mockk<QbDistributionJournal>(); val lease = mockk<OwnedSnapshotLease>()
+        val payload = byteArrayOf(7)
+        val actualManifest = manifest.copy(members = listOf(org.gameyfin.snapshot.SnapshotMember("base.bin", 1,
+            QbDistributionPolicy.digest(payload), "copied", "original")))
+        val info = mapOf("files" to listOf(mapOf("length" to 1L, "path" to listOf("base.bin"))), "name" to "data",
+            "piece length" to 16384L, "pieces" to java.security.MessageDigest.getInstance("SHA-1").digest(payload), "private" to 1L)
+        val metadata = bencode(mapOf("announce" to policy.approvedTrackers.single(), "info" to info))
+        val hash = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-1").digest(bencode(info)))
+        var row = record(QbDistributionState.VALIDATED).copy(infoHash = hash, metadata = metadata, manifestDigest = SnapshotProtocol.digest(actualManifest.bytes()))
+        var added = false; var state = "checkingResumeData"; var category = policy.category
+        val mapper = JsonMapper.builder().build()
+        every { lease.snapshotId } returns snapshot; every { lease.leaseId } returns token; every { lease.manifest } returns actualManifest
+        every { lease.retainForClient(policy.clientId, id) } just Runs; every { lease.verifyForClient(policy.cacheIdentity) } just Runs
+        every { lease.openMember("base.bin") } answers { payload.inputStream() }
+        every { journal.get(id) } answers { row }
+        every { journal.transition(id, any(), any(), any(), any(), any()) } answers { row = row.copy(state = thirdArg()); row }
+        every { api.verifyClient() } just Runs
+        every { api.find(hash) } answers { if (!added) null else mapper.readTree("""{"category":"$category","tags":"${policy.tag(id)}","save_path":"${policy.savePath(snapshot)}","auto_tmm":false,"downloaded":0,"state":"$state"}""") }
+        every { api.addStopped(snapshot, id, any()) } answers { added = true }
+        every { api.properties(hash) } returns mapper.readTree("""{"comment":"${policy.comment(id)}","is_private":true}""")
+        every { api.export(hash) } returns metadata
+        every { api.files(hash) } returns listOf(mapper.readTree("""{"name":"data/base.bin","size":1,"priority":1,"progress":1}"""))
+        every { api.webSeeds(hash) } returns emptyList()
+        every { api.trackers(hash) } returns listOf(mapper.readTree("""{"url":"${policy.approvedTrackers.single()}"}"""))
+        val lifecycle = QbDistributionLifecycle(policy, api, journal)
+        assertEquals(QbDistributionState.ADDING, lifecycle.addStopped(id, lease).state)
+        category = "foreign"
+        assertFailsWith<IllegalArgumentException> { lifecycle.reconcileAdded(id, lease) }
+        category = policy.category
+        for (checking in listOf("checkingResumeData", "checkingDL", "checkingUP")) {
+            state = checking
+            assertFailsWith<QbDistributionPendingConfirmation> { lifecycle.reconcileAdded(id, lease) }
+            assertEquals(QbDistributionState.ADDING, row.state)
+        }
+        state = "downloading"
+        assertFailsWith<IllegalStateException> { lifecycle.reconcileAdded(id, lease) }
+        assertEquals(QbDistributionState.ADDING, row.state)
+        state = "stoppedUP"
+        assertEquals(QbDistributionState.STOPPED, lifecycle.reconcileAdded(id, lease).state)
+        verify(exactly = 1) { api.addStopped(snapshot, id, any()) }
+        verify(exactly = 0) { api.start(any()) }
+        verify(exactly = 0) { api.recheck(any()) }
+    }
 }

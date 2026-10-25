@@ -28,7 +28,8 @@ import java.util.concurrent.TimeUnit
 /** Official release-5.2.3 torrentcreatorcontroller/torrentscontroller protocol only.
  * No redirects, DNS targets, proxies, URL acquisition, arbitrary API actions, retries,
  * preference mutations or default client-policy changes. Not a registered provider. */
-internal class QbDistributionApi(private val policy: QbDistributionPolicy, private val credentials: QbDistributionCredentials) : AutoCloseable {
+internal class QbDistributionApi(private val policy: QbDistributionPolicy, private val credentials: QbDistributionCredentials,
+    private val authorityCheckpoint: () -> Unit = {}) : AutoCloseable {
     private val cookies = CookieManager(null, CookiePolicy.ACCEPT_ORIGINAL_SERVER)
     private val mapper = JsonMapper.builder(JsonFactory.builder().streamReadConstraints(StreamReadConstraints.builder()
         .maxNestingDepth(16).maxStringLength(8192).maxNumberLength(32).build()).enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
@@ -54,6 +55,11 @@ internal class QbDistributionApi(private val policy: QbDistributionPolicy, priva
             require(body.size <= 2 * 1024 * 1024)
             builder.header("Content-Type", contentType ?: "application/x-www-form-urlencoded").POST(HttpRequest.BodyPublishers.ofByteArray(body))
         }
+        check(!Thread.currentThread().isInterrupted) { "Distribution cancelled" }
+        // Captured caller authority only; never discover authentication on this worker.
+        // This includes login: no POST may follow delayed proof after revocation.
+        if (body != null) authorityCheckpoint()
+        check(!Thread.currentThread().isInterrupted) { "Distribution cancelled" }
         val future = client.sendAsync(builder.build(), HttpResponse.BodyHandler { BoundedBody(limit) })
         return try { val response = future.get(11, TimeUnit.SECONDS); response.statusCode() to response.body() }
         catch (interrupted: InterruptedException) { future.cancel(true); Thread.currentThread().interrupt(); throw interrupted }

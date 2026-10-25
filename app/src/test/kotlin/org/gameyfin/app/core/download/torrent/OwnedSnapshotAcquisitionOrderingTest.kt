@@ -20,16 +20,18 @@ class OwnedSnapshotAcquisitionOrderingTest {
         listOf(SnapshotSelection("base.bin", "base")), 1024, 8, 0)
     @Test fun `committed reservation then durable caller linkage precede begin and native preparation`() {
         val events = mutableListOf<String>(); val request = request()
-        every { registry.reserve(any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+        every { registry.reserve(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+            assertEquals("e".repeat(64), arg<String?>(9))
             events += "reserved"; mockk()
         }
         every { registry.begin(request.snapshotId) } answers { events += "begin"; mockk() }
-        service.reserveAndBegin(request, 1, 2, owner, worker, { id -> assertEquals(request.snapshotId, id); events += "linked" })
+        service.reserveAndBegin(request, 1, 2, owner, worker, { id -> assertEquals(request.snapshotId, id); events += "linked" },
+            hostRequestDigest = "e".repeat(64))
         assertEquals(listOf("reserved", "linked", "begin"), events)
     }
     @Test fun `failed linkage cannot begin or prepare and known identity cannot be declared absent`() {
         val request = request()
-        every { registry.reserve(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns mockk()
+        every { registry.reserve(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns mockk()
         assertFails { service.reserveAndBegin(request, 1, 2, owner, worker, { error("synthetic linkage outage") }) }
         verify(exactly = 0) { registry.begin(any()) }
         val failure = OwnedSnapshotAcquisitionFailure(request.snapshotId, IllegalStateException("ambiguous commit"))
@@ -50,9 +52,9 @@ class OwnedSnapshotAcquisitionOrderingTest {
         // Even a same-typed exception originating in caller linkage is NOT proof
         // that this service's own already-committed reservation was refused.
         val request = request(); var admissionProof = false
-        every { registry.reserve(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns mockk()
+        every { registry.reserve(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns mockk()
         assertFails { service.reserveAndBegin(request, 1, 2, owner, worker,
-            { throw SnapshotAdmissionRefused("different nested operation") }, { admissionProof = true }) }
+            { throw SnapshotAdmissionRefused("different nested operation") }, onAdmissionRefused = { admissionProof = true }) }
         assertFalse(admissionProof)
     }
 }

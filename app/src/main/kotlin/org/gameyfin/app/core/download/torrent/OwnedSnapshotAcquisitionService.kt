@@ -48,7 +48,8 @@ internal class OwnedSnapshotAcquisitionService(private val downloads: DownloadSe
     private val acquisition = Semaphore(1)
     private val workerSlots = Semaphore(2)
 
-    fun acquire(game: Game, variantId: Long?, contentIds: List<Long>?, onReserved: (UUID) -> Unit = {}): OwnedSnapshotLease {
+    fun acquire(game: Game, variantId: Long?, contentIds: List<Long>?, onReserved: (UUID) -> Unit = {},
+        plannedSnapshotId: UUID? = null, hostRequestDigest: String? = null): OwnedSnapshotLease {
         if (!acquisition.tryAcquire()) throw OwnedSnapshotAcquisitionFailure(null,
             IllegalStateException("Snapshot acquisition already active")).apply { confirmNoRetainedState() }
         var worker: SnapshotWorkerConnection? = null
@@ -71,7 +72,10 @@ internal class OwnedSnapshotAcquisitionService(private val downloads: DownloadSe
             require(workerSlots.tryAcquire()) { "Owned snapshot workers at capacity" }; slotHeld = true
             workerStartAttempted = true; worker = workers.start()
             val cacheIdentity = hello(worker, "")
-            val id = UUID.randomUUID()
+            // The durable caller may predeclare its exact operation identity before
+            // entering acquisition. An existing ID is still refused, NEVER resumed
+            // or recopied here; reconciliation uses the separately verified APIs.
+            val id = plannedSnapshotId ?: UUID.randomUUID()
             val request = SnapshotCapture(id, UUID.randomUUID(), root.toString(), settings.cacheRoot.toString(), cacheIdentity,
                 contents.flatMapIndexed { contentIndex, content -> content.effectivePaths().map { selected ->
                     val path = Path.of(selected).toAbsolutePath().normalize()
@@ -81,7 +85,7 @@ internal class OwnedSnapshotAcquisitionService(private val downloads: DownloadSe
             // Assign BEFORE reserve: an ambiguous database COMMIT cannot be treated
             // as proof of absence or lose the intended identity for operator recovery.
             operation = id
-            reserveAndBegin(request, gameId, canonicalVariantId, owner, worker.identity(), onReserved) { admissionRefused = true }
+            reserveAndBegin(request, gameId, canonicalVariantId, owner, worker.identity(), onReserved, hostRequestDigest) { admissionRefused = true }
             // PREPARE contains no source reads. Persist exact opened directory identities
             // before allowing COPY, so partial copied trees can be safely reconciled.
             val preparation = worker.exchange(request.bytes(SnapshotProtocol.PREPARE))
@@ -119,10 +123,10 @@ internal class OwnedSnapshotAcquisitionService(private val downloads: DownloadSe
      */
     internal fun reserveAndBegin(request: SnapshotCapture, gameId: Long, variantId: Long,
         owner: SnapshotProcessIdentity, worker: SnapshotProcessIdentity, onReserved: (UUID) -> Unit,
-        onAdmissionRefused: () -> Unit = {}) {
+        hostRequestDigest: String? = null, onAdmissionRefused: () -> Unit = {}) {
         try {
             registry.reserve(request.snapshotId, request.operation, gameId, variantId, request.bytes(), owner, worker,
-                settings.maxUnretiredSnapshots, settings.maxUnretiredBytes)
+                settings.maxUnretiredSnapshots, settings.maxUnretiredBytes, hostRequestDigest)
         } catch (refused: SnapshotAdmissionRefused) { onAdmissionRefused(); throw refused }
         onReserved(request.snapshotId)
         registry.begin(request.snapshotId)

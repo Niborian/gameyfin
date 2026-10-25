@@ -7,6 +7,7 @@ import kotlin.test.assertTrue
 import kotlin.test.assertNull
 import kotlin.test.assertFailsWith
 import java.util.UUID
+import io.mockk.*
 
 /** These pure decisions are the actual facade routing/admission/failure functions, not parallel mocks. */
 class OwnedTorrentRecoveryTest {
@@ -49,5 +50,56 @@ class OwnedTorrentRecoveryTest {
         assertFailsWith<IllegalStateException> {
             ownedTorrentLinkedIntent(request, snapshot, null, client, found.mappingDigest) { error("Synthetic unknown commit lookup") }
         }
+    }
+    @Test fun `planned snapshot repairs a lost callback link only with immutable request digest`() {
+        val request = request()
+        val snapshot = mockk<SnapshotRecordView>()
+        every { snapshot.id } returns request.id
+        every { snapshot.hostRequestDigest } returns request.hostRequestDigest
+        assertEquals(request.id, ownedTorrentSnapshotBinding(request, snapshot))
+        assertNull(ownedTorrentSnapshotBinding(request, null))
+        every { snapshot.hostRequestDigest } returns "e".repeat(64)
+        assertFailsWith<IllegalArgumentException> { ownedTorrentSnapshotBinding(request, snapshot) }
+        request.snapshotId = request.id
+        assertFailsWith<IllegalArgumentException> { ownedTorrentSnapshotBinding(request, null) }
+        request.snapshotId = null; request.profile = "changed-profile"
+        assertFailsWith<IllegalArgumentException> { ownedTorrentSnapshotBinding(request, null) }
+    }
+    @Test fun `queued restart cancellation requires creator exit and both successful absent lookups`() {
+        val request = request()
+        val probe = probe("a".repeat(64), SnapshotProcessObservation.Absent)
+        assertEquals(OwnedTorrentCreatorExit.LOCAL_EXIT, ownedTorrentResourceFreeCancellation(request, probe, null, { null }, { null }))
+        assertEquals("QUEUED", request.state) // The facade's row-locked commit, not the proof helper, performs rejection.
+        assertFailsWith<IllegalStateException> {
+            ownedTorrentResourceFreeCancellation(request, probe, null, { error("Synthetic failed lookup") }, { null })
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ownedTorrentResourceFreeCancellation(request, probe, null, { mockk<SnapshotRecordView>() }, { null })
+        }
+        assertEquals("QUEUED", request.state)
+        assertFailsWith<IllegalStateException> {
+            ownedTorrentResourceFreeCancellation(request, probe, null, { null }, { error("Synthetic intent lookup failure") })
+        }
+    }
+    @Test fun `foreign receipt never overrides known local live or unknown creator and is tuple bound`() {
+        val identity = SnapshotProcessIdentity("a".repeat(64), 42, 100)
+        val receipt = OwnedTorrentRequestExitAttestation(identity.scope, identity.pid, identity.startedMillis,
+            "b".repeat(64), true, true, "c".repeat(64))
+        assertNull(ownedTorrentCreatorExit(identity, probe(identity.scope, SnapshotProcessObservation.Present(100)), receipt))
+        assertNull(ownedTorrentCreatorExit(identity, probe(identity.scope, SnapshotProcessObservation.Unknown), receipt))
+        assertNull(ownedTorrentCreatorExit(identity, probe(null, SnapshotProcessObservation.Absent), receipt))
+        assertEquals(OwnedTorrentCreatorExit.LOCAL_EXIT,
+            ownedTorrentCreatorExit(identity, probe(identity.scope, SnapshotProcessObservation.Present(101)), null))
+        assertEquals(OwnedTorrentCreatorExit.FOREIGN_ATTESTED,
+            ownedTorrentCreatorExit(identity, probe("d".repeat(64), SnapshotProcessObservation.Unknown), receipt))
+        assertFailsWith<IllegalArgumentException> {
+            ownedTorrentCreatorExit(identity, probe("d".repeat(64), SnapshotProcessObservation.Absent), receipt.copy(expectedPid = 43))
+        }
+    }
+    private fun request() = OwnedTorrentRequestRow(id = UUID(0, 1), selection = "canonical-selection", profile = "immutable-profile",
+        creatorScope = "a".repeat(64), creatorPid = 42, creatorStartedMillis = 100).also { it.hostRequestDigest = ownedTorrentHostRequestDigest(it) }
+    private fun probe(currentScope: String?, observation: SnapshotProcessObservation) = object : SnapshotProcessProbe {
+        override fun scope() = currentScope
+        override fun observe(pid: Long) = observation
     }
 }

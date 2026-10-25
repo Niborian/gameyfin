@@ -28,6 +28,11 @@ class OwnedTorrentEndpoint internal constructor(private val facade: OwnedTorrent
     @RolesAllowed(Role.Names.ADMIN)
     fun retained(): List<OwnedTorrentStatus> = facade.retained()
     @RolesAllowed(Role.Names.ADMIN)
+    fun creatorIdentity(id: String): OwnedTorrentCreatorIdentity = facade.creatorIdentity(UUID.fromString(id))
+    @RolesAllowed(Role.Names.ADMIN)
+    fun cancelResourceFree(id: String, attestation: OwnedTorrentRequestExitAttestation? = null): OwnedTorrentStatus =
+        facade.cancelResourceFree(UUID.fromString(id), attestation)
+    @RolesAllowed(Role.Names.ADMIN)
     fun recover(id: String, action: OwnedTorrentRecoveryAction): OwnedTorrentStatus = facade.recover(UUID.fromString(id), action)
     fun available(): Boolean = facade.available()
 }

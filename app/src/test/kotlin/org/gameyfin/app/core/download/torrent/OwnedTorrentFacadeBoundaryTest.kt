@@ -59,6 +59,10 @@ class OwnedTorrentFacadeBoundaryTest {
             val result = facade.retained().single()
             assertEquals(id.toString(), result.id); assertEquals("READY", result.state); assertNull(result.downloadUrl)
             verify(exactly = 2) { requests.retained(match { it.pageSize == 64 && it.pageNumber == 0 }) }
+            revoked = false
+            every { settings.runtime(any()) } answers { revoked = true; mockk<OwnedTorrentRuntime>() }
+            assertThrows<AccessDeniedException> { facade.current(actor, 1) }
+            verify(exactly = 1) { settings.runtime(1) }
         } finally { facade.shutdown() }
     }
 }

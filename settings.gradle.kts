@@ -20,6 +20,7 @@ pluginManagement {
 
 
 include(":plugin-api")
+include(":snapshot-worker")
 include(":app")
 
 include(":plugins")

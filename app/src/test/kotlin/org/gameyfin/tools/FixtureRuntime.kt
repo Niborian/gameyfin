@@ -76,8 +76,27 @@ internal object FixtureRuntime {
         }
     }
     fun temporary(prefix: String): Path {
+        return registerTemporary(prefix, null)
+    }
+    /** Descriptor-worker cache ancestry cannot traverse /tmp. This overload is only for
+     * a newly created owned fixture beneath the existing trusted hosted runner HOME. */
+    fun temporary(prefix: String, parent: Path): Path {
+        hosted()
+        val home = Path.of(requireNotNull(System.getenv("HOME"))).toAbsolutePath().normalize()
+        require(parent.isAbsolute && parent == parent.normalize() && parent.startsWith(home) && parent.toRealPath() == parent)
+        val uid = Files.getAttribute(home, "unix:uid")
+        var ancestor: Path? = parent
+        while (ancestor != null) {
+            val attributes = Files.readAttributes(ancestor, "unix:uid,mode", java.nio.file.LinkOption.NOFOLLOW_LINKS)
+            require(attributes["uid"] == uid || attributes["uid"] == 0)
+            require((attributes["mode"] as Int) and 0x12 == 0 && Files.isDirectory(ancestor, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+            ancestor = ancestor.parent
+        }
+        return registerTemporary(prefix, parent)
+    }
+    private fun registerTemporary(prefix: String, parent: Path?): Path {
         require(prefix.matches(Regex("gameyfin-[a-z-]+-")))
-        val root = Files.createTempDirectory(prefix).toAbsolutePath().normalize()
+        val root = (if (parent == null) Files.createTempDirectory(prefix) else Files.createTempDirectory(parent, prefix)).toAbsolutePath().normalize()
         ownedRoots[root] = requireNotNull(Files.readAttributes(root, java.nio.file.attribute.BasicFileAttributes::class.java, java.nio.file.LinkOption.NOFOLLOW_LINKS).fileKey())
         return root
     }

@@ -10,6 +10,7 @@ import {downloadSessionState} from "Frontend/state/DownloadSessionState";
 import SessionStatsDto from "Frontend/generated/org/gameyfin/app/core/download/bandwidth/SessionStatsDto";
 import {DownloadSessionCard} from "Frontend/components/general/cards/DownloadSessionCard";
 import {humanFileSize} from "Frontend/util/utils";
+import {OwnedTorrentSettings} from "Frontend/components/administration/OwnedTorrentSettings";
 
 function DownloadManagementLayout({getConfig, formik}: any) {
     const sessions = useSnapshot(downloadSessionState).all;
@@ -42,6 +43,7 @@ function DownloadManagementLayout({getConfig, formik}: any) {
                 }}
             />
             <Section title="Bandwidth limiting"/>
+            <OwnedTorrentSettings/>
             <div className="flex flex-col gap-4">
                 <div className="flex flex-row items-baseline gap-4">
                     <ConfigFormField configElement={getConfig("downloads.bandwidth-limit.enabled")}/>

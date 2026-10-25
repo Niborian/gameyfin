@@ -32,6 +32,7 @@ import ContentPathPickerModal from "Frontend/components/general/modals/ContentPa
 import VariantRetirementControls from "Frontend/components/administration/VariantRetirementControls";
 import VariantDetailsEditor from "Frontend/components/administration/VariantDetailsEditor";
 import {gameState} from "Frontend/state/GameState";
+import {suggestContentType} from "Frontend/util/contentClassification";
 import {CheckIcon, FolderOpenIcon, PlusIcon, TrashIcon, XIcon} from "@phosphor-icons/react";
 
 interface VariantManagerModalProps {
@@ -41,6 +42,7 @@ interface VariantManagerModalProps {
     isOpen: boolean;
     onOpenChange: () => void;
     onChanged?: () => void;
+    initialVariantId?: number;
 }
 
 type DraftEntry = {
@@ -52,6 +54,7 @@ type DraftEntry = {
     required: boolean;
     defaultSelected: boolean;
     tags: string;
+    note?: string;
 };
 
 const contentTypes = [
@@ -74,13 +77,14 @@ export default function VariantManagerModal({
                                                 suggestions,
                                                 isOpen,
                                                 onOpenChange,
-                                                onChanged
+                                                onChanged,
+                                                initialVariantId
                                             }: VariantManagerModalProps) {
     const pathPicker = useDisclosure();
     const variants = (game?.variants ?? []) as GameVariantDto[];
     const defaultVariant = preferredVariant(variants);
 
-    const [selectedVariantId, setSelectedVariantId] = useState<number>();
+    const [selectedVariantId, setSelectedVariantId] = useState<number | undefined>(initialVariantId);
     const [sourceGameId, setSourceGameId] = useState<number>();
     const [sourceRootPath, setSourceRootPath] = useState("");
     const [variantName, setVariantName] = useState("Normal");
@@ -102,7 +106,15 @@ export default function VariantManagerModal({
     const [removingSourceId, setRemovingSourceId] = useState<number>();
     const [settingDefaultVariantId, setSettingDefaultVariantId] = useState<number>();
     const [detailsDirty, setDetailsDirty] = useState(false);
+    const [replaceContentId, setReplaceContentId] = useState<number>();
+    const previewGeneration = useRef(0);
+    const canonicalContentDrafts = useRef<Record<number, DraftEntry>>({});
     const initializedGameId = useRef<number | undefined>(undefined);
+
+    useEffect(() => {
+        setIsLoadingChildren(false);
+        return () => { previewGeneration.current++; };
+    }, [game?.id, isOpen]);
 
     const selectedVariant = variants.find((variant) => variant.id === selectedVariantId) ?? defaultVariant;
     const relevantSuggestions = useMemo(() => {
@@ -115,22 +127,25 @@ export default function VariantManagerModal({
     useEffect(() => {
         const gameChanged = initializedGameId.current !== game?.id;
         initializedGameId.current = game?.id;
+        const previousCanonical = canonicalContentDrafts.current;
+        const nextCanonical = Object.fromEntries(variants.flatMap(variant =>
+            (variant.contents ?? []).map(content => [content.id, createDraftFromContent(content)])));
+        canonicalContentDrafts.current = nextCanonical;
         const nextSelection = preserveSelectedVariantId(variants.map(variant => variant.id), selectedVariantId, defaultVariant?.id);
         if (!gameChanged && selectedVariantId !== undefined && nextSelection === selectedVariantId) {
-            // Keep the mounted details editor and all its unsaved metadata. Initialize
-            // new content cards without replacing existing content drafts on refresh.
-            setContentDrafts(current => Object.fromEntries(variants.flatMap(variant =>
-                (variant.contents ?? []).map((content: VariantContentDto) =>
-                    [content.id, current[content.id] ?? createDraftFromContent(content)])
-            )));
+            // Refresh clean cards on every mutation; retain only genuinely unsaved drafts.
+            setContentDrafts(current => Object.fromEntries(Object.entries(nextCanonical).map(([id, saved]) => {
+                const key = Number(id);
+                const dirty = current[key] && previousCanonical[key] && JSON.stringify(current[key]) !== JSON.stringify(previousCanonical[key]);
+                return [key, dirty ? current[key] : saved];
+            })));
             return;
         }
-        setSelectedVariantId(defaultVariant?.id);
-        setVariantName(defaultVariant?.name ?? "Normal");
-        setVersion(defaultVariant?.version ?? "0");
-        setContentDrafts(Object.fromEntries(variants.flatMap((variant) =>
-            (variant.contents ?? []).map((content: VariantContentDto) => [content.id, createDraftFromContent(content)])
-        )));
+        const initialVariant = variants.find(variant => variant.id === initialVariantId) ?? defaultVariant;
+        setSelectedVariantId(initialVariant?.id);
+        setVariantName(initialVariant?.name ?? "Normal");
+        setVersion(initialVariant?.version ?? "0");
+        setContentDrafts(nextCanonical);
         clearDraft();
     }, [game?.id, defaultVariant?.id, game?.variants]);
 
@@ -143,6 +158,9 @@ export default function VariantManagerModal({
     }
 
     function clearDraft() {
+        previewGeneration.current++;
+        setIsLoadingChildren(false);
+        setReplaceContentId(undefined);
         setSourceGameId(undefined);
         setSourceRootPath("");
         setSplitChildren(false);
@@ -156,6 +174,16 @@ export default function VariantManagerModal({
         setEntries([]);
     }
 
+    function selectTarget(variant: GameVariantDto) {
+        if (variant.id !== selectedVariant?.id && !discardDetailsIfConfirmed()) return;
+        previewGeneration.current++;
+        setIsLoadingChildren(false);
+        setReplaceContentId(undefined);
+        setSelectedVariantId(variant.id);
+        setVariantName(variant.name);
+        setVersion(variant.version);
+    }
+
     function gameLabel(gameId: number, fallbackTitle?: string | null, fallbackPath?: string | null) {
         const match = libraryGames.find((candidate) => candidate.id === gameId);
         return {
@@ -166,6 +194,7 @@ export default function VariantManagerModal({
 
     function useSuggestion(suggestion: GameGroupingSuggestionDto) {
         if (!game) return;
+        clearDraft();
 
         const source = suggestion.targetGameId === game.id
             ? gameLabel(suggestion.sourceGameId, suggestion.sourceTitle, suggestion.sourcePath)
@@ -210,6 +239,10 @@ export default function VariantManagerModal({
         setEntries((current) => current.map((entry, entryIndex) => {
             if (entryIndex !== index) return entry;
             const next = {...entry, ...changed};
+            if (changed.path !== undefined && entry.paths === entry.path) next.paths = changed.path;
+            if (changed.contentType && changed.contentType !== VariantContentType.BASE && entry.contentType === VariantContentType.BASE) {
+                next.required = false;
+            }
             if (changed.contentType === VariantContentType.BASE) {
                 next.required = true;
                 next.defaultSelected = true;
@@ -222,10 +255,45 @@ export default function VariantManagerModal({
     }
 
     function onPathSelected(path: string) {
+        previewGeneration.current++;
+        setIsLoadingChildren(false);
+        setReplaceContentId(undefined);
         setSourceGameId(undefined);
         setSourceRootPath(path);
         setSplitChildren(false);
         setEntries([createEntry(path, path.split(/[\\/]/).filter(Boolean).pop() ?? "DLC", newEntriesType)]);
+    }
+
+    async function previewSplit(variant: GameVariantDto, content: VariantContentDto) {
+        if (!content.path || !discardDetailsIfConfirmed()) return;
+        clearDraft();
+        const generation = ++previewGeneration.current;
+        setIsLoadingChildren(true);
+        try {
+            const children = await FilesystemEndpoint.listContents(content.path) as FileDto[];
+            if (generation !== previewGeneration.current) return;
+            if (!children.length) throw new Error("No children found. Choose a directory, not an archive file.");
+            setSelectedVariantId(variant.id);
+            setSourceRootPath(content.path);
+            setSplitChildren(true);
+            setReplaceContentId(content.id);
+            setEntries(children.map(child => {
+                const path = child.path ?? joinPath(content.path!, child.name);
+                const normalized = (value: string) => value.replaceAll('\\', '/').replace(/\/+$/, '');
+                const covered = (variant.contents ?? []).filter(item => item.id !== content.id).some(item =>
+                    (item.paths?.length ? item.paths : [item.path]).filter(Boolean).some(existing => {
+                        const a = normalized(path), b = normalized(existing!);
+                        return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+                    }));
+                const type = suggestContentType(child.name) as VariantContentType;
+                return {...createEntry(path, child.name, type), defaultSelected: type === VariantContentType.BASE || type === VariantContentType.PATCH,
+                    selected: !covered, note: covered ? "Already represented by existing content; leave unselected to retain it." : undefined};
+            }));
+        } catch (error) {
+            if (generation === previewGeneration.current) addToast({title: "Could not preview directory", description: String(error), color: "danger"});
+        } finally {
+            if (generation === previewGeneration.current) setIsLoadingChildren(false);
+        }
     }
 
     async function toggleSplitChildren(selected: boolean) {
@@ -309,6 +377,7 @@ export default function VariantManagerModal({
         if (!game) return;
         const selectedEntries = entries.filter((entry) => entry.selected);
         if (!sourceRootPath || selectedEntries.length === 0) return;
+        if (replaceContentId !== undefined && !window.confirm("Replace the original broad BASE selection with these reviewed items? Only catalogue metadata changes; no files will be moved or deleted.")) return;
 
         const requestEntries = groupSelectedPaths && splitChildren && selectedEntries.length > 1
             ? [{
@@ -339,10 +408,11 @@ export default function VariantManagerModal({
         setIsSaving(true);
         try {
             const updated = await GameEndpoint.attachVariantContent(game.id, {
-                sourceGameId,
+                sourceGameId: replaceContentId === undefined ? sourceGameId : undefined,
                 sourceRootPath,
-                targetVariantId: shouldShareWithAllVariants || isSingleBaseVariant ? undefined : selectedVariant?.id,
-                targetVariantIds: shouldShareWithAllVariants ? variants.map((variant) => variant.id) : undefined,
+                targetVariantId: replaceContentId !== undefined ? selectedVariant?.id : shouldShareWithAllVariants || isSingleBaseVariant ? undefined : selectedVariant?.id,
+                targetVariantIds: replaceContentId === undefined && shouldShareWithAllVariants ? variants.map((variant) => variant.id) : undefined,
+                replaceContentId,
                 variantName: isSingleBaseVariant ? variantName : selectedVariant?.name ?? variantName,
                 version: isSingleBaseVariant ? version : selectedVariant?.version ?? version,
                 entries: requestEntries
@@ -425,6 +495,8 @@ export default function VariantManagerModal({
             });
             // @ts-ignore Hilla returns the admin shape for admins.
             gameState.state[updated.id] = updated;
+            const shared = updated.variants?.flatMap(value => value.contents ?? []).find(value => value.id === content.id);
+            if (shared) setContentDrafts(current => ({...current, [content.id]: createDraftFromContent(shared)}));
             onChanged?.();
             addToast({
                 title: "Content shared",
@@ -463,6 +535,9 @@ export default function VariantManagerModal({
             });
             // @ts-ignore Hilla returns the admin shape for admins.
             gameState.state[updated.id] = updated;
+            // Accept server normalization for the saved card, without discarding other drafts.
+            const saved = updated.variants?.flatMap(value => value.contents ?? []).find(value => value.id === content.id);
+            if (saved) setContentDrafts(current => ({...current, [content.id]: createDraftFromContent(saved)}));
             onChanged?.();
             addToast({title: "Content updated", color: "success"});
         } catch (error) {
@@ -538,7 +613,7 @@ export default function VariantManagerModal({
                     {(onClose) => (
                         <>
                             <ModalHeader className="flex flex-col gap-1">
-                                <span>Manage variants</span>
+                                <span>Versions &amp; content</span>
                                 {game && <span className="text-sm font-normal text-default-500">{game.title} · {game.metadata.path}</span>}
                             </ModalHeader>
                             <ModalBody>
@@ -550,6 +625,9 @@ export default function VariantManagerModal({
                                             <section className="flex flex-col gap-2">
                                                 <div className="flex flex-row items-center justify-between">
                                                     <p className="font-semibold">Versions and included / selectable extras</p>
+                                                    <Button size="sm" variant="light" onPress={() => onPathSelected(selectedVariant?.path ?? game.metadata.path ?? "")}>
+                                                        Use current path
+                                                    </Button>
                                                     <Button size="sm" variant="flat" startContent={<PlusIcon/>} onPress={pathPicker.onOpen}>
                                                         Add path
                                                     </Button>
@@ -571,10 +649,7 @@ export default function VariantManagerModal({
                                                                 }
                                                                 {variant.latestForVariant && <Chip size="sm" variant="flat">latest</Chip>}
                                                                 <Button size="sm" variant="light" onPress={() => {
-                                                                    if (variant.id !== selectedVariant?.id && !discardDetailsIfConfirmed()) return;
-                                                                    setSelectedVariantId(variant.id);
-                                                                    setVariantName(variant.name);
-                                                                    setVersion(variant.version);
+                                                                    selectTarget(variant);
                                                                 }}>
                                                                     Use as target
                                                                 </Button>
@@ -606,6 +681,11 @@ export default function VariantManagerModal({
                                                                                         <span className="text-sm text-default-500">{humanFileSize(content.fileSize)}</span>
                                                                                     </div>
                                                                                     <div className="flex flex-row gap-2">
+                                                                                        {content.type === VariantContentType.BASE && content.pathCount <= 1 && <Button
+                                                                                            size="sm" variant="flat" isDisabled={isLoadingChildren || isSaving}
+                                                                                            onPress={() => previewSplit(variant, content)}>
+                                                                                            Split into base / extras
+                                                                                        </Button>}
                                                                                         <Button
                                                                                             size="sm"
                                                                                             variant="flat"
@@ -756,6 +836,10 @@ export default function VariantManagerModal({
                                         <div className="flex flex-col gap-3">
                                             <p className="font-semibold">Add or classify included / selectable extras</p>
                                             <p className="text-xs text-default-500">Required base files stay included. DLC, patches, server files and other extras use the content cards below; labels do not establish store ownership.</p>
+                                            {replaceContentId !== undefined && <p role="status" className="text-sm text-warning">
+                                                Review every suggested type below. Saving replaces the original broad BASE item in one step;
+                                                it does not delete files. Keep at least one BASE item. Other existing extras are retained.
+                                            </p>}
                                             <Select
                                                 size="sm"
                                                 label="Attach to variant"
@@ -765,10 +849,7 @@ export default function VariantManagerModal({
                                                     const key = Array.from(keys)[0]?.toString();
                                                     const variant = variants.find((candidate) => candidate.id.toString() === key);
                                                     if (!variant) return;
-                                                    if (variant.id !== selectedVariant?.id && !discardDetailsIfConfirmed()) return;
-                                                    setSelectedVariantId(variant.id);
-                                                    setVariantName(variant.name);
-                                                    setVersion(variant.version);
+                                                    selectTarget(variant);
                                                 }}
                                             >
                                                 {variants.map((variant) => (
@@ -785,13 +866,7 @@ export default function VariantManagerModal({
                                                 size="sm"
                                                 label="Source root path"
                                                 value={sourceRootPath}
-                                                onValueChange={(value) => {
-                                                    setSourceGameId(undefined);
-                                                    setSourceRootPath(value);
-                                                    if (value && entries.length === 0) {
-                                                        setEntries([createEntry(value, value.split(/[\\/]/).filter(Boolean).pop() ?? "Content", newEntriesType)]);
-                                                    }
-                                                }}
+                                                onValueChange={onPathSelected}
                                                 endContent={
                                                     <Tooltip content="Pick path">
                                                         <Button isIconOnly size="sm" variant="light" onPress={pathPicker.onOpen}>
@@ -908,6 +983,7 @@ export default function VariantManagerModal({
                                                             <Checkbox isSelected={entry.selected} onValueChange={(selected) => updateEntry(index, {selected})}>
                                                                 Include this path
                                                             </Checkbox>
+                                                            {entry.note && <p className="text-xs text-default-500">{entry.note}</p>}
                                                             <Input size="sm" label="Path" value={entry.path}
                                                                    onValueChange={(path) => updateEntry(index, {path})}/>
                                                             {!groupSelectedPaths && (
@@ -966,10 +1042,11 @@ export default function VariantManagerModal({
                                 <Button
                                     color="primary"
                                     isLoading={isSaving}
-                                    isDisabled={!sourceRootPath || entries.filter((entry) => entry.selected).length === 0}
+                                    isDisabled={isLoadingChildren || !sourceRootPath || entries.filter((entry) => entry.selected).length === 0 ||
+                                        (replaceContentId !== undefined && !entries.some(entry => entry.selected && entry.contentType === VariantContentType.BASE))}
                                     onPress={attachContent}
                                 >
-                                    Save content
+                                    {replaceContentId === undefined ? "Save content" : "Replace base selection"}
                                 </Button>
                             </ModalFooter>
                         </>

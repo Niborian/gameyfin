@@ -6,7 +6,10 @@ one variant; they do not change which paths are downloaded or imply store owners
 
 ## Administrator workflow
 
-1. Open the variant manager and select the target variant.
+1. On the game page, choose **Versions & content** beside the version selector
+   (administrators only), then select the target variant. The library-management
+   entry point remains available too. Successful content saves refresh the open
+   editor immediately; closing and reopening is not required.
 2. Enter the store/product, edition and known library version/build. Manual entry
    works even when no compatible manifest exists. Saving updates catalogue metadata
    only, not source files or the existing download selection.
@@ -18,6 +21,25 @@ one variant; they do not change which paths are downloaded or imply store owners
 Required base files, optional DLC/patches/mods/extras/server files, grouped archives,
 shared content and pinned defaults retain their existing controls and meaning.
 No DLC is automatically attached, acquired, enabled or removed by detection.
+
+## Split a broad directory into base and optional content
+
+On a BASE content card, choose **Split into base / extras**. This reads that
+directory's direct children and prefills their paths. Review the filename-based
+type hints: game archives are suggested as BASE, patch/multiplayer names as PATCH,
+and unrecognized items as EXTRA. These hints are not content or ownership proof.
+Existing separately represented extras start unselected so they can be retained
+without overlapping download selections. Required BASE content stays included;
+patches are optional and initially selected, and all suggestions can be changed.
+
+Choose **Replace base selection** and confirm. A single transaction replaces only
+the original broad catalogue item with the reviewed selections. It retains the
+game/variant source root and existing extras; it never moves or deletes files.
+Replacement requires an existing BASE directory, at least one new BASE selection,
+and non-overlapping paths contained inside that directory. Missing/stale originals,
+outside paths and symlink escapes are refused. This is not a source snapshot or a
+guarantee against files being changed concurrently by external programs.
+For a different source, **Use current path** and **Add path** remain available.
 
 ## Evidence and limits
 

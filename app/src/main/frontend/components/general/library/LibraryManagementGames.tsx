@@ -47,7 +47,10 @@ export default function LibraryManagementGames({library}: LibraryManagementGames
     const [sortDescriptor, setSortDescriptor] = useState<SortDescriptor>({column: "title", direction: "ascending"});
     const [suggestions, setSuggestions] = useState<GameGroupingSuggestionDto[]>([]);
 
-    const [selectedGame, setSelectedGame] = useState<GameAdminDto>(games[0] as GameAdminDto);
+    const [selectedGameId, setSelectedGameId] = useState<number>();
+    // Keep identity, not a detached snapshot: saves replace the canonical game object.
+    const selectedGame = (selectedGameId === undefined ? games[0] : state.state[selectedGameId]) as GameAdminDto | undefined;
+    function setSelectedGame(game: GameAdminDto) { setSelectedGameId(game.id); }
     const editGameModal = useDisclosure();
     const matchGameModal = useDisclosure();
     const variantManagerModal = useDisclosure();
@@ -154,7 +157,7 @@ export default function LibraryManagementGames({library}: LibraryManagementGames
         variantManagerModal.onOpen();
     }
 
-    return selectedGame && <div className="flex flex-col gap-4">
+    return <div className="flex flex-col gap-4">
         <h1 className="text-2xl font-bold">Manage games in library</h1>
         <div className="flex flex-row gap-2 justify-between">
             <Input
@@ -280,7 +283,7 @@ export default function LibraryManagementGames({library}: LibraryManagementGames
                 )}
             </TableBody>
         </Table>
-        <EditGameMetadataModal game={selectedGame}
+        {selectedGame && <><EditGameMetadataModal game={selectedGame}
                                isOpen={editGameModal.isOpen}
                                onOpenChange={editGameModal.onOpenChange}/>
         <MatchGameModal path={selectedGame.metadata.path!}
@@ -297,5 +300,6 @@ export default function LibraryManagementGames({library}: LibraryManagementGames
             onOpenChange={variantManagerModal.onOpenChange}
             onChanged={refreshSuggestions}
         />
+        </>}
     </div>;
 }

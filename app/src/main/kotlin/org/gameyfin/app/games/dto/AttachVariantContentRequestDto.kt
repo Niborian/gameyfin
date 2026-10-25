@@ -7,5 +7,7 @@ data class AttachVariantContentRequestDto(
     val targetVariantIds: List<Long>? = null,
     val variantName: String?,
     val version: String?,
-    val entries: List<AttachVariantContentEntryDto>
+    val entries: List<AttachVariantContentEntryDto>,
+    /** Explicit catalogue-only replacement of one broad BASE item, never filesystem deletion. */
+    val replaceContentId: Long? = null
 )

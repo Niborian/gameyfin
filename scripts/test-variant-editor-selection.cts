@@ -8,8 +8,9 @@ type Variant = {id: number; name: string; version: string; default: boolean; def
 type Editor = {key: string; variant: Variant; onDirtyChange: (value: boolean) => void};
 type EffectSlot = {deps: unknown[]};
 function variant(id: number, pinned = false): Variant {return {id,name:'Normal',version:String(id),default:pinned,defaultLocked:pinned,contents:[]};}
-function fixture() {
+function fixture(initialVariantId?: number, listContents?: (path: string) => Promise<unknown[]>) {
     const slots: unknown[] = []; let cursor = 0, effects: (() => void)[] = [], editor: Editor | undefined;
+    let nodes: {type: string; props: any}[] = [];
     const react = {
         useState<T>(initial: T) {const i=cursor++; if (!(i in slots)) slots[i]=initial; return [slots[i], (value: T | ((old: T) => T)) => {slots[i]=typeof value==='function' ? (value as (old: T) => T)(slots[i] as T) : value;}];},
         useRef<T>(initial: T) {const i=cursor++; if (!(i in slots)) slots[i]={current:initial}; return slots[i];},
@@ -18,6 +19,7 @@ function fixture() {
             if (!previous || deps.some((value,index) => value!==previous.deps[index])) effects.push(() => {callback();slots[i]={deps};});}
     };
     function jsx(type: string, props: any, key?: string) {
+        nodes.push({type, props});
         if (type==='VariantDetailsEditor') editor={key:key!,variant:props.variant,onDirtyChange:props.onDirtyChange};
         if (type==='ModalContent') return props.children(() => {});
         return {type,props,key};
@@ -28,15 +30,45 @@ function fixture() {
     vm.runInNewContext(code,{module,exports:module.exports,window:{confirm:() => {throw Error('Harmless refresh must not discard or prompt');}},require(name: string) {
         if (name==='react') return {...react,default:react};
         if (name==='react/jsx-runtime') return {jsx,jsxs:jsx};
+        if (name==='Frontend/generated/endpoints') return {FilesystemEndpoint: {listContents}, GameEndpoint: {}};
+        if (name==='Frontend/util/utils') return {humanFileSize: (value: number) => String(value)};
         if (name==='@heroui/react') return new Proxy({useDisclosure:() => ({})} as Record<string,unknown>,{get:(value,key) => value[String(key)] ?? key});
         if (name.endsWith('/VariantContentType')) return {default:Object.fromEntries(['BASE','DLC','DEDICATED_SERVER','PATCH','MOD','EXTRA'].map(value => [value,value]))};
         if (name.endsWith('/VariantDetailsEditor')) return {default:'VariantDetailsEditor'};
         return {default:name};
     }});
     let game={id:1,title:'Synthetic',metadata:{path:'/synthetic'},variants:[variant(1,true),variant(2)]};
-    function render() {cursor=0;effects=[];editor=undefined;module.exports.default({game,libraryGames:[],suggestions:[],isOpen:true,onOpenChange:() => {}});for (const effect of effects) effect();return editor!;}
-    return {render, setGame(value: typeof game) {game=value;}, get game() {return game;}};
+    function render() {cursor=0;effects=[];editor=undefined;nodes=[];module.exports.default({game,initialVariantId,libraryGames:[],suggestions:[],isOpen:true,onOpenChange:() => {}});for (const effect of effects) effect();return editor!;}
+    return {render, setGame(value: typeof game) {game=value;}, get game() {return game;}, get nodes() {return nodes;}};
 }
+
+function baseContent(id: number, name: string) {return {id, name, path: `/fixture/${id}`, paths: [], type:'BASE', required:true, defaultSelected:true, tags:[], pathCount:1, fileSize:1};}
+
+test('same-ID canonical refresh updates clean cards and preserves dirty unrelated cards', () => {
+    const f = fixture();
+    f.setGame({...f.game, variants:[{...variant(1,true), contents:[baseContent(101,'Base game'),baseContent(102,'Other base')]}]});
+    f.render(); f.render();
+    f.nodes.filter(n => n.type === 'Input' && n.props.label === 'Content name')[1].props.onValueChange('Unsaved local name');
+    f.render();
+    f.setGame({...f.game, variants:[{...variant(1,true), contents:[baseContent(101,'Saved canonical'),baseContent(102,'Changed on server')]}]});
+    f.render(); f.render();
+    const values = f.nodes.filter(n => n.type === 'Input' && n.props.label === 'Content name').map(n => n.props.value);
+    assert.deepEqual(values, ['Saved canonical','Unsaved local name']);
+});
+
+for (const change of ['root', 'target']) test(`late split preview cannot overwrite changed ${change}`, async () => {
+    let resolve!: (value: unknown[]) => void;
+    const f = fixture(undefined, () => new Promise(done => {resolve = done;}));
+    f.setGame({...f.game, variants:[{...variant(1,true), contents:[baseContent(101,'Base game')]},variant(2)]});
+    f.render(); f.render();
+    const pending = f.nodes.find(n => n.type === 'Button' && n.props.children === 'Split into base / extras')!.props.onPress();
+    f.render();
+    if (change === 'root') f.nodes.find(n => n.type === 'Input' && n.props.label === 'Source root path')!.props.onValueChange('/new-source');
+    else f.nodes.find(n => n.type === 'Select' && n.props.label === 'Attach to variant')!.props.onSelectionChange(new Set(['2']));
+    f.render(); resolve([{name:'stale.zip',path:'/fixture/101/stale.zip'}]); await pending; f.render();
+    assert.equal(f.nodes.find(n => n.type === 'Input' && n.props.label === 'Source root path')!.props.value, change === 'root' ? '/new-source' : '');
+    if (change === 'target') assert.deepEqual(Array.from(f.nodes.find(n => n.type === 'Select' && n.props.label === 'Attach to variant')!.props.selectedKeys), ['2']);
+});
 test('dirty selected editor survives a different pinned default and added variant',() => {
     const f=fixture();f.render();const before=f.render();before.onDirtyChange(true);f.render();
     f.setGame({...f.game,variants:[variant(1),variant(2,true)]});
@@ -50,4 +82,56 @@ test('switching games initializes its own default instead of retaining a reused 
     const f=fixture();f.render();f.render();
     f.setGame({...f.game,id:2,variants:[variant(1),variant(2,true)]});f.render();
     const selected=f.render();assert.equal(selected.variant.id,2);assert.equal(selected.key,'2:2');
+});
+
+test('game-page shortcut opens the selected version rather than a different pinned default', () => {
+    const f = fixture(2); f.render();
+    assert.equal(f.render().variant.id, 2);
+});
+
+test('split preview hints distinguish base archives from optional content without persisting anything', () => {
+    const module = {exports: {} as {suggestContentType: (name: string) => string}};
+    const source = fs.readFileSync(path.resolve(__dirname, '../app/src/main/frontend/util/contentClassification.ts'), 'utf8');
+    const code = ts.transpileModule(source, {compilerOptions: {module: ts.ModuleKind.CommonJS}}).outputText;
+    vm.runInNewContext(code, {module, exports: module.exports});
+    const suggest = module.exports.suggestContentType;
+    assert.equal(suggest('Example.v1.5.0.rar'), 'BASE');
+    assert.equal(suggest('Multiplayer.zip'), 'PATCH');
+    assert.equal(suggest('game.hotfix.7z'), 'PATCH');
+    assert.equal(suggest('DLC.zip'), 'DLC');
+    assert.equal(suggest('Dedicated Server'), 'DEDICATED_SERVER');
+    assert.equal(suggest('readme.txt'), 'EXTRA');
+    assert.equal(suggest('unrecognized directory'), 'EXTRA');
+});
+
+test('library editor receives canonical saved game without closing and reopening', () => {
+    const original = {id: 1, title: 'Fixture', libraryId: 1, metadata: {path: '/fixture'}, variants: [variant(10)]};
+    const state = {state: {1: original}, gamesByLibraryId: {1: [original]}};
+    const slots: unknown[] = []; let cursor = 0, shown: typeof original | undefined;
+    const react = {
+        useState(initial: unknown) {const i = cursor++; if (!(i in slots)) slots[i] = initial;
+            return [slots[i], (value: unknown) => {slots[i] = value;}];},
+        useMemo(callback: () => unknown) {return callback();}, useEffect() {}
+    };
+    function jsx(type: string, props: any) {
+        if (type === 'VariantManagerModal') shown = props.game;
+        return {type, props};
+    }
+    const module = {exports: {} as {default: (props: unknown) => unknown}};
+    const source = fs.readFileSync(path.resolve(__dirname, '../app/src/main/frontend/components/general/library/LibraryManagementGames.tsx'), 'utf8');
+    const code = ts.transpileModule(source, {compilerOptions: {module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX}}).outputText;
+    vm.runInNewContext(code, {module, exports: module.exports, require(name: string) {
+        if (name === 'react') return {...react, default: react};
+        if (name === 'react/jsx-runtime') return {jsx, jsxs: jsx};
+        if (name === 'valtio/react') return {useSnapshot: () => state};
+        if (name === '@heroui/react') return new Proxy({useDisclosure: () => ({isOpen: true})}, {get: (value: any, key) => value[key] ?? key});
+        if (name.endsWith('/VariantManagerModal')) return {default: 'VariantManagerModal'};
+        return {default: name};
+    }});
+    function render() {cursor = 0; shown = undefined; module.exports.default({library: {id: 1}}); return shown;}
+    assert.equal(render(), original);
+    const saved = {...original, variants: [variant(10), variant(20)]};
+    state.state[1] = saved; state.gamesByLibraryId[1] = [saved];
+    assert.equal(render(), saved);
+    assert.equal(shown!.variants.length, 2);
 });

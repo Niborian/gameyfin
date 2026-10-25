@@ -74,8 +74,11 @@ must enforce opened-file identity and cache ownership, including deterministic m
 failure cleanup; size preflight is advisory and cooperative timeout checks do not impose
 a hard bound on blocked filesystem I/O. No rushed native implementation is implied.
 
-Run `python3 tools/qbittorrent-creator-fixture.py --staging-ack` only on a disposable CI
-runner or an explicitly authorized staging host with the pinned image already loaded.
+The Kotlin `QbCreatorFixtureTest` is the current source entry point. The dedicated
+Actions workflow sets `GAMEYFIN_QB_CREATOR_FIXTURE=true` and runs
+`./gradlew :app:test --tests '*QbCreatorFixtureTest'`; the fixture also requires a
+disposable Actions runner with the pinned image already loaded. This source migration
+has not itself established a new runtime result; historical evidence below is unchanged.
 The fixture accepts no operator endpoint or source path. It creates tiny invented grouped
 and optional selections, a private authenticated qB client on an internal Docker network,
 and a loopback-only relay; it publishes no Docker ports and mounts only its new fixture

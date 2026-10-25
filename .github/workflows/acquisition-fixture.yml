@@ -2,7 +2,7 @@ name: Isolated authorized acquisition acceptance
 on:
   pull_request:
     branches: [main]
-    paths: ['app/src/**/requests/**', 'tools/acquisition-live-fixture.py', '.github/workflows/acquisition-fixture.yml']
+    paths: ['app/src/**/requests/**', 'app/src/test/kotlin/org/gameyfin/tools/**', '.github/workflows/acquisition-fixture.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -20,11 +20,17 @@ jobs:
           distribution: temurin
           java-version: '25'
       - uses: gradle/actions/setup-gradle@v5
+      - name: Load reviewed immutable provider images
+        run: |
+          docker pull linuxserver/qbittorrent@sha256:b522f9f4b769f8f36d49d22d5eb6a92e9aa18904c6a1830b1439df511ec21983
+          docker pull linuxserver/prowlarr@sha256:f9151e5bc1025c6d0a630d503210cdcb6bb55a7cc098562609d96a408d838902
       - name: Rehearse real isolated pair with invented no-payload magnet
-        run: python3 tools/acquisition-live-fixture.py
+        env:
+          GAMEYFIN_ACQUISITION_PAIR_FIXTURE: 'true'
+        run: ./gradlew :app:test --tests '*AcquisitionPairFixtureTest' --no-daemon --console=plain
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: acquisition-real-pair-test-results
-          path: app/build/test-results/test/TEST-*AcquisitionLiveProviderTest.xml
+          path: app/build/test-results/test/TEST-*AcquisitionPairFixtureTest.xml
           retention-days: 7

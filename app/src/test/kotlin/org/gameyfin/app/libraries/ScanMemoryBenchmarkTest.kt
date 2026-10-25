@@ -36,12 +36,7 @@ class ScanMemoryBenchmarkTest {
     @Test
     fun `reusable image fixture SQL imports into actual migrated H2 schema`(@TempDir root: Path) {
         val output = root.resolve("generated")
-        val python = if (System.getProperty("os.name").startsWith("Windows")) "python" else "python3"
-        val script = Path.of("../scripts/rehearsal/seed-scan-fixture.py").toAbsolutePath().normalize()
-        val process = ProcessBuilder(python, script.toString(), "--output", output.toString(),
-            "--container-fixture-root", "/fixture").redirectErrorStream(true).start()
-        val messages = process.inputStream.bufferedReader().readText()
-        assertEquals(0, process.waitFor(), messages)
+        org.gameyfin.tools.ScanFixture.generate(output, "/fixture")
         val url = "jdbc:h2:file:" + root.resolve("fixture-db").toString().replace('\\', '/')
         org.flywaydb.core.Flyway.configure().dataSource(url, "fixture", "fixture-only")
             .locations("classpath:db/migration").load().migrate()

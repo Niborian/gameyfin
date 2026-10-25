@@ -2,7 +2,7 @@ name: Isolated qB creator validation foundation
 on:
   pull_request:
     branches: [main]
-    paths: ['tools/qbittorrent-creator-fixture.py', 'tools/test_qbittorrent_creator_fixture.py', '.github/workflows/qbittorrent-selection-fixture.yml']
+    paths: ['app/src/test/kotlin/org/gameyfin/tools/**', '.github/workflows/qbittorrent-selection-fixture.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -15,9 +15,22 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v5
       - name: Validate bounded metadata parser negative cases
-        run: python3 -m unittest discover -s tools -p test_qbittorrent_creator_fixture.py
+        run: ./gradlew :app:test --tests '*FixtureValidationTest' --no-daemon --console=plain
       - name: Load reviewed immutable synthetic creator image
         run: docker pull ghcr.io/hotio/qbittorrent@sha256:91d59985ed65fe3504b405b51e6d586524c2189a6cffd56324101b70fe094bde
       - name: Verify exact metadata without adding or seeding torrents
-        run: python3 tools/qbittorrent-creator-fixture.py --staging-ack
+        env:
+          GAMEYFIN_QB_CREATOR_FIXTURE: 'true'
+        run: ./gradlew :app:test --tests '*QbCreatorFixtureTest' --no-daemon --console=plain
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qb-creator-test-results
+          path: app/build/test-results/test/TEST-*QbCreatorFixtureTest.xml
+          retention-days: 7

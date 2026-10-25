@@ -130,7 +130,7 @@ results in a separate evidence record; synthetic figures cannot complete those c
 
 ## Repeatable actual-image H2 fixture contract
 
-`scripts/rehearsal/seed-scan-fixture.py` generates these deterministic source files,
+The Kotlin `org.gameyfin.tools.ScanFixture` (`:app:generateScanFixture`) generates these deterministic source files,
 offline SQL and a SHA-256/download-selection manifest into a new output directory.
 Its container fixture root is configurable; it does not open a database or start an
 image. CI retains the SQL/manifest as synthetic inputs, not execution evidence.
@@ -184,7 +184,7 @@ before each scrape. Reported memory maxima are sampled observations, not continu
 peak guarantees. A telemetry gap is not proof of responsive production monitoring:
 the real-library resource and monitoring acceptance remains outstanding.
 
-`scripts/rehearsal/run-image-scan.py` now creates an isolated synthetic H2 application,
+The Kotlin `org.gameyfin.tools.ImageScanRehearsal` (`:app:imageScanRehearsal`) creates an isolated synthetic H2 application,
 imports the validated seed while stopped, runs cold/repeated full scans, and optionally
 interrupts only its own container after observing an active scan. It restarts the same
 image and verifies all 132 game records, exact selected archive entries/bytes/estimates,
@@ -194,10 +194,15 @@ explicitly, not replaced by a fictitious revision. No production database is an 
 
 The runner accepts image identity, source revision, matching in-image H2 JAR and plugin
 paths. No images are pulled or published. Runtime user/group and privileged Docker
-prefix are configurable. An optional reviewed external probe receives only synthetic
-fixture context on stdin and temporary account credentials through its child environment.
+prefix are configurable (no prefix, or the explicit `sudo -n` argv prefix). The optional
+`--external-probe proxy-exposure` invokes the built-in Kotlin proxy fixture with only
+synthetic context and temporary credentials as in-memory arguments, not a Python process.
 Containers/networks are uniquely named and removal is verified; private synthetic leaves
 are printed for bounded inspected cleanup. Never use broad Docker pruning.
+
+These Kotlin entries replace the former Python/Java tooling; historical fixture results above
+are not evidence that the consolidated entries have been compiled or executed. The existing
+test-runtime tasks compile tooling but do not run a test suite or publish an application image.
 
 The PR image workflow now runs this candidate-only gate after loading its own checked
 archive. Its two plugin JARs are built from exact source trees matching official upstream

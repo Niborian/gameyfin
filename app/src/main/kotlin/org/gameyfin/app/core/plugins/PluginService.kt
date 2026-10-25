@@ -66,9 +66,9 @@ class PluginService(
             .flatMap { pluginManager.getExtensionTypes(it.pluginId) }
     }
 
-    fun getAll(): List<PluginDto> {
+    fun getAll(includeConfiguration: Boolean = true): List<PluginDto> {
         return pluginManager.plugins
-            .map { toDto(it) }
+            .map { toDto(it, includeConfiguration) }
     }
 
     fun getAllByTypeAndState(type: KClass<out ExtensionPoint>, state: PluginState): List<PluginDto> {
@@ -181,7 +181,7 @@ class PluginService(
         return pluginManager.validatePluginConfig(pluginId, configToValidate)
     }
 
-    private fun toDto(pluginWrapper: PluginWrapper): PluginDto {
+    private fun toDto(pluginWrapper: PluginWrapper, includeConfiguration: Boolean = true): PluginDto {
         val pluginManagementEntry = pluginManager.getManagementEntry(pluginWrapper.pluginId)
 
         val hasLogo = try {
@@ -207,9 +207,9 @@ class PluginService(
             url = descriptor.pluginUrl,
             hasLogo = hasLogo,
             state = pluginWrapper.pluginState,
-            configMetadata = getConfigMetadata(pluginWrapper),
-            config = getConfig(pluginWrapper),
-            configValidation = validatePluginConfig(descriptor.pluginId),
+            configMetadata = if (includeConfiguration) getConfigMetadata(pluginWrapper) else null,
+            config = if (includeConfiguration) getConfig(pluginWrapper) else null,
+            configValidation = if (includeConfiguration) validatePluginConfig(descriptor.pluginId) else null,
             priority = pluginManagementEntry.priority,
             trustLevel = pluginManagementEntry.trustLevel
         )

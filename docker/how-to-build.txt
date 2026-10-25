@@ -1,11 +1,15 @@
-Local replacement image:
+Normal application build (from repository root):
 
 Windows:
-  .\docker\build-image.ps1 -ImageName gameyfin -ImageTag variant-local
+  .\gradlew.bat build "-Pvaadin.productionMode=true"
 
 Linux/macOS:
-  ./docker/build-image.sh --image gameyfin --tag variant-local
+  ./gradlew build -Pvaadin.productionMode=true
 
-Production mode requires GAMEYFIN_KEYSTORE_PASSWORD because plugin JARs are signed:
-  .\docker\build-image.ps1 -ImageName gameyfin -ImageTag variant-local -Production
-  ./docker/build-image.sh --image gameyfin --tag variant-local --production
+Production builds require the existing signing environment variables:
+  GAMEYFIN_KEYSTORE_PATH, GAMEYFIN_KEYSTORE_TYPE, GAMEYFIN_KEYSTORE_PASSWORD
+Keep their values private; do not pass passwords as command arguments.
+
+The redundant PowerShell/Bash image-builder helpers were removed. Use the reviewed
+GitHub Actions candidate workflow for versioned image publication; see docker/README.md.
+Neither building nor publishing authorizes deployment or latest promotion.

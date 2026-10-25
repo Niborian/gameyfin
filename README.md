@@ -30,6 +30,8 @@ This fork is not intended to compete with, represent, or replace that project.
 | Added by this fork | What it means |
 | --- | --- |
 | Versions and variants | Keep multiple releases under one game and pin a default. |
+| Clearer variant details | Record a store/product, edition, and library version/build separately from the files selected for download. |
+| Read-only local detection | Preview local manifest or installer-filename evidence, then explicitly apply a suggestion; manual values remain protected. |
 | Selectable content | Choose DLC, patches, mods, extras, and server files alongside the base game. |
 | Grouped and shared paths | Treat multipart content as one selection; share optional content across versions. |
 | Library curation | Attach existing paths, review classification, and ignore duplicate-producing paths. |
@@ -52,6 +54,11 @@ This fork is not intended to compete with, represent, or replace that project.
 The foundation comes from [original Gameyfin](https://gameyfin.org/): library
 indexing, metadata and artwork, browser downloads, themes, plugins, and optional
 OIDC/OAuth2 sign-in. This fork builds on that work, rather than replacing its authors.
+
+See [variant details and local detection](docs/VARIANT-DETAILS.md) for the workflow
+and its limits. The edition/store presentation is inspired by
+[Shade1982's editions/DLC work](https://github.com/Shade1982/gameyfin/tree/feature/editions-dlc),
+adapted to this fork's per-variant, exact-selection model.
 
 ## Getting started
 

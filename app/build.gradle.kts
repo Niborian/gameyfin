@@ -1,4 +1,5 @@
 import org.apache.tools.ant.filters.ReplaceTokens
+import java.io.File
 
 group = "org.gameyfin"
 version = rootProject.version
@@ -21,8 +22,62 @@ application {
     mainClass.set(appMainClass)
 }
 
-sourceSets.test {
-    java.srcDir(rootProject.file("scripts/rehearsal"))
+// Standalone rehearsal CLIs reuse the existing Kotlin test runtime, without running tests.
+for ((taskName, entry) in mapOf(
+    "generateScanFixture" to "ScanFixture",
+    "imageScanRehearsal" to "ImageScanRehearsal",
+    "offlineH2Rehearsal" to "OfflineH2Rehearsal",
+    "verifyExposureFixture" to "ExposureFixtureRehearsal",
+    "proxyDownloadRehearsal" to "ProxyDownloadRehearsal",
+)) {
+    tasks.register<JavaExec>(taskName) {
+        group = "verification"
+        dependsOn(tasks.named("testClasses"))
+        classpath = sourceSets.test.get().runtimeClasspath
+        mainClass.set("org.gameyfin.tools.$entry")
+        workingDir(rootProject.projectDir)
+        if (taskName == "offlineH2Rehearsal") {
+            val baseDirectory = layout.projectDirectory
+            val selected = objects.fileProperty().apply {
+                set(layout.file(providers.gradleProperty("rehearsalH2Jar").map { path ->
+                    val candidate = File(path)
+                    if (candidate.isAbsolute) candidate else baseDirectory.asFile.resolve(candidate)
+                }))
+            }
+            // Configure the classpath now; only the explicit matching H2 JAR is included.
+            classpath = sourceSets.test.get().runtimeClasspath.filter { !it.name.matches(Regex("h2-.*\\.jar")) } + files(selected)
+            doFirst {
+                // Capture a supported file property, never Project or this build script at execution.
+                require(selected.orNull?.asFile?.isFile == true) { "Supply -PrehearsalH2Jar=<matching H2 JAR>" }
+            }
+        }
+    }
+}
+
+tasks.register("verifyFilesystemEvidence") {
+    group = "verification"
+    val reportDirectory = layout.buildDirectory.dir("test-results/test")
+    doLast {
+        val factory = javax.xml.parsers.DocumentBuilderFactory.newInstance().apply {
+            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            setFeature("http://xml.org/sax/features/external-general-entities", false)
+            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+            setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "")
+            setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_SCHEMA, "")
+            isXIncludeAware = false
+            isExpandEntityReferences = false
+        }
+        for (name in listOf("org.gameyfin.app.games.variants.HardlinkMirrorServiceTest", "org.gameyfin.app.libraries.VariantScanIntegrityFixtureTest", "org.gameyfin.app.games.variants.VariantLocalVersionDetectorTest")) {
+            val report = reportDirectory.get().file("TEST-$name.xml").asFile
+            require(report.isFile) { "Missing Linux filesystem evidence: $name" }
+            val suite = factory.newDocumentBuilder().parse(report).documentElement
+            require(suite.tagName == "testsuite" && suite.getAttribute("tests").toInt() > 0 &&
+                listOf("failures", "errors", "skipped").all { suite.getAttribute(it).toInt() == 0 }) {
+                "Missing passing Linux filesystem evidence: $name"
+            }
+            println("$name: ${suite.getAttribute("tests")} passed, none skipped")
+        }
+    }
 }
 
 springBoot {

@@ -97,8 +97,13 @@ not the later bounded-scheduler or retirement changes. It is not a published rel
 
 ## Remaining release gates
 
-- Same-fixture candidate comparison and representative workload, including exact/grouped
-  downloads, scan reliability, resource use, and unchanged source hashes/hardlinks.
+The 2026-10-25 delivery scope replaces the former benchmark campaign with the normal
+production build and focused regression checks. Historical measurements above remain
+historical evidence, not measurements of the new candidate. Do not restart the campaign.
+
+- Exact candidate review and focused checks for variant editing/detection, migrations,
+  exact/grouped downloads, source preservation and plugin configuration security.
+  Linux-specific filesystem cases must execute on Linux; Windows skips are not passes.
 - Refresh current production baseline counts and source integrity evidence. Historical
   cold-capture counts above are not current live-database verification.
 - The October 9 backup/restore gate is complete under #26; confirm backup suitability
@@ -109,8 +114,11 @@ not the later bounded-scheduler or retirement changes. It is not a published rel
   router/Internet forwarding remains unknown. No production binding/firewall change
   is approved. Preserve the existing hostname/authentication and independent qBittorrent
   policy; staging alone cannot prove live restrictions.
-- Published version and latest resolving to one reviewed digest, UI/image version parity,
-  satisfactory provenance/SBOM and CodeQL. The last inspected published `2.4.3` and
-  `latest` digests differ and do not establish readiness for the current PR changes.
+- Once publication is separately approved: reviewed immutable image digest, UI/image
+  version parity, satisfactory provenance/SBOM and CodeQL. Any latest promotion is a
+  separate deliberate action; existing registry tags do not prove the new candidate.
+
+Keep the existing `ix-gameyfin / gameyfin` service identity. Preparing a candidate
+does not authorize deployment, production changes or a parallel tester.
 
 No recommendation to update production is made until these gates are evidenced.

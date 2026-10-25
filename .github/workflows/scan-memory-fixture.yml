@@ -1,15 +1,8 @@
 name: Measure synthetic scan memory
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - app/src/main/kotlin/org/gameyfin/app/libraries/**
-      - app/src/main/kotlin/org/gameyfin/app/core/filesystem/**
-      - app/src/test/kotlin/org/gameyfin/app/libraries/ScanMemoryBenchmarkTest.kt
-      - app/build.gradle.kts
-      - scripts/rehearsal/**
-      - .github/workflows/scan-memory-fixture.yml
+  # Retained historical fixture, opt-in only. The active delivery plan does not
+  # authorize automatic benchmark campaigns on ordinary implementation PRs.
   workflow_dispatch:
 
 permissions:
@@ -29,12 +22,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
       - name: Generate isolated actual-image scan inputs
         run: |
-          python3 -B scripts/rehearsal/test_image_scan_fault.py
-          python3 -B scripts/rehearsal/test_idle_memory_sampling.py
           mkdir -p app/build/reports
-          python3 scripts/rehearsal/seed-scan-fixture.py --output app/build/reports/image-scan-fixture --container-fixture-root /fixture
+          ./gradlew :app:generateScanFixture --args='--output app/build/reports/image-scan-fixture --container-fixture-root /fixture' -x :app:vaadinBuildFrontend --no-daemon --console=plain
       - name: Measure fixture recovery with explicit heap
-        run: ./gradlew :app:test --tests org.gameyfin.app.libraries.ScanMemoryBenchmarkTest -PscanBenchmark=true -PscanBenchmarkHeap=512m -PscanBenchmarkGames=1000 -x :app:vaadinBuildFrontend --no-daemon --console=plain
+        run: ./gradlew :app:test --tests org.gameyfin.app.libraries.ScanMemoryBenchmarkTest --tests org.gameyfin.tools.ImageScanContractsTest -PscanBenchmark=true -PscanBenchmarkHeap=512m -PscanBenchmarkGames=1000 -x :app:vaadinBuildFrontend --no-daemon --console=plain
       - uses: actions/upload-artifact@v7
         if: always()
         with:

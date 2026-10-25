@@ -131,7 +131,36 @@ class GameVariantGroupingService(
         require(request.entries.isNotEmpty()) { "At least one content entry is required" }
 
         val sourceRootPath = request.sourceRootPath.ifBlank { request.entries.first().path }
-        val duplicateSource = findAttachSource(
+        val replacing = request.replaceContentId?.let { contentId ->
+            require(request.sourceGameId == null && request.targetVariantIds.isNullOrEmpty()) {
+                "Replacing content must target one existing variant, not another game or shared variants"
+            }
+            val variant = findVariant(target, requireNotNull(request.targetVariantId) { "A replacement variant is required" })
+            val content = findContent(variant, contentId)
+            val root = Path.of(sourceRootPath).toAbsolutePath().normalize()
+            require(content.type == VariantContentType.BASE && content.effectivePaths().size == 1 &&
+                Path.of(content.effectivePaths().single()).toAbsolutePath().normalize() == root) {
+                "The original BASE selection changed; reload before replacing it"
+            }
+            require(root.isDirectory()) { "Only a directory selection can be split into children" }
+            val paths = request.entries.flatMap { requestedPaths(it.path, it.paths) }
+            require(paths.isNotEmpty() && paths.all {
+                val child = Path.of(it).toAbsolutePath().normalize()
+                child != root && child.startsWith(root) && child.toRealPath().startsWith(root.toRealPath())
+            }) { "Replacement files must remain inside the original directory" }
+            val normalizedPaths = paths.map { Path.of(it).toAbsolutePath().normalize() }
+            val retainedPaths = variant.contents.filter { it !== content }.flatMap { it.effectivePaths() }
+                .map { Path.of(it).toAbsolutePath().normalize() }
+            require(normalizedPaths.withIndex().none { (index, path) ->
+                normalizedPaths.drop(index + 1).any { path.startsWith(it) || it.startsWith(path) } ||
+                    retainedPaths.any { path.startsWith(it) || it.startsWith(path) }
+            }) { "Replacement selections overlap each other or existing content; keep existing extras unselected" }
+            require(request.entries.any { it.contentType == VariantContentType.BASE }) {
+                "Replacement must retain required BASE content"
+            }
+            content
+        }
+        val duplicateSource = if (replacing != null) null else findAttachSource(
             target = target,
             sourceGameId = request.sourceGameId,
             sourceRootPath = sourceRootPath,
@@ -144,7 +173,7 @@ class GameVariantGroupingService(
             addGroupedIgnoredPath(target.library, duplicateSource.metadata.path)
         }
 
-        if (!sourceWasRemoved && sourceRootPath != target.metadata.path && target.variants.none { it.path == sourceRootPath }) {
+        if (replacing == null && !sourceWasRemoved && sourceRootPath != target.metadata.path && target.variants.none { it.path == sourceRootPath }) {
             addGroupedIgnoredPath(target.library, sourceRootPath)
         }
 
@@ -178,6 +207,9 @@ class GameVariantGroupingService(
         val variants = resolveAttachVariants(target, request, sourceRootPath)
         variants.forEach { variant ->
             request.entries.forEach { entry -> addContentEntry(variant, entry) }
+            // One transaction replaces catalogue selections. Keep the source root identity;
+            // no path, file, torrent or game row is removed by this operation.
+            if (replacing != null) variant.contents.remove(replacing)
             variant.scanManaged = false
             refreshVariantFileSize(variant)
         }

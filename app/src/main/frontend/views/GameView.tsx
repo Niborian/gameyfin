@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from "react";
+import React, {lazy, Suspense, useEffect, useState} from "react";
 import {DownloadProviderEndpoint, GameEndpoint} from "Frontend/generated/endpoints";
 import {useNavigate, useParams} from "react-router";
 import {GameCover} from "Frontend/components/general/covers/GameCover";
@@ -38,11 +38,13 @@ import Markdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import ChipList from "Frontend/components/general/ChipList";
 import {collectionState} from "Frontend/state/CollectionState";
-import {GameMetadataAdminDto} from "Frontend/dtos/GameDtos";
+import {GameAdminDto, GameMetadataAdminDto} from "Frontend/dtos/GameDtos";
 import GameVariantDto from "Frontend/generated/org/gameyfin/app/games/dto/GameVariantDto";
 import VariantContentDto from "Frontend/generated/org/gameyfin/app/games/dto/VariantContentDto";
 import VariantLinkStatus from "Frontend/generated/org/gameyfin/app/games/entities/VariantLinkStatus";
 import VariantContentType from "Frontend/generated/org/gameyfin/app/games/entities/VariantContentType";
+
+const VariantManagerModal = lazy(() => import("Frontend/components/general/modals/VariantManagerModal"));
 
 export default function GameView() {
     const {gameId} = useParams();
@@ -52,6 +54,7 @@ export default function GameView() {
 
     const editGameModal = useDisclosure();
     const matchGameModal = useDisclosure();
+    const variantManagerModal = useDisclosure();
 
     const state = useSnapshot(gameState);
     const game = gameId ? state.state[parseInt(gameId)] : undefined;
@@ -395,6 +398,9 @@ export default function GameView() {
                                 </SelectItem>
                             ))}
                         </Select>
+                        {isAdmin(auth) && <Button variant="flat" onPress={variantManagerModal.onOpen}>
+                            Versions &amp; content
+                        </Button>}
                         <div className="flex flex-col gap-1">
                             <p className="text-default-500 text-sm">
                                 Estimated download: {humanFileSize(estimatedDownloadSize)}
@@ -586,6 +592,14 @@ export default function GameView() {
                 </div>
             </div>
             {isAdmin(auth) && <>
+                {variantManagerModal.isOpen && <Suspense fallback={<p role="status">Loading version editor…</p>}><VariantManagerModal
+                    game={game as GameAdminDto}
+                    initialVariantId={selectedVariant?.id}
+                    libraryGames={(state.gamesByLibraryId[game.libraryId] ?? []) as GameAdminDto[]}
+                    suggestions={[]}
+                    isOpen={variantManagerModal.isOpen}
+                    onOpenChange={variantManagerModal.onOpenChange}
+                /></Suspense>}
                 <EditGameMetadataModal game={game}
                                        isOpen={editGameModal.isOpen}
                                        onOpenChange={editGameModal.onOpenChange}/>

@@ -788,6 +788,61 @@ class GameVariantGroupingServiceTest {
         )
     }
 
+    @Test
+    fun `split replaces broad base atomically without changing files or source root`(@TempDir root: Path) {
+        val library = createLibrary()
+        val game = createGame(1L, library, root.toString(), PluginManagementEntry("fixture"), "1")
+        val variant = createBaseVariant(game, 10L, root.toString())
+        game.variants.add(variant)
+        val base = root.resolve("Game.v1.zip").createFile()
+        val patch = root.resolve("Multiplayer.zip").createFile()
+        every { gameRepository.findById(1L) } returns Optional.of(game)
+        every { gameRepository.save(game) } returns game
+        every { filesystemService.calculateFileSize(any()) } returns 5L
+
+        service.attachVariantContent(1L, AttachVariantContentRequestDto(
+            sourceGameId = null, sourceRootPath = root.toString(), targetVariantId = 10L,
+            variantName = null, version = null, replaceContentId = 110L,
+            entries = listOf(
+                AttachVariantContentEntryDto(base.toString(), "Base", VariantContentType.BASE, true, true, emptySet()),
+                AttachVariantContentEntryDto(patch.toString(), "Multiplayer", VariantContentType.PATCH, false, true, emptySet())
+            )
+        ))
+        assertEquals(listOf(base.toString(), patch.toString()), variant.contents.map { it.path })
+        assertEquals(root.toString(), game.metadata.path)
+        assertEquals(root.toString(), variant.path)
+        assertTrue(java.nio.file.Files.exists(base) && java.nio.file.Files.exists(patch))
+        assertEquals(0L, java.nio.file.Files.size(base))
+        assertEquals(0L, java.nio.file.Files.size(patch))
+        verify(exactly = 0) { gameRepository.delete(any()) }
+        verify(exactly = 0) { ignoredPathRepository.save(any()) }
+    }
+
+    @Test
+    fun `split rejects escaped paths and missing base before changing catalogue`(@TempDir root: Path) {
+        val game = createGame(1L, createLibrary(), root.toString(), PluginManagementEntry("fixture"), "1")
+        val variant = createBaseVariant(game, 10L, root.toString())
+        game.variants.add(variant)
+        val child = root.resolve("patch.zip").createFile()
+        every { gameRepository.findById(1L) } returns Optional.of(game)
+        val request = AttachVariantContentRequestDto(
+            sourceGameId = null, sourceRootPath = root.toString(), targetVariantId = 10L,
+            variantName = null, version = null, replaceContentId = 110L,
+            entries = listOf(AttachVariantContentEntryDto(child.toString(), "Patch", VariantContentType.PATCH, false, false, emptySet()))
+        )
+        assertFailsWith<IllegalArgumentException> { service.attachVariantContent(1L, request) }
+        assertFailsWith<IllegalArgumentException> { service.attachVariantContent(1L, request.copy(entries = listOf(
+            request.entries.single().copy(path = root.parent.resolve("outside.zip").toString(), contentType = VariantContentType.BASE)
+        ))) }
+        assertFailsWith<IllegalArgumentException> { service.attachVariantContent(1L, request.copy(targetVariantId = 999L)) }
+        assertFailsWith<IllegalArgumentException> { service.attachVariantContent(1L, request.copy(
+            entries = listOf(request.entries.single().copy(contentType = VariantContentType.BASE),
+                request.entries.single().copy(contentType = VariantContentType.BASE))
+        )) }
+        assertEquals(listOf(root.toString()), variant.contents.map { it.path })
+        verify(exactly = 0) { gameRepository.save(any()) }
+    }
+
     private fun createGame(
         id: Long,
         library: Library,

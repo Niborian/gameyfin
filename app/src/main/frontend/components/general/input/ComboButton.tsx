@@ -63,6 +63,7 @@ export default function ComboButton({options, preferredOptionKey, description}: 
         if (preferredOptionKey) {
             void Promise.resolve().then(() => {
                 if (owner.active && ownerRef.current === owner) return userPreferenceService.set(preferredOptionKey, key);
+                return undefined;
             }).catch(() => { /* Keep the explicit choice if persistence fails. */ });
         }
     }

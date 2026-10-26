@@ -32,7 +32,7 @@ const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', s
     postExists: false, postEnabled: false, postInViewport: false, postCenterOwn: false, postCenterToast: false,
     trustedCloseClick: false, trustedOtherClick: false},
   gameDiagnostics: gameDiagnostic(),
-  repeatPhase: 'not-started', viewerLogoutObserved: false, navbarSignInObserved: false,
+  repeatPhase: 'not-started', viewerLogoutObserved: false, loggedOutLoginFormObserved: false,
   repeatedViewerIdentityVerified: false,
   sandboxDisabledForIsolatedSyntheticAppOnly: true};
 let browser: any;
@@ -522,22 +522,14 @@ async function run(): Promise<void> {
   });
   try { await signOut.asElement().click(); } finally { await signOut.dispose(); }
   await loggedOut; proof.viewerLogoutObserved = true;
-  proof.repeatPhase = 'anonymous-navbar';
-  await viewerPage.waitForFunction(() => document.querySelectorAll('nav div[data-slot="trigger"][aria-haspopup="true"] button').length === 0 &&
-    document.querySelectorAll('nav button.gradient-primary').length === 1, {timeout: 10000});
-  const signIn = await viewerPage.evaluateHandle(() => {
-    const buttons = [...document.querySelectorAll('nav button.gradient-primary')];
-    if (buttons.length !== 1) throw new Error('Unique navbar Sign In'); return buttons[0];
-  });
-  const signInRequest = viewerPage.waitForRequest((request: any) => {
-    const url = new URL(request.url()); return url.origin === input.origin && url.pathname === '/loginredirect' && request.isNavigationRequest();
-  }, {timeout: 10000});
-  void signInRequest.catch(() => {});
-  proof.repeatPhase = 'navbar-sign-in';
-  try { await signIn.asElement().click(); } finally { await signIn.dispose(); }
-  await signInRequest;
-  await viewerPage.waitForFunction(() => location.pathname === '/login' && !!document.querySelector('input[name="username"]'), {timeout: 10000});
-  proof.navbarSignInObserved = true; proof.repeatPhase = 'normal-form';
+  // Public browsing is disabled in this synthetic fixture. Logout's root redirect
+  // must automatically reach the private login form, outside MainLayout/navbar.
+  // This does not test the separate public-mode navbar Sign In action.
+  proof.repeatPhase = 'logged-out-form';
+  await viewerPage.waitForFunction(() => location.pathname === '/login' &&
+    !!document.querySelector('input[name="username"]') && !!document.querySelector('input[name="password"]') &&
+    document.querySelectorAll('nav div[data-slot="trigger"][aria-haspopup="true"] button').length === 0, {timeout: 10000});
+  proof.loggedOutLoginFormObserved = true; proof.repeatPhase = 'normal-form';
   await login(viewerPage, input, 'fixture-user', input.viewerPassword, true);
   proof.repeatedViewerIdentityVerified = true; proof.repeatPhase = 'complete';
   if (failed) throw new Error('Repeat UI gate');

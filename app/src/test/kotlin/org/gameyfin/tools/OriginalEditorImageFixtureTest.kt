@@ -202,13 +202,13 @@ class OriginalEditorImageFixtureTest {
             val expectedFlags = listOf("success", "loginWithin15Seconds", "nonDefaultPreserved", "unrelatedDraftPreserved", "expectedNativeConfirmAccepted",
                 "immediateCanonicalCards", "clickedExactDownload", "ordinaryUserEditorAbsent", "adminProfileIdentityVerified", "ordinaryProfileIdentityVerified",
                 "keepEditingPreserved", "escapePreserved", "escapeFocusRestored", "keepEditingFocusRestored", "controlledDiscardAccepted",
-                "viewerLogoutObserved", "navbarSignInObserved", "repeatedViewerIdentityVerified", "cleanupConfirmed")
+                "viewerLogoutObserved", "loggedOutLoginFormObserved", "repeatedViewerIdentityVerified", "cleanupConfirmed")
             proof["browser"] = expectedFlags.associateWith { browserProof[it]?.booleanValue() == true }
             val browserStage = browserProof["stage"]?.asText()
             require(browserStage in setOf("input", "launch", "normal-login", "editor", "immediate-download", "ordinary-user", "repeat-login", "complete"))
             proof["browserStage"] = browserStage
             val repeatPhase = browserProof["repeatPhase"]?.asText()
-            require(repeatPhase in setOf("not-started", "profile-menu", "sign-out", "anonymous-navbar", "navbar-sign-in", "normal-form", "complete"))
+            require(repeatPhase in setOf("not-started", "profile-menu", "sign-out", "logged-out-form", "normal-form", "complete"))
             proof["repeatPhase"] = repeatPhase
             val loginPhase = browserProof["loginPhase"]?.asText()
             require(loginPhase in setOf("not-started", "opening-login", "form-ready", "submitted", "profile-response", "authenticated-landing", "profile-menu", "complete"))

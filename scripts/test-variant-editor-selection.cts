@@ -5,10 +5,71 @@ const fs = require('node:fs'), path = require('node:path'), vm = require('node:v
 const {createRequire} = require('node:module');
 const ts = process.env.TEST_TYPESCRIPT_MODULE ? require(process.env.TEST_TYPESCRIPT_MODULE) : createRequire(path.resolve(__dirname,'../app/package.json'))('typescript');
 
-function gameDownloadFixture(delayedProviders = false, providerRequest?: (init: {signal: AbortSignal}) => Promise<any[]>) {
+function comboFixture() {
+    const slots: any[] = []; let cursor=0, effects: (() => void)[]=[], nodes: any[]=[], writes=0;
+    let actor={id:7,username:'fixture'}, preference='download-method';
+    const lookups: {key:string; resolve:(value?:string)=>void}[]=[], saves: {key:string; value:string; resolve:()=>void}[]=[];
+    let options: Record<string,any>={direct:{label:'Direct',description:'',action:()=>{}}};
+    const react={
+        useState(initial:any) {const i=cursor++;if (!(i in slots)) slots[i]=initial;return [slots[i],(value:any)=>{writes++;slots[i]=typeof value==='function'?value(slots[i]):value;}];},
+        useRef(initial:any) {const i=cursor++;if (!(i in slots)) slots[i]={current:initial};return slots[i];},
+        useLayoutEffect(callback:()=>any,deps:any[]) {const i=cursor++,old=slots[i];if (!old || deps.some((value,index)=>!Object.is(value,old.deps[index]))) effects.push(()=>{old?.cleanup?.();slots[i]={deps,cleanup:callback()};});}
+    };
+    const source=fs.readFileSync(path.resolve(__dirname,'../app/src/main/frontend/components/general/input/ComboButton.tsx'),'utf8');
+    const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
+    const module={exports:{} as {default:(props:any)=>unknown}};
+    vm.runInNewContext(code,{module,exports:module.exports,AbortController,require(name:string) {
+        if (name==='react') return react;
+        if (name==='react/jsx-runtime') return {jsx:(type:any,props:any)=>{nodes.push({type,props});return {type,props};},jsxs:(type:any,props:any)=>{nodes.push({type,props});return {type,props};}};
+        if (name.endsWith('/auth')) return {useAuth:()=>({state:{user:actor,loading:false,initializing:false}})};
+        // Deliberately return a new service object each render, like production.
+        if (name.endsWith('/user-preference-service')) return {useUserPreferenceService:()=>({
+            get:(key:string)=>new Promise(resolve=>lookups.push({key,resolve})),
+            set:(key:string,value:string)=>new Promise<void>(resolve=>saves.push({key,value,resolve}))})};
+        return new Proxy({},{get:(_target,key)=>key});
+    }});
+    return {render(){cursor=0;effects=[];nodes=[];module.exports.default({options,preferredOptionKey:preference});effects.forEach(run=>run());},
+        choose(key:string){nodes.find(node=>node.type==='DropdownMenu').props.onSelectionChange({currentKey:key});},
+        selected(){return Array.from(nodes.find(node=>node.type==='DropdownMenu')?.props.selectedKeys ?? []);},
+        setOptions(value:typeof options){options=value;},setActor(value:typeof actor){actor=value;},setPreference(value:string){preference=value;},
+        unmount(){slots.forEach(slot=>slot?.cleanup?.());},lookups,saves,get writes(){return writes;}};
+}
+const flushPreferences=()=>new Promise(resolve=>setImmediate(resolve));
+const comboOptions={direct:{label:'Direct',description:'',action:()=>{}},owned:{label:'Private torrent',description:'',action:()=>{}}};
+
+test('ComboButton restores a late available saved option without blocking ordinary options or refetching',async()=>{
+    const f=comboFixture();f.render();await flushPreferences();f.render();assert.deepEqual(f.selected(),['direct']);
+    f.lookups[0].resolve('owned');await flushPreferences();f.render();assert.deepEqual(f.selected(),['direct']);
+    f.setOptions(comboOptions);f.render();assert.deepEqual(f.selected(),['owned']);f.render();assert.equal(f.lookups.length,1);
+});
+test('ComboButton explicit choice wins over pending preference and later optional arrival',async()=>{
+    const f=comboFixture();f.render();await flushPreferences();f.render();f.choose('direct');f.render();
+    f.lookups[0].resolve('owned');await flushPreferences();f.setOptions(comboOptions);f.render();assert.deepEqual(f.selected(),['direct']);
+});
+test('ComboButton pending writes never revert a newer explicit choice',async()=>{
+    const f=comboFixture();f.setOptions(comboOptions);f.render();await flushPreferences();f.render();
+    f.choose('owned');f.render();await flushPreferences();f.choose('direct');f.render();await flushPreferences();
+    f.saves[1].resolve();f.saves[0].resolve();await flushPreferences();f.render();assert.deepEqual(f.selected(),['direct']);
+});
+test('ComboButton old identity preference-key and unmounted lookups cannot update selection',async()=>{
+    const f=comboFixture();f.setOptions(comboOptions);f.render();await flushPreferences();
+    f.setActor({id:8,username:'replacement'});f.render();await flushPreferences();
+    f.setPreference('other-key');f.render();await flushPreferences();const writes=f.writes;
+    f.lookups[0].resolve('owned');f.lookups[1].resolve('owned');await flushPreferences();assert.equal(f.writes,writes);
+    f.render();assert.deepEqual(f.selected(),['direct']);f.unmount();const after=f.writes;
+    f.lookups[2].resolve('owned');await flushPreferences();assert.equal(f.writes,after);
+});
+test('ComboButton removed and empty options fall back without rendering an obsolete action',async()=>{
+    const f=comboFixture();f.setOptions(comboOptions);f.render();await flushPreferences();f.lookups[0].resolve('owned');await flushPreferences();f.render();
+    assert.deepEqual(f.selected(),['owned']);f.setOptions({direct:comboOptions.direct});f.render();assert.deepEqual(f.selected(),['direct']);
+    f.setOptions({});f.render();assert.deepEqual(f.selected(),[]);assert.equal(f.lookups.length,1);
+});
+
+function gameDownloadFixture(delayedProviders = false, providerRequest?: (init: {signal: AbortSignal}) => Promise<any[]>,
+    ownedRequest?: (init: {signal: AbortSignal}) => Promise<boolean>) {
     const slots: any[] = []; let cursor = 0, effects: (() => void)[] = [];
     let nodes: {type: string; props: any}[] = [], providerCalls = 0;
-    const downloads: any[][] = [];
+    const downloads: any[][] = []; let stateWrites=0, ownedCalls=0;
     let actor = {id:7,username:'fixture'};
     let resolveProviders!: (value: any[]) => void;
     const providers = [{key: 'direct', name: 'Direct', description: 'Fixture'}];
@@ -17,7 +78,7 @@ function gameDownloadFixture(delayedProviders = false, providerRequest?: (init: 
     const react = {
         lazy: () => 'VariantManagerModal',
         useState(initial: any) {const i = cursor++; if (!(i in slots)) slots[i] = initial;
-            return [slots[i], (value: any) => {slots[i] = typeof value === 'function' ? value(slots[i]) : value;}];},
+            return [slots[i], (value: any) => {stateWrites++;slots[i] = typeof value === 'function' ? value(slots[i]) : value;}];},
         useRef(initial: any) {const i = cursor++; if (!(i in slots)) slots[i] = {current:initial}; return slots[i];},
         useLayoutEffect(callback: () => any, deps: any[]) {return react.useEffect(callback, deps);},
         useEffect(callback: () => any, deps: any[]) {const i = cursor++, previous = slots[i];
@@ -38,7 +99,7 @@ function gameDownloadFixture(delayedProviders = false, providerRequest?: (init: 
         if (name.endsWith('/CollectionState')) return {collectionState:{state:{}}};
         if (name.endsWith('/auth')) return {useAuth:() => ({state:{user:actor,loading:false,initializing:false}})};
         if (name.endsWith('/utils')) return {isAdmin:() => false,humanFileSize:String,starRatingAsString:() => ''};
-        if (name === 'Frontend/generated/endpoints') return {DownloadProviderEndpoint:{getProviders:(init: {signal: AbortSignal}) => {providerCalls++;return providerRequest ? providerRequest(init) : providerPromise;}},OwnedTorrentEndpoint:{available:async () => false},GameEndpoint:{}};
+        if (name === 'Frontend/generated/endpoints') return {DownloadProviderEndpoint:{getProviders:(init: {signal: AbortSignal}) => {providerCalls++;return providerRequest ? providerRequest(init) : providerPromise;}},OwnedTorrentEndpoint:{available:(init: {signal: AbortSignal}) => {ownedCalls++;return ownedRequest ? ownedRequest(init) : Promise.resolve(false);}},GameEndpoint:{}};
         if (name === 'Frontend/endpoints/endpoints') return {DownloadEndpoint:{downloadGame:(...args: any[]) => downloads.push(args)}};
         if (name === '@heroui/react') return new Proxy({useDisclosure:() => ({isOpen:false})} as any,{get:(value,key) => value[key] ?? key});
         if (name.endsWith('/VariantContentType')) return {default:Object.fromEntries(['BASE','DLC','PATCH','MOD','EXTRA','DEDICATED_SERVER'].map(value => [value,value]))};
@@ -54,9 +115,48 @@ function gameDownloadFixture(delayedProviders = false, providerRequest?: (init: 
         resolveProviders() {resolveProviders(providers);},
         setActor(value: typeof actor) {actor=value;},
         unmount() {slots.forEach(slot => slot?.cleanup?.());},
-        get downloads() {return downloads;}, get providerCalls() {return providerCalls;}, get nodes() {return nodes;}
+        get downloads() {return downloads;}, get providerCalls() {return providerCalls;}, get nodes() {return nodes;},
+        get stateWrites() {return stateWrites;}, get ownedCalls() {return ownedCalls;}
     };
 }
+
+test('pending optional capability cannot block exact ordinary downloads; late true appends without refetching', async () => {
+    let resolve!: (value: boolean) => void;
+    const f=gameDownloadFixture(false,undefined,() => new Promise(done => {resolve=done;}));
+    f.setVariants([downloadVariant(1,[baseContent(101,'Base')])]); f.render();
+    await new Promise(done => setImmediate(done)); f.render(); f.download();
+    assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[101]);
+    assert.deepEqual(Object.keys(f.nodes.find(node => node.type==='ComboButton')!.props.options),['direct']);
+    f.setVariants([downloadVariant(1,[baseContent(201,'New base')])]); f.render();
+    resolve(true); await new Promise(done => setImmediate(done)); f.render(); f.download();
+    assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[201]);
+    assert.deepEqual(Object.keys(f.nodes.find(node => node.type==='ComboButton')!.props.options),['direct','owned-snapshot-qb']);
+    assert.equal(f.providerCalls,1);assert.equal(f.ownedCalls,1);
+});
+
+test('optional rejection retains ordinary providers; ordinary failure is not hidden by optional availability', async () => {
+    const f=gameDownloadFixture(false,undefined,async () => {throw new TypeError('Synthetic optional failure');});
+    f.setVariants([downloadVariant(1,[baseContent(101,'Base')])]);f.render();await new Promise(done => setImmediate(done));f.render();f.download();
+    assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[101]);assert.equal(f.nodes.some(node => node.props.role==='alert'),false);
+    const failed=gameDownloadFixture(false,async () => {throw new TypeError('Synthetic ordinary failure');},async () => true);
+    failed.setVariants([downloadVariant(1,[baseContent(101,'Base')])]);failed.render();await new Promise(done => setImmediate(done));failed.render();
+    assert.equal(failed.nodes.some(node => node.props.role==='alert'),true);
+    assert.equal(failed.nodes.some(node => node.type==='ComboButton'),false);
+});
+
+test('late optional results cannot attach after identity replacement or unmount', async () => {
+    const pending: {signal: AbortSignal; resolve: (value: boolean) => void}[]=[];
+    const f=gameDownloadFixture(false,undefined,init => new Promise(resolve => pending.push({signal:init.signal,resolve})));
+    f.setVariants([downloadVariant(1,[baseContent(101,'Base')])]);f.render();await new Promise(done => setImmediate(done));f.render();
+    f.setActor({id:8,username:'replacement'});f.render();await new Promise(done => setImmediate(done));f.render();
+    assert.equal(pending[0].signal.aborted,true);
+    const writes=f.stateWrites;pending[0].resolve(true);await new Promise(done => setImmediate(done));
+    assert.equal(f.stateWrites,writes);f.render();
+    assert.deepEqual(Object.keys(f.nodes.find(node => node.type==='ComboButton')!.props.options),['direct']);
+    f.unmount();assert.equal(pending[1].signal.aborted,true);
+    const unmountedWrites=f.stateWrites;pending[1].resolve(true);await new Promise(done => setImmediate(done));
+    assert.equal(f.stateWrites,unmountedWrites);
+});
 
 test('provider failure shows honest error and explicit retry restores current exact download without automatic retries', async () => {
     let calls=0;

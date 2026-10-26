@@ -154,11 +154,15 @@ export default function GameView() {
         void (async () => {
             try {
                 const init = {signal: owner.controller.signal};
-                const [providers, owned] = await Promise.all([DownloadProviderEndpoint.getProviders(init), OwnedTorrentEndpoint.available(init).catch(() => false)]);
-                if (current()) setProviderLoad({owner, status: "ready", providers: owned ? [...providers, {
+                // An optional capability must never delay ordinary download methods.
+                const ownedAvailable = Promise.resolve().then(() => OwnedTorrentEndpoint.available(init)).catch(() => false);
+                const providers = await DownloadProviderEndpoint.getProviders(init);
+                if (!current()) return;
+                setProviderLoad({owner, status: "ready", providers});
+                if (await ownedAvailable && current()) setProviderLoad({owner, status: "ready", providers: [...providers, {
                     key: "owned-snapshot-qb", name: "Private torrent", priority: -100,
                     description: "Prepare an immutable copy of precisely this selection for private torrent download."
-                }] : providers});
+                }]});
             } catch {
                 if (current()) setProviderLoad({owner, status: "error"});
             }

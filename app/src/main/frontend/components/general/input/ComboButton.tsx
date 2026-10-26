@@ -1,4 +1,4 @@
-import {useEffect, useState} from "react";
+import {useLayoutEffect, useRef, useState} from "react";
 import {
     Button,
     ButtonGroup,
@@ -10,6 +10,7 @@ import {
 } from "@heroui/react";
 import { CaretDownIcon } from "@phosphor-icons/react";
 import {useUserPreferenceService} from "Frontend/util/user-preference-service";
+import {useAuth} from "Frontend/util/auth";
 
 export interface ComboButtonOption {
     label: string;
@@ -25,30 +26,46 @@ export interface ComboButtonProps {
 }
 
 export default function ComboButton({options, preferredOptionKey, description}: ComboButtonProps) {
-    const [selectedOption, setSelectedOption] = useState(new Set([Object.keys(options)[0]]));
-    const selectedOptionValue = Array.from(selectedOption)[0];
+    type Owner = {identity: string; active: boolean; manual: boolean};
+    const auth = useAuth();
+    const identity = JSON.stringify([preferredOptionKey, auth.state.user?.id, auth.state.user?.username,
+        auth.state.user?.roles, auth.state.loading, auth.state.initializing]);
+    const ownerRef = useRef<Owner | undefined>(undefined);
+    const [selection, setSelection] = useState<{owner?: Owner; key?: string}>({});
+    const desired = selection.owner?.identity === identity && selection.owner.active ? selection.key : undefined;
+    // Keep a saved key even while its optional capability is unavailable. Ordinary
+    // options remain usable, and a later append can restore the saved preference.
+    const selectedOptionValue = desired && options[desired] ? desired : Object.keys(options)[0];
+    const selectedOption = new Set(selectedOptionValue ? [selectedOptionValue] : []);
     const userPreferenceService = useUserPreferenceService();
 
-    useEffect(() => {
-        if (!preferredOptionKey) return;
-
-        userPreferenceService.get(preferredOptionKey).then((key) => {
-            if (key && options[key]) {
-                setSelectedOption(new Set([key]));
-            } else {
-                setSelectedOption(new Set([Object.keys(options)[0]]));
-            }
-        })
-    }, []);
-
-    async function onSelectionChange(keys: SharedSelection) {
-        if (!keys.currentKey) return;
-
-        if (preferredOptionKey) {
-            await userPreferenceService.set(preferredOptionKey, keys.currentKey);
+    useLayoutEffect(() => {
+        const owner = {identity, active: true, manual: false};
+        ownerRef.current = owner;
+        setSelection({owner});
+        if (preferredOptionKey && !auth.state.loading && !auth.state.initializing) {
+            void Promise.resolve().then(() => {
+                if (!owner.active) return undefined;
+                return userPreferenceService.get(preferredOptionKey);
+            }).then(key => {
+                if (owner.active && ownerRef.current === owner && !owner.manual) setSelection({owner, key});
+            }).catch(() => { /* A preference failure must not hide ordinary options. */ });
         }
+        return () => {owner.active = false; if (ownerRef.current === owner) ownerRef.current = undefined;};
+        // The service object is recreated each render; identity owns this lookup.
+    }, [identity]);
 
-        setSelectedOption(new Set([keys.currentKey]));
+    function onSelectionChange(keys: SharedSelection) {
+        const key = keys.currentKey, owner = ownerRef.current;
+        if (!key || !options[key] || !owner?.active || owner.identity !== identity) return;
+        owner.manual = true;
+        setSelection({owner, key}); // Never wait for persistence before updating the UI.
+        if (preferredOptionKey) {
+            void Promise.resolve().then(() => {
+                if (owner.active && ownerRef.current === owner) return userPreferenceService.set(preferredOptionKey, key);
+                return undefined;
+            }).catch(() => { /* Keep the explicit choice if persistence fails. */ });
+        }
     }
 
     return options[selectedOptionValue] && (

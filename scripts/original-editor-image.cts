@@ -8,6 +8,11 @@ interface FixtureInput { origin: string; username: string; password: string; vie
 interface SavedContent { id: number; name: string; required: boolean; defaultSelected: boolean; type: string; memberNames: string[]; }
 interface SavedVariant { id: number; version: string; default: boolean; contents: SavedContent[]; }
 interface SavedGame { id: number; variants: SavedVariant[]; }
+const gameDiagnostic = () => ({phase: 'not-started', truncated: false, pageerrorSeen: false,
+  domObserved: false, profilePresent: false, signInPresent: false, loginFormPresent: false, errorHeadingPresent: false,
+  families: Object.fromEntries(['game', 'library', 'user'].map(key => [key, {count: 0, status: null as number | null,
+    finished: false, failed: false, canceled: false, bodyPending: false, bodyClassified: false,
+    bodyUnavailable: false, authNull: false, authMatch: false, arrayResponse: false, targetPresent: false}]))});
 const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', success: false,
   loginWithin15Seconds: false, nonDefaultPreserved: false, unrelatedDraftPreserved: false,
   adminProfileIdentityVerified: false, ordinaryProfileIdentityVerified: false,
@@ -23,11 +28,76 @@ const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', s
   escapeFocusRestored: false, keepEditingFocusRestored: false, unexpectedNativeDialog: false, editorDialogStillPresent: false,
   closePhase: 'not-started', closeSnapshotObserved: false, closePromptPresent: false,
   closeKeepFocused: false, closeButtonFocused: false, closeDraftPresent: false,
+  gameDiagnostics: gameDiagnostic(),
   sandboxDisabledForIsolatedSyntheticAppOnly: true};
 let browser: any;
 let zip = '';
 let failed = false;
 let totalTimer: ReturnType<typeof setTimeout>;
+/** Only this game navigation generation; fixed families and <=4 observations each.
+ * Response values exist transiently for synthetic boolean classification, never receipts.
+ */
+function observeGameNavigation(page: any, input: FixtureInput) {
+  const diagnostic = gameDiagnostic(); diagnostic.phase = 'observing';
+  let active = true;
+  const latest = new Map<string, any>();
+  const timers = new Set<ReturnType<typeof setTimeout>>();
+  function family(request: any): string | undefined {
+    try {
+      const url = new URL(request.url());
+      if (url.origin !== input.origin || request.method() !== 'POST') return;
+      return ({'/connect/GameEndpoint/getAll': 'game', '/connect/LibraryEndpoint/getAll': 'library',
+        '/connect/UserEndpoint/getUserInfo': 'user'} as Record<string, string>)[url.pathname];
+    } catch { return; }
+  }
+  function current(request: any) {
+    const key = family(request); return active && key && latest.get(key) === request ? diagnostic.families[key] : undefined;
+  }
+  const requested = (request: any) => {
+    const key = family(request); if (!active || !key) return;
+    try {
+      const frame = request.frame();
+      if (frame !== page.mainFrame() || new URL(frame.url()).pathname !== '/game/34000') return;
+    } catch { return; }
+    const before = diagnostic.families[key];
+    if (before.count === 4) {diagnostic.truncated = true; return;}
+    diagnostic.families[key] = {...gameDiagnostic().families[key], count: before.count + 1}; latest.set(key, request);
+  };
+  const responded = (response: any) => {
+    const request = response.request(), row = current(request); if (!row) return;
+    const status = response.status(); if (Number.isInteger(status) && status >= 100 && status <= 599) row.status = status;
+    if (status !== 200 || family(request) === 'library') return;
+    // No unbounded/unknown-size response-body observation. Missing length stays unknown.
+    const length = response.headers()['content-length'];
+    if (!/^[0-9]+$/.test(length ?? '') || Number(length) > 65536) {row.bodyUnavailable = true; return;}
+    row.bodyPending = true;
+    let timer: ReturnType<typeof setTimeout>;
+    void Promise.race([response.buffer(), new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Observation deadline')), 1000); timers.add(timer);
+    })]).then((bytes: any) => {
+      if (!current(request)) return;
+      if (bytes.length > 65536) throw new Error('Observation size');
+      const value = JSON.parse(bytes.toString('utf8'));
+      row.bodyClassified = true;
+      if (family(request) === 'user') {
+        row.authNull = value === null;
+        row.authMatch = value?.username === input.username && value?.enabled === true && Number.isSafeInteger(value?.id) && value.id > 0;
+      } else {row.arrayResponse = Array.isArray(value); row.targetPresent = Array.isArray(value) && value.some(item => item?.id === 34000);}
+    }).catch(() => {if (current(request)) row.bodyUnavailable = true;}).finally(() => {
+      clearTimeout(timer!); timers.delete(timer!); if (current(request)) row.bodyPending = false;
+    });
+  };
+  const finished = (request: any) => {const row = current(request); if (row) row.finished = true;};
+  const requestFailed = (request: any) => {const row = current(request); if (row) {row.failed = true; row.canceled = request.failure()?.errorText === 'net::ERR_ABORTED';}};
+  const pageerror = () => {if (active) diagnostic.pageerrorSeen = true;};
+  page.on('request', requested); page.on('response', responded); page.on('requestfinished', finished);
+  page.on('requestfailed', requestFailed); page.on('pageerror', pageerror);
+  return {diagnostic, stop() {
+    active = false; diagnostic.phase = 'complete'; timers.forEach(clearTimeout); timers.clear(); latest.clear();
+    page.off('request', requested); page.off('response', responded); page.off('requestfinished', finished);
+    page.off('requestfailed', requestFailed); page.off('pageerror', pageerror);
+  }};
+}
 async function privateInput(): Promise<FixtureInput> {
   process.stdin.setEncoding('utf8'); let text = '';
   for await (const part of process.stdin) { text += part; if (text.length > 2048) throw new Error('Input bound'); }
@@ -138,17 +208,20 @@ async function run(): Promise<void> {
   proof.editorPhase = 'opening-game';
   const gameReadyDeadline = performance.now() + 15000;
   const gameReadyRemaining = () => { const value = Math.floor(gameReadyDeadline - performance.now()); if (value < 1) throw new Error('Game-ready deadline'); return value; };
-  await page.goto(input.origin + '/game/34000', {waitUntil: 'domcontentloaded', timeout: gameReadyRemaining()});
-  proof.editorPhase = 'game-ready';
+  const navigationObservation = observeGameNavigation(page, input);
+  proof.gameDiagnostics = navigationObservation.diagnostic;
   // MainLayout's footer is not evidence that asynchronous catalogue data has
   // rendered GameView. Require the actual route, original Version control and
   // pinned selection together, within one navigation+readiness15s deadline.
   try {
+    await page.goto(input.origin + '/game/34000', {waitUntil: 'domcontentloaded', timeout: gameReadyRemaining()});
+    proof.editorPhase = 'game-ready';
     await page.waitForFunction((version: string) => location.pathname === '/game/34000' &&
       document.body.textContent?.includes('Unofficial Gameyfin ' + version) && document.body.textContent?.includes('Downloading: Normal 0.9') &&
       [...document.querySelectorAll('button[aria-haspopup="listbox"]')].filter(node => node.parentElement?.textContent?.includes('Version')).length === 1,
     {timeout: gameReadyRemaining()}, input.expectedVersion);
   } finally {
+    navigationObservation.stop();
     // Diagnostic only: independently sample each predicate even when the combined
     // gate fails. Never replace that failure, retry navigation, or retain DOM text.
     let snapshotTimer: ReturnType<typeof setTimeout> | undefined;
@@ -157,12 +230,19 @@ async function run(): Promise<void> {
         gameRouteMatches: location.pathname === '/game/34000',
         footerMatches: document.body.textContent?.includes('Unofficial Gameyfin ' + version) === true,
         versionTriggerUnique: [...document.querySelectorAll('button[aria-haspopup="listbox"]')].filter(node => node.parentElement?.textContent?.includes('Version')).length === 1,
-        defaultVersionObserved: document.body.textContent?.includes('Downloading: Normal 0.9') === true
+        defaultVersionObserved: document.body.textContent?.includes('Downloading: Normal 0.9') === true,
+        profilePresent: document.querySelectorAll('nav div[data-slot="trigger"][aria-haspopup="true"] button').length === 1,
+        signInPresent: document.querySelectorAll('nav button.gradient-primary').length === 1 && !document.querySelector('nav button.size-8'),
+        loginFormPresent: !!document.querySelector('input[name="username"]'),
+        errorHeadingPresent: [...document.querySelectorAll('h1')].some(node => node.textContent?.trim().startsWith('404 – '))
       }), input.expectedVersion), new Promise<never>((_, reject) => { snapshotTimer = setTimeout(() => reject(new Error('Game-ready observation deadline')), 1000); })]);
       proof.gameRouteMatches = snapshot.gameRouteMatches === true;
       proof.footerMatches = snapshot.footerMatches === true;
       proof.versionTriggerUnique = snapshot.versionTriggerUnique === true;
       proof.defaultVersionObserved = snapshot.defaultVersionObserved === true;
+      Object.assign(proof.gameDiagnostics, {domObserved: true, profilePresent: snapshot.profilePresent === true,
+        signInPresent: snapshot.signInPresent === true, loginFormPresent: snapshot.loginFormPresent === true,
+        errorHeadingPresent: snapshot.errorHeadingPresent === true});
     } catch { /* Missing diagnostic evidence remains false; the original gate controls acceptance. */ }
     finally { if (snapshotTimer) clearTimeout(snapshotTimer); }
   }

@@ -9,6 +9,22 @@ import kotlin.test.*
 
 /** Daemon-free rejection contracts; these never stand in for real provider/proxy acceptance. */
 class FixtureValidationTest {
+    @Test fun `editor game diagnostics admit only capped fixed value-free observations`() {
+        fun sample(extra: Map<String, Any?> = emptyMap(), count: Any = 1, status: Any? = 200): tools.jackson.databind.JsonNode {
+            val row = listOf("finished", "failed", "canceled", "bodyPending", "bodyClassified", "bodyUnavailable",
+                "authNull", "authMatch", "arrayResponse", "targetPresent").associateWith { false } + mapOf("count" to count, "status" to status)
+            return FixtureRuntime.tree(FixtureRuntime.json.writeValueAsString(
+                listOf("truncated", "pageerrorSeen", "domObserved", "profilePresent", "signInPresent", "loginFormPresent", "errorHeadingPresent")
+                    .associateWith { false } + mapOf("phase" to "complete", "families" to listOf("game", "library", "user").associateWith { row }) + extra))
+        }
+        validateEditorGameDiagnostics(sample()); validateEditorGameDiagnostics(sample(count = 0, status = null))
+        assertFails { validateEditorGameDiagnostics(sample(extra = mapOf("rawError" to "forbidden"))) }
+        assertFails { validateEditorGameDiagnostics(sample(extra = mapOf("phase" to "unbounded"))) }
+        assertFails { validateEditorGameDiagnostics(sample(extra = mapOf("pageerrorSeen" to "true"))) }
+        assertFails { validateEditorGameDiagnostics(sample(count = 5)) }
+        assertFails { validateEditorGameDiagnostics(sample(status = 600)) }
+        assertFails { validateEditorGameDiagnostics(sample(status = "200")) }
+    }
     @Test fun `images require exact config IDs or digest references never mutable tags`() {
         val hash = "a".repeat(64)
         requireFixtureImage("sha256:$hash")

@@ -220,6 +220,7 @@ class OriginalEditorImageFixtureTest {
             require(closePhase in setOf("not-started", "first-close", "first-prompt", "initial-focus", "escape", "escape-result",
                 "second-close", "second-prompt", "keep-editing", "keep-result", "third-close", "third-prompt", "discard", "complete"))
             proof["closePhase"] = closePhase
+            proof["gameDiagnostics"] = validateEditorGameDiagnostics(browserProof["gameDiagnostics"])
             proof["editorObservations"] = listOf("gameRouteMatches", "footerMatches", "versionTriggerUnique", "defaultVersionObserved",
                 "targetOptionObserved", "targetVersionObserved", "editorDialogObserved", "splitPreviewObserved", "typeTriggerFound", "typeOptionsSeen",
                 "editorClosed", "savedVersionShown", "savedBaseShown", "savedPatchShown", "broadOriginalAbsent",
@@ -292,4 +293,23 @@ class OriginalEditorImageFixtureTest {
     companion object {
         const val BROWSER = "ghcr.io/puppeteer/puppeteer@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3"
     }
+}
+
+/** Closed, value-free navigation observation schema; never an acceptance predicate. */
+internal fun validateEditorGameDiagnostics(node: tools.jackson.databind.JsonNode): tools.jackson.databind.JsonNode {
+    val flags = setOf("truncated", "pageerrorSeen", "domObserved", "profilePresent", "signInPresent", "loginFormPresent", "errorHeadingPresent")
+    require(node.isObject && node.properties().map { it.key }.toSet() == flags + setOf("phase", "families"))
+    require(node["phase"].isTextual && node["phase"].asText() in setOf("not-started", "observing", "complete"))
+    flags.forEach { require(node[it].isBoolean) }
+    val families = node["families"]
+    require(families.isObject && families.properties().map { it.key }.toSet() == setOf("game", "library", "user"))
+    val observations = setOf("finished", "failed", "canceled", "bodyPending", "bodyClassified", "bodyUnavailable",
+        "authNull", "authMatch", "arrayResponse", "targetPresent")
+    families.properties().forEach { (_, row) ->
+        require(row.isObject && row.properties().map { it.key }.toSet() == observations + setOf("count", "status"))
+        require(row["count"].isIntegralNumber && row["count"].longValue() in 0L..4L)
+        require(row["status"].isNull || row["status"].isIntegralNumber && row["status"].longValue() in 100L..599L)
+        observations.forEach { require(row[it].isBoolean) }
+    }
+    return node
 }

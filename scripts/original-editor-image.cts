@@ -15,6 +15,9 @@ const proof = {scope: 'published-2.4.6-synthetic-original-editor', stage: 'input
   ordinaryUserEditorAbsent: false, cleanupConfirmed: false,
   loginPhase: 'not-started', profileResponseObserved: false, profileIdentityMatched: false,
   authenticatedLandingObserved: false, profileTriggerObserved: false, profileDomIdentityMatched: false,
+  editorPhase: 'not-started', gameRouteMatches: false, footerMatches: false, versionTriggerUnique: false,
+  defaultVersionObserved: false, targetOptionObserved: false, targetVersionObserved: false,
+  editorDialogObserved: false, splitPreviewObserved: false,
   sandboxDisabledForIsolatedSyntheticAppOnly: true};
 let browser: any;
 let zip = '';
@@ -126,17 +129,53 @@ async function run(): Promise<void> {
   proof.stage = 'normal-login';
   await login(page, input, input.username, input.password); proof.loginWithin15Seconds = true; proof.adminProfileIdentityVerified = true;
   proof.stage = 'editor';
-  await page.goto(input.origin + '/game/34000', {waitUntil: 'domcontentloaded', timeout: 15000});
-  await page.waitForFunction(() => document.body.textContent?.includes('Unofficial Gameyfin 2.4.6'), {timeout: 15000});
+  proof.editorPhase = 'opening-game';
+  const gameReadyDeadline = performance.now() + 15000;
+  const gameReadyRemaining = () => { const value = Math.floor(gameReadyDeadline - performance.now()); if (value < 1) throw new Error('Game-ready deadline'); return value; };
+  await page.goto(input.origin + '/game/34000', {waitUntil: 'domcontentloaded', timeout: gameReadyRemaining()});
+  proof.editorPhase = 'game-ready';
+  // MainLayout's footer is not evidence that asynchronous catalogue data has
+  // rendered GameView. Require the actual route, original Version control and
+  // pinned selection together, within one navigation+readiness15s deadline.
+  try {
+    await page.waitForFunction(() => location.pathname === '/game/34000' &&
+      document.body.textContent?.includes('Unofficial Gameyfin 2.4.6') && document.body.textContent?.includes('Downloading: Normal 0.9') &&
+      [...document.querySelectorAll('button[aria-haspopup="listbox"]')].filter(node => node.parentElement?.textContent?.includes('Version')).length === 1,
+    {timeout: gameReadyRemaining()});
+  } finally {
+    // Diagnostic only: independently sample each predicate even when the combined
+    // gate fails. Never replace that failure, retry navigation, or retain DOM text.
+    let snapshotTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const snapshot = await Promise.race([page.evaluate(() => ({
+        gameRouteMatches: location.pathname === '/game/34000',
+        footerMatches: document.body.textContent?.includes('Unofficial Gameyfin 2.4.6') === true,
+        versionTriggerUnique: [...document.querySelectorAll('button[aria-haspopup="listbox"]')].filter(node => node.parentElement?.textContent?.includes('Version')).length === 1,
+        defaultVersionObserved: document.body.textContent?.includes('Downloading: Normal 0.9') === true
+      })), new Promise<never>((_, reject) => { snapshotTimer = setTimeout(() => reject(new Error('Game-ready observation deadline')), 1000); })]);
+      proof.gameRouteMatches = snapshot.gameRouteMatches === true;
+      proof.footerMatches = snapshot.footerMatches === true;
+      proof.versionTriggerUnique = snapshot.versionTriggerUnique === true;
+      proof.defaultVersionObserved = snapshot.defaultVersionObserved === true;
+    } catch { /* Missing diagnostic evidence remains false; the original gate controls acceptance. */ }
+    finally { if (snapshotTimer) clearTimeout(snapshotTimer); }
+  }
   // The original Version select, not a direct endpoint/state mutation.
-  const version = await page.evaluateHandle(() => [...document.querySelectorAll('button[aria-haspopup="listbox"]')]
-    .find(node => node.parentElement?.textContent?.includes('Version')));
+  proof.editorPhase = 'version-trigger';
+  const version = await page.evaluateHandle(() => {
+    const buttons = [...document.querySelectorAll('button[aria-haspopup="listbox"]')].filter(node => node.parentElement?.textContent?.includes('Version'));
+    if (buttons.length !== 1) throw new Error('Unique version control'); return buttons[0];
+  });
   await version.asElement().click(); await version.dispose();
-  await page.waitForSelector('[role="option"]', {timeout: 5000});
+  proof.editorPhase = 'version-options';
+  await page.waitForFunction(() => [...document.querySelectorAll('[role="option"]')].some(option => option.textContent?.trim() === 'Normal 1.0 (latest)'), {timeout: 5000});
+  proof.targetOptionObserved = true; proof.editorPhase = 'selected-version';
   await clickText(page, 'Normal 1.0 (latest)');
   await page.waitForFunction(() => document.body.textContent?.includes('Downloading: Normal 1.0'), {timeout: 5000});
+  proof.targetVersionObserved = true; proof.editorPhase = 'editor-open';
   await clickText(page, 'Versions & content');
   await page.waitForSelector('[role="dialog"] input', {timeout: 5000});
+  proof.editorDialogObserved = true; proof.editorPhase = 'split-preview';
   const split = await page.evaluateHandle(() => {
     let node: Element | null = [...document.querySelectorAll('[role="dialog"] p')].find(text => text.textContent === '/fixture/Normal 1.0') ?? null;
     while (node && ![...node.querySelectorAll('button')].some(button => button.textContent?.trim() === 'Split into base / extras')) node = node.parentElement;
@@ -144,6 +183,7 @@ async function run(): Promise<void> {
   });
   await split.asElement().click(); await split.dispose();
   await page.waitForFunction(() => [...document.querySelectorAll('input')].some(input => input.value === '/fixture/Normal 1.0/Base'), {timeout: 5000});
+  proof.splitPreviewObserved = true; proof.editorPhase = 'base-classification';
   // Classify only the reviewed Base child; Patch remains optional/default-selected.
   const type = await page.evaluateHandle(() => {
     let node: Element | null = [...document.querySelectorAll('input')].find(input => input.value === '/fixture/Normal 1.0/Base') ?? null;
@@ -152,15 +192,19 @@ async function run(): Promise<void> {
   });
   await type.asElement().click(); await type.dispose();
   await clickText(page, 'BASE');
+  proof.editorPhase = 'draft';
   const edition = await page.evaluateHandle(() => {
     const label = [...document.querySelectorAll('label')].find(node => node.textContent === 'Edition');
     return label?.htmlFor ? document.getElementById(label.htmlFor) : null;
   });
   await edition.asElement().type('Unrelated draft retained'); await edition.dispose();
+  proof.editorPhase = 'replace';
   expectedDialog = REPLACE;
   const savedResponse = page.waitForResponse((response: any) => new URL(response.url()).pathname === '/connect/GameEndpoint/attachVariantContent' && response.status() === 200, {timeout: 10000});
   await clickText(page, 'Replace base selection', '[role="dialog"]');
+  proof.editorPhase = 'replacement-response';
   const saved: SavedGame = await (await savedResponse).json();
+  proof.editorPhase = 'canonical-check';
   const selected = saved.variants.find(variant => variant.id === 134001);
   const pinned = saved.variants.find(variant => variant.id === 134000);
   if (!selected || !pinned?.default || selected.default || selected.version !== '1.0' || selected.contents.some(content => content.id === 268000)) throw new Error('Canonical replacement');
@@ -170,14 +214,18 @@ async function run(): Promise<void> {
   // The two actual grouped Base files are proved from the clicked ZIP below.
   if (!base?.required || !patch?.defaultSelected || patch.required || base.memberNames.join(',') !== 'Base' || selected.contents.length !== 2) throw new Error('Exact canonical contents');
   proof.nonDefaultPreserved = true;
+  proof.editorPhase = 'draft-preserved';
   await page.waitForFunction(() => {
     const label = [...document.querySelectorAll('label')].find(node => node.textContent === 'Edition');
     return label?.htmlFor && (document.getElementById(label.htmlFor) as HTMLInputElement)?.value === 'Unrelated draft retained';
   }, {timeout: 5000}); proof.unrelatedDraftPreserved = true;
+  proof.editorPhase = 'closing-editor';
   expectedDialog = DISCARD; await clickText(page, 'Close', '[role="dialog"]');
+  proof.editorPhase = 'cards';
   await page.waitForFunction(() => !document.querySelector('[role="dialog"]') && document.body.textContent?.includes('Downloading: Normal 1.0') &&
     document.body.textContent?.includes('Base') && document.body.textContent?.includes('patch.bin') && !document.body.textContent?.includes('Broad original'), {timeout: 5000});
   proof.immediateCanonicalCards = true;
+  proof.editorPhase = 'complete';
   proof.stage = 'immediate-download';
   let exactDownload = false;
   page.on('request', (request: any) => {

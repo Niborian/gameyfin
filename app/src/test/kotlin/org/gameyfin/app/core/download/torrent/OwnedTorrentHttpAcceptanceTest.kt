@@ -37,7 +37,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration
 import org.springframework.boot.persistence.autoconfigure.EntityScan
 import org.springframework.boot.test.context.SpringBootTest
-import org.springframework.boot.test.context.TestConfiguration
+import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Import
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories
@@ -272,7 +272,7 @@ class OwnedTorrentHttpAcceptanceTest @Autowired internal constructor(
         write(value)
     }.toByteArray()
 
-    @TestConfiguration(proxyBeanMethods = false)
+    @Configuration(proxyBeanMethods = false)
     @EnableAutoConfiguration
     @EntityScan("org.gameyfin.app")
     @EnableJpaRepositories("org.gameyfin.app")

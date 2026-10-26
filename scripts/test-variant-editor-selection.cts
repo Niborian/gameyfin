@@ -5,10 +5,11 @@ const fs = require('node:fs'), path = require('node:path'), vm = require('node:v
 const {createRequire} = require('node:module');
 const ts = process.env.TEST_TYPESCRIPT_MODULE ? require(process.env.TEST_TYPESCRIPT_MODULE) : createRequire(path.resolve(__dirname,'../app/package.json'))('typescript');
 
-function gameDownloadFixture(delayedProviders = false) {
+function gameDownloadFixture(delayedProviders = false, providerRequest?: (init: {signal: AbortSignal}) => Promise<any[]>) {
     const slots: any[] = []; let cursor = 0, effects: (() => void)[] = [];
     let nodes: {type: string; props: any}[] = [], providerCalls = 0;
     const downloads: any[][] = [];
+    let actor = {id:7,username:'fixture'};
     let resolveProviders!: (value: any[]) => void;
     const providers = [{key: 'direct', name: 'Direct', description: 'Fixture'}];
     const providerPromise = delayedProviders ? new Promise<any[]>(resolve => {resolveProviders = resolve;}) : Promise.resolve(providers);
@@ -35,9 +36,9 @@ function gameDownloadFixture(delayedProviders = false) {
         if (name === 'valtio/react') return {useSnapshot:(value: any) => value};
         if (name.endsWith('/GameState')) return {gameState:state};
         if (name.endsWith('/CollectionState')) return {collectionState:{state:{}}};
-        if (name.endsWith('/auth')) return {useAuth:() => ({state:{user:{id:7,username:'fixture'},loading:false,initializing:false}})};
+        if (name.endsWith('/auth')) return {useAuth:() => ({state:{user:actor,loading:false,initializing:false}})};
         if (name.endsWith('/utils')) return {isAdmin:() => false,humanFileSize:String,starRatingAsString:() => ''};
-        if (name === 'Frontend/generated/endpoints') return {DownloadProviderEndpoint:{getProviders:() => {providerCalls++;return providerPromise;}},OwnedTorrentEndpoint:{available:async () => false},GameEndpoint:{}};
+        if (name === 'Frontend/generated/endpoints') return {DownloadProviderEndpoint:{getProviders:(init: {signal: AbortSignal}) => {providerCalls++;return providerRequest ? providerRequest(init) : providerPromise;}},OwnedTorrentEndpoint:{available:async () => false},GameEndpoint:{}};
         if (name === 'Frontend/endpoints/endpoints') return {DownloadEndpoint:{downloadGame:(...args: any[]) => downloads.push(args)}};
         if (name === '@heroui/react') return new Proxy({useDisclosure:() => ({isOpen:false})} as any,{get:(value,key) => value[key] ?? key});
         if (name.endsWith('/VariantContentType')) return {default:Object.fromEntries(['BASE','DLC','PATCH','MOD','EXTRA','DEDICATED_SERVER'].map(value => [value,value]))};
@@ -51,10 +52,40 @@ function gameDownloadFixture(delayedProviders = false) {
         selectVariant(id: number) {nodes.find(node => node.type === 'Select' && node.props.label === 'Version')!.props.onSelectionChange(new Set([String(id)]));},
         toggleOptional(selected: boolean) {nodes.find(node => node.type === 'Checkbox' && !node.props.isDisabled)!.props.onValueChange(selected);},
         resolveProviders() {resolveProviders(providers);},
+        setActor(value: typeof actor) {actor=value;},
         unmount() {slots.forEach(slot => slot?.cleanup?.());},
-        get downloads() {return downloads;}, get providerCalls() {return providerCalls;}
+        get downloads() {return downloads;}, get providerCalls() {return providerCalls;}, get nodes() {return nodes;}
     };
 }
+
+test('provider failure shows honest error and explicit retry restores current exact download without automatic retries', async () => {
+    let calls=0;
+    const f=gameDownloadFixture(false, async () => {if (++calls===1) throw new TypeError('Synthetic fetch failure'); return [{key:'direct',name:'Direct'}];});
+    f.setVariants([downloadVariant(1,[baseContent(101,'Base')])]);
+    f.render(); await new Promise(resolve => setImmediate(resolve)); f.render();
+    assert.equal(f.nodes.some(node => node.props.role==='alert'),true);
+    assert.equal(f.nodes.some(node => node.type==='ComboButton'),false);
+    f.render(); assert.equal(f.providerCalls,1);
+    f.nodes.find(node => node.type==='Button' && node.props.children==='Retry download methods')!.props.onPress();
+    f.render(); await new Promise(resolve => setImmediate(resolve)); f.render();
+    assert.equal(f.nodes.some(node => node.props.role==='alert'),false);
+    f.download(); assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[101]);
+    f.setVariants([downloadVariant(1,[baseContent(201,'Replacement')])]); f.render(); f.download();
+    assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[201]); assert.equal(f.providerCalls,2);
+});
+
+test('provider generation aborts on identity change and unmount; late old results and old actions cannot attach', async () => {
+    const pending: {signal: AbortSignal; resolve: (value: any[]) => void}[]=[];
+    const f=gameDownloadFixture(false, init => new Promise(resolve => pending.push({signal:init.signal,resolve})));
+    f.setVariants([downloadVariant(1,[baseContent(101,'Base')])]); f.render();
+    f.setActor({id:8,username:'replacement'}); f.render();
+    assert.equal(pending[0].signal.aborted,true);
+    pending[0].resolve([{key:'old',name:'Stale'}]); await new Promise(resolve => setImmediate(resolve)); f.render();
+    assert.equal(f.nodes.some(node => node.type==='ComboButton'),false);
+    pending[1].resolve([{key:'direct',name:'Direct'}]); await new Promise(resolve => setImmediate(resolve)); f.render();
+    const action=f.nodes.find(node => node.type==='ComboButton')!.props.options.direct.action;
+    f.unmount(); assert.equal(pending[1].signal.aborted,true); action(); assert.equal(f.downloads.length,0);
+});
 
 function downloadVariant(id: number, contents: any[]) {
     return {...variant(id,id===1),tags:[],contents};

@@ -45,6 +45,8 @@ import VariantLinkStatus from "Frontend/generated/org/gameyfin/app/games/entitie
 import VariantContentType from "Frontend/generated/org/gameyfin/app/games/entities/VariantContentType";
 
 const VariantManagerModal = lazy(() => import("Frontend/components/general/modals/VariantManagerModal"));
+type ProviderOwner = {key: string; controller: AbortController};
+type ProviderList = Awaited<ReturnType<typeof DownloadProviderEndpoint.getProviders>>;
 
 export default function GameView() {
     const {gameId} = useParams();
@@ -60,7 +62,14 @@ export default function GameView() {
     const game = gameId ? state.state[parseInt(gameId)] : undefined;
     const collections = useSnapshot(collectionState).state;
 
-    const [downloadProviders, setDownloadProviders] = useState<Awaited<ReturnType<typeof DownloadProviderEndpoint.getProviders>>>();
+    const [providerLoad, setProviderLoad] = useState<{owner?: ProviderOwner; status: "loading" | "ready" | "error"; providers?: ProviderList}>({status: "loading"});
+    const [providerRetry, setProviderRetry] = useState(0);
+    const providerOwner = useRef<ProviderOwner | undefined>(undefined);
+    const providerOwnerKey = JSON.stringify([gameId, auth.state.user?.id, auth.state.user?.username,
+        auth.state.user?.roles, auth.state.loading, auth.state.initializing]);
+    const currentProviderLoad = providerLoad.owner?.key === providerOwnerKey && !providerLoad.owner.controller.signal.aborted;
+    const downloadProviders = currentProviderLoad && providerLoad.status === "ready" ? providerLoad.providers : undefined;
+    const providerFailed = currentProviderLoad && providerLoad.status === "error";
     const [selectedVariantId, setSelectedVariantId] = useState<number>();
     const [selectedContentIds, setSelectedContentIds] = useState<Set<number>>(new Set());
     const [expandedContentGroups, setExpandedContentGroups] = useState<Set<string>>(new Set());
@@ -136,16 +145,26 @@ export default function GameView() {
         if (changedGame) setExpandedContentGroups(new Set());
     }, [game?.id, variants.length, effectiveDefaultVariant?.id]);
 
-    useEffect(() => {
-        let active = true;
-        Promise.all([DownloadProviderEndpoint.getProviders(), OwnedTorrentEndpoint.available().catch(() => false)]).then(([providers, owned]) => {
-            if (active) setDownloadProviders(owned ? [...providers, {
-                key: "owned-snapshot-qb", name: "Private torrent", priority: -100,
-                description: "Prepare an immutable copy of precisely this selection for private torrent download."
-            }] : providers);
-        });
-        return () => {active = false;};
-    }, []);
+    useLayoutEffect(() => {
+        if (auth.state.loading || auth.state.initializing) return;
+        const owner = {key: providerOwnerKey, controller: new AbortController()};
+        providerOwner.current = owner;
+        setProviderLoad({owner, status: "loading"});
+        const current = () => providerOwner.current === owner && !owner.controller.signal.aborted;
+        void (async () => {
+            try {
+                const init = {signal: owner.controller.signal};
+                const [providers, owned] = await Promise.all([DownloadProviderEndpoint.getProviders(init), OwnedTorrentEndpoint.available(init).catch(() => false)]);
+                if (current()) setProviderLoad({owner, status: "ready", providers: owned ? [...providers, {
+                    key: "owned-snapshot-qb", name: "Private torrent", priority: -100,
+                    description: "Prepare an immutable copy of precisely this selection for private torrent download."
+                }] : providers});
+            } catch {
+                if (current()) setProviderLoad({owner, status: "error"});
+            }
+        })();
+        return () => {owner.controller.abort(); if (providerOwner.current === owner) providerOwner.current = undefined;};
+    }, [providerOwnerKey, providerRetry]);
 
     // Derive actions from this render's canonical contents, not an earlier RPC's
     // closure. Editor saves can replace content IDs without changing the variant.
@@ -154,6 +173,7 @@ export default function GameView() {
             label: provider.name,
             description: provider.shortDescription ?? provider.description,
             action: () => {
+                if (providerOwner.current !== providerLoad.owner || providerLoad.owner?.controller.signal.aborted) return;
                 if (gameId) {
                     DownloadEndpoint.downloadGame(
                         parseInt(gameId),
@@ -409,7 +429,12 @@ export default function GameView() {
                                 </Button>
                             </Tooltip>
                         </div>}
-                        {downloadOptions && <ComboButton description={humanFileSize(estimatedDownloadSize)}
+                        {providerFailed ? <div role="alert" className="flex items-center gap-2">
+                            <span>Could not load download methods.</span>
+                            <Button variant="flat" onPress={() => setProviderRetry(value => value + 1)}>Retry download methods</Button>
+                        </div> : !downloadProviders ? <p role="status">Loading download methods…</p>
+                            : downloadProviders.length === 0 ? <p role="status">No download methods available.</p> : null}
+                        {downloadOptions && downloadProviders!.length > 0 && <ComboButton description={humanFileSize(estimatedDownloadSize)}
                                                          options={downloadOptions}
                                                          preferredOptionKey="preferred-download-method"
                         />}

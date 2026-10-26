@@ -16,24 +16,37 @@ import java.util.concurrent.TimeUnit
 import java.util.zip.ZipInputStream
 import kotlin.test.*
 
-/** Published-image only, no Spring context, Hibernate or current-source migration execution.
+/** Reviewed PR-image only, no Spring context, Hibernate or current-source migration execution.
  * All users/files/SQL are newly generated synthetic state. Never accepts archives or paths
- * from an operator and never rebuilds/replaces the published application.
+ * from an operator and never rebuilds, publishes or patches the application image.
  */
-@EnabledIfEnvironmentVariable(named = "GAMEYFIN_ORIGINAL_EDITOR_FIXTURE", matches = "published-246-synthetic-only")
+@EnabledIfEnvironmentVariable(named = "GAMEYFIN_ORIGINAL_EDITOR_FIXTURE", matches = "reviewed-pr-synthetic-only")
 class OriginalEditorImageFixtureTest {
     @Test @Timeout(value = 7, unit = TimeUnit.MINUTES)
-    fun `published246 original editor saves canonical selection and immediate clicked ZIP`() {
+    fun `reviewed PR original editor saves canonical selection and immediate clicked ZIP`() {
         FixtureRuntime.hosted()
         require(System.getProperty("os.name") == "Linux")
         val repository = FixtureRuntime.repository()
-        val output = repository.resolve(".editor246/result.json")
+        val imageId = requireNotNull(System.getenv("BUILT_IMAGE_ID"))
+        val sourceHead = requireNotNull(System.getenv("REVIEWED_HEAD"))
+        val expectedVersion = requireNotNull(System.getenv("EXPECTED_VERSION"))
+        require(imageId.matches(Regex("sha256:[a-f0-9]{64}")))
+        require(sourceHead.matches(Regex("[a-f0-9]{40}")))
+        require(expectedVersion.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+(?:[.-][0-9A-Za-z.-]+)?")))
+        require(expectedVersion.length <= 64)
+        val migrationVersions = Files.list(repository.resolve("app/src/main/resources/db/migration")).use { paths ->
+            paths.map { it.fileName.toString() }.filter { it.matches(Regex("V[0-9]+(?:\\.[0-9]+)*__.+\\.sql")) }
+                .map { it.substringAfter("V").substringBefore("__") }.toList().sorted()
+        }
+        require(migrationVersions.isNotEmpty() && migrationVersions.distinct().size == migrationVersions.size)
+        val output = repository.resolve(".editor-candidate/result.json")
         require(!Files.exists(output))
         Files.createDirectories(output.parent)
         val root = FixtureRuntime.temporary("gameyfin-editor-")
         val owned = FixtureContainers(root)
-        val proof = linkedMapOf<String, Any?>("scope" to "published246 tiny original-UI acceptance only",
-            "applicationDigest" to IMAGE, "sourceRevision" to SOURCE, "success" to false, "stage" to "admission",
+        val proof = linkedMapOf<String, Any?>("scope" to "reviewed PR tiny original-UI acceptance only",
+            "applicationImageId" to imageId, "sourceRevision" to sourceHead, "expectedVersion" to expectedVersion,
+            "expectedMigrationVersions" to migrationVersions, "success" to false, "stage" to "admission",
             "cleanupConfirmed" to false, "fixtureOwner" to owned.owner)
         var relay: FixtureRelay? = null
         var failure: Throwable? = null
@@ -41,10 +54,11 @@ class OriginalEditorImageFixtureTest {
         try {
             receipt() // Cleanup identity is durable before any external resource creation.
             val deadline = FixtureDeadline(360)
-            val image = FixtureRuntime.tree(owned.docker("image", "inspect", IMAGE))[0]
-            require(image["Id"].asText() == CONFIG)
-            require(image["Config"]["Labels"]["org.opencontainers.image.version"].asText() == "2.4.6")
-            require(image["Config"]["Labels"]["org.opencontainers.image.revision"].asText() == SOURCE)
+            val image = FixtureRuntime.tree(owned.docker("image", "inspect", imageId))[0]
+            require(image["Id"].asText() == imageId)
+            require(image["Config"]["Labels"]["org.opencontainers.image.source"].asText() == "https://github.com/Niborian/gameyfin")
+            require(image["Config"]["Labels"]["org.opencontainers.image.version"].asText() == expectedVersion)
+            require(image["Config"]["Labels"]["org.opencontainers.image.revision"].asText() == sourceHead)
             val source = Files.createDirectory(root.resolve("source"))
             val base = Files.createDirectories(source.resolve("Normal 1.0/Base"))
             val older = Files.createDirectory(source.resolve("Normal 0.9"))
@@ -66,7 +80,7 @@ class OriginalEditorImageFixtureTest {
             owned.createNetwork()
             val mounts = state.flatMap { (name, path) -> listOf("--mount", "type=bind,src=$path,dst=/opt/gameyfin/$name") } +
                 listOf("--mount", "type=bind,src=$source,dst=/fixture,readonly")
-            val app = owned.create("app", IMAGE, listOf("--cpus", "1", "--memory", "1536m", "--memory-swap", "1536m", "--pids-limit", "256",
+            val app = owned.create("app", imageId, listOf("--cpus", "1", "--memory", "1536m", "--memory-swap", "1536m", "--pids-limit", "256",
                 "--restart", "no", "--env-file", env.toString()) + mounts)
             val appState = FixtureRuntime.tree(owned.docker("inspect", app))[0]
             require(appState["HostConfig"]["NanoCpus"].longValue() == 1_000_000_000L)
@@ -145,10 +159,12 @@ class OriginalEditorImageFixtureTest {
             require(h2.matches(Regex("/opt/gameyfin/(?:[A-Za-z0-9._-]+/)*h2-[0-9.]+\\.jar")))
             owned.docker("stop", "--time", "10", app)
             require(!FixtureRuntime.tree(owned.docker("inspect", app))[0]["State"]["Running"].booleanValue())
-            proof["stage"] = "offline-published-schema-seed"
+            proof["stage"] = "offline-image-schema-seed"
             val sql = root.resolve("seed.sql")
             Files.writeString(sql, """
-                SELECT 1 / CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END FROM "flyway_schema_history" WHERE "version" LIKE '2.4.7%';
+                SELECT 1 / CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END FROM "flyway_schema_history" WHERE "success" = FALSE;
+                SELECT 1 / CASE WHEN COUNT(*) = ${migrationVersions.size} THEN 1 ELSE 0 END FROM "flyway_schema_history" WHERE "version" IS NOT NULL;
+                ${migrationVersions.joinToString("\n") { version -> "SELECT 1 / CASE WHEN COUNT(*) = 1 THEN 1 ELSE 0 END FROM \"flyway_schema_history\" WHERE \"version\" = '$version' AND \"success\" = TRUE;" }}
                 INSERT INTO LIBRARY(ID,CREATED_AT,NAME,UPDATED_AT,STORAGE_MODE) VALUES(27001,CURRENT_TIMESTAMP,'Synthetic editor library',CURRENT_TIMESTAMP,'DIRECT');
                 INSERT INTO DIRECTORY_MAPPING(ID,EXTERNAL_PATH,INTERNAL_PATH) VALUES(27001,'/fixture','/fixture');
                 INSERT INTO LIBRARY_DIRECTORIES(LIBRARY_ID,DIRECTORIES_ID) VALUES(27001,27001);
@@ -161,7 +177,7 @@ class OriginalEditorImageFixtureTest {
                 (268001,TRUE,24,'Older base','/fixture/Normal 0.9/old.bin',TRUE,'BASE',134000);
                 INSERT INTO VARIANT_CONTENT_PATHS(VARIANT_CONTENT_ID,PATH_INDEX,PATH) VALUES(268000,0,'/fixture/Normal 1.0'),(268001,0,'/fixture/Normal 0.9/old.bin');
             """.trimIndent())
-            val seeder = owned.create("seed", IMAGE, listOf("--cpus", "1", "--memory", "192m", "--memory-swap", "192m", "--pids-limit", "64",
+            val seeder = owned.create("seed", imageId, listOf("--cpus", "1", "--memory", "192m", "--memory-swap", "192m", "--pids-limit", "64",
                 "--user", "1337:1337", "--entrypoint", "java", "--mount", "type=bind,src=${state.getValue("db")},dst=/db",
                 "--mount", "type=bind,src=$sql,dst=/seed.sql,readonly"),
                 listOf("-Xmx96m", "-cp", h2, "org.h2.tools.RunScript", "-url", "jdbc:h2:/db/gameyfin_db", "-user", "gfadmin", "-password", "gameyfin", "-script", "/seed.sql"))
@@ -174,14 +190,15 @@ class OriginalEditorImageFixtureTest {
             val chrome = owned.create("browser", BROWSER, listOf("--interactive", "--user", "10042:10042", "--cap-drop", "ALL", "--read-only",
                 "--cpus", "1", "--memory", "768m", "--memory-swap", "768m", "--pids-limit", "256",
                 "--mount", "type=bind,src=$script,dst=/opt/original-editor-image.cts,readonly",
-                "--env", "GAMEYFIN_ORIGINAL_EDITOR=published-246-synthetic-only", "--env", "XDG_CONFIG_HOME=/tmp/config", "--env", "XDG_CACHE_HOME=/tmp/cache",
+                "--env", "GAMEYFIN_ORIGINAL_EDITOR=reviewed-pr-synthetic-only", "--env", "XDG_CONFIG_HOME=/tmp/config", "--env", "XDG_CACHE_HOME=/tmp/cache",
                 "--entrypoint", "node"), listOf("--experimental-strip-types", "/opt/original-editor-image.cts"), browserTmpfs = true)
             val input = FixtureRuntime.json.writeValueAsString(mapOf("origin" to "http://${owned.address(app)}:8080", "username" to "fixture-admin",
-                "password" to password, "viewerPassword" to viewerPassword, "providerName" to providerName, "providerKey" to providerKey))
+                "password" to password, "viewerPassword" to viewerPassword, "providerName" to providerName, "providerKey" to providerKey, "expectedVersion" to expectedVersion))
             val privateResult = browserPipe(chrome, input)
             val browserProof = privateResult["proof"]
             val expectedFlags = listOf("success", "loginWithin15Seconds", "nonDefaultPreserved", "unrelatedDraftPreserved", "expectedNativeConfirmAccepted",
-                "immediateCanonicalCards", "clickedExactDownload", "ordinaryUserEditorAbsent", "adminProfileIdentityVerified", "ordinaryProfileIdentityVerified", "cleanupConfirmed")
+                "immediateCanonicalCards", "clickedExactDownload", "ordinaryUserEditorAbsent", "adminProfileIdentityVerified", "ordinaryProfileIdentityVerified",
+                "keepEditingPreserved", "escapePreserved", "escapeFocusRestored", "keepEditingFocusRestored", "controlledDiscardAccepted", "cleanupConfirmed")
             proof["browser"] = expectedFlags.associateWith { browserProof[it]?.booleanValue() == true }
             val browserStage = browserProof["stage"]?.asText()
             require(browserStage in setOf("input", "launch", "normal-login", "editor", "immediate-download", "ordinary-user", "complete"))
@@ -199,7 +216,7 @@ class OriginalEditorImageFixtureTest {
             proof["editorObservations"] = listOf("gameRouteMatches", "footerMatches", "versionTriggerUnique", "defaultVersionObserved",
                 "targetOptionObserved", "targetVersionObserved", "editorDialogObserved", "splitPreviewObserved", "typeTriggerFound", "typeOptionsSeen",
                 "editorClosed", "savedVersionShown", "savedBaseShown", "savedPatchShown", "broadOriginalAbsent",
-                "discardConfirmAccepted", "unexpectedNativeDialog", "editorDialogStillPresent")
+                "controlledDiscardAccepted", "keepEditingPreserved", "escapePreserved", "escapeFocusRestored", "keepEditingFocusRestored", "unexpectedNativeDialog", "editorDialogStillPresent")
                 .associateWith { browserProof[it]?.booleanValue() == true }
             require(expectedFlags.all { browserProof[it]?.booleanValue() == true }) { "Original UI gate failed" }
             require(owned.docker("wait", chrome, seconds = 5) == "0")
@@ -231,7 +248,7 @@ class OriginalEditorImageFixtureTest {
             require(final["State"]["Running"].booleanValue() && !final["State"]["OOMKilled"].booleanValue() && final["RestartCount"].intValue() == 0)
             proof["noOomOrAutomaticRestart"] = true
             proof["success"] = true; proof["stage"] = "complete"
-        } catch (error: Throwable) { failure = error; throw IllegalStateException("Published editor fixture did not meet acceptance; see safe receipt", error) }
+        } catch (error: Throwable) { failure = error; throw IllegalStateException("PR editor fixture did not meet acceptance; see safe receipt", error) }
         finally {
             var cleanup: Throwable? = null
             try { relay?.close() } catch (error: Throwable) { cleanup = error }
@@ -265,9 +282,6 @@ class OriginalEditorImageFixtureTest {
         }
     }
     companion object {
-        const val SOURCE = "b3bcdb849132f89183e2f2aa41bacf8e5588a9d9"
-        const val IMAGE = "ghcr.io/niborian/gameyfin@sha256:49981f66eb6faff0fdef7307f0c2ba0098f1692f22a004e92bfe13707784a3ef"
-        const val CONFIG = "sha256:fdb6b58edddd548cee052a465e08383b3e88004e25d946f663a90a39d8f203f0"
         const val BROWSER = "ghcr.io/puppeteer/puppeteer@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3"
     }
 }

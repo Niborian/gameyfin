@@ -1,14 +1,14 @@
-// #161 exact published-image UI fixture. Private stdin/stdout pipe only; no app patches.
+// #161 exact reviewed PR-image UI fixture. Private stdin/stdout pipe only; no app patches.
 // Supported Puppeteer APIs: Browser.createBrowserContext({downloadBehavior}) and
 // DownloadBehavior policy=allowAndName (documented since25.12), native Dialog.accept.
 const {createRequire} = require('node:module');
 const {readFile, readdir, mkdir, stat} = require('node:fs/promises');
 const puppeteer = createRequire('/home/pptruser/package.json')('puppeteer');
-interface FixtureInput { origin: string; username: string; password: string; viewerPassword: string; providerName: string; providerKey: string; }
+interface FixtureInput { origin: string; username: string; password: string; viewerPassword: string; providerName: string; providerKey: string; expectedVersion: string; }
 interface SavedContent { id: number; name: string; required: boolean; defaultSelected: boolean; type: string; memberNames: string[]; }
 interface SavedVariant { id: number; version: string; default: boolean; contents: SavedContent[]; }
 interface SavedGame { id: number; variants: SavedVariant[]; }
-const proof = {scope: 'published-2.4.6-synthetic-original-editor', stage: 'input', success: false,
+const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', success: false,
   loginWithin15Seconds: false, nonDefaultPreserved: false, unrelatedDraftPreserved: false,
   adminProfileIdentityVerified: false, ordinaryProfileIdentityVerified: false,
   expectedNativeConfirmAccepted: false, immediateCanonicalCards: false, clickedExactDownload: false,
@@ -19,7 +19,8 @@ const proof = {scope: 'published-2.4.6-synthetic-original-editor', stage: 'input
   defaultVersionObserved: false, targetOptionObserved: false, targetVersionObserved: false,
   editorDialogObserved: false, splitPreviewObserved: false, typeTriggerFound: false, typeOptionsSeen: false,
   editorClosed: false, savedVersionShown: false, savedBaseShown: false, savedPatchShown: false, broadOriginalAbsent: false,
-  discardConfirmAccepted: false, unexpectedNativeDialog: false, editorDialogStillPresent: false,
+  controlledDiscardAccepted: false, keepEditingPreserved: false, escapePreserved: false,
+  escapeFocusRestored: false, keepEditingFocusRestored: false, unexpectedNativeDialog: false, editorDialogStillPresent: false,
   sandboxDisabledForIsolatedSyntheticAppOnly: true};
 let browser: any;
 let zip = '';
@@ -30,9 +31,10 @@ async function privateInput(): Promise<FixtureInput> {
   for await (const part of process.stdin) { text += part; if (text.length > 2048) throw new Error('Input bound'); }
   const value: FixtureInput = JSON.parse(text);
   const origin = new URL(value.origin);
-  if (process.getuid?.() === 0 || process.env.GAMEYFIN_ORIGINAL_EDITOR !== 'published-246-synthetic-only' ||
+  if (process.getuid?.() === 0 || process.env.GAMEYFIN_ORIGINAL_EDITOR !== 'reviewed-pr-synthetic-only' ||
       origin.protocol !== 'http:' || origin.port !== '8080' || !/^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(origin.hostname) ||
       origin.href !== value.origin + '/' || value.username !== 'fixture-admin' ||
+      typeof value.expectedVersion !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+(?:[.-][0-9A-Za-z.-]+)?$/.test(value.expectedVersion) || value.expectedVersion.length > 64 ||
       !/^[A-Za-z0-9_-]{32,64}$/.test(value.password) || !/^[A-Za-z0-9_-]{32,64}$/.test(value.viewerPassword) ||
       typeof value.providerName !== 'string' || value.providerName.length < 1 || value.providerName.length > 128 ||
       value.providerKey !== 'org.gameyfin.plugins.download.direct.DirectDownloadPlugin$DirectDownloadProvider') throw new Error('Fixture admission');
@@ -119,14 +121,12 @@ async function run(): Promise<void> {
   });
   let expectedDialog: string | undefined;
   const REPLACE = 'Replace the original broad BASE selection with these reviewed items? Only catalogue metadata changes; no files will be moved or deleted.';
-  const DISCARD = 'Discard unsaved variant details before leaving this editor?';
   page.on('dialog', (dialog: any) => {
     if (dialog.type() !== 'confirm' || !expectedDialog || dialog.message() !== expectedDialog) {
       proof.unexpectedNativeDialog = true;
       failed = true; void dialog.dismiss().catch(() => {}); return;
     }
     if (expectedDialog === REPLACE) proof.expectedNativeConfirmAccepted = true;
-    if (expectedDialog === DISCARD) proof.discardConfirmAccepted = true;
     expectedDialog = undefined;
     void dialog.accept().catch(() => { failed = true; });
   });
@@ -142,21 +142,21 @@ async function run(): Promise<void> {
   // rendered GameView. Require the actual route, original Version control and
   // pinned selection together, within one navigation+readiness15s deadline.
   try {
-    await page.waitForFunction(() => location.pathname === '/game/34000' &&
-      document.body.textContent?.includes('Unofficial Gameyfin 2.4.6') && document.body.textContent?.includes('Downloading: Normal 0.9') &&
+    await page.waitForFunction((version: string) => location.pathname === '/game/34000' &&
+      document.body.textContent?.includes('Unofficial Gameyfin ' + version) && document.body.textContent?.includes('Downloading: Normal 0.9') &&
       [...document.querySelectorAll('button[aria-haspopup="listbox"]')].filter(node => node.parentElement?.textContent?.includes('Version')).length === 1,
-    {timeout: gameReadyRemaining()});
+    {timeout: gameReadyRemaining()}, input.expectedVersion);
   } finally {
     // Diagnostic only: independently sample each predicate even when the combined
     // gate fails. Never replace that failure, retry navigation, or retain DOM text.
     let snapshotTimer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const snapshot = await Promise.race([page.evaluate(() => ({
+      const snapshot = await Promise.race([page.evaluate((version: string) => ({
         gameRouteMatches: location.pathname === '/game/34000',
-        footerMatches: document.body.textContent?.includes('Unofficial Gameyfin 2.4.6') === true,
+        footerMatches: document.body.textContent?.includes('Unofficial Gameyfin ' + version) === true,
         versionTriggerUnique: [...document.querySelectorAll('button[aria-haspopup="listbox"]')].filter(node => node.parentElement?.textContent?.includes('Version')).length === 1,
         defaultVersionObserved: document.body.textContent?.includes('Downloading: Normal 0.9') === true
-      })), new Promise<never>((_, reject) => { snapshotTimer = setTimeout(() => reject(new Error('Game-ready observation deadline')), 1000); })]);
+      }), input.expectedVersion), new Promise<never>((_, reject) => { snapshotTimer = setTimeout(() => reject(new Error('Game-ready observation deadline')), 1000); })]);
       proof.gameRouteMatches = snapshot.gameRouteMatches === true;
       proof.footerMatches = snapshot.footerMatches === true;
       proof.versionTriggerUnique = snapshot.versionTriggerUnique === true;
@@ -236,7 +236,28 @@ async function run(): Promise<void> {
     return label?.htmlFor && (document.getElementById(label.htmlFor) as HTMLInputElement)?.value === 'Unrelated draft retained';
   }, {timeout: 5000}); proof.unrelatedDraftPreserved = true;
   proof.editorPhase = 'closing-editor';
-  expectedDialog = DISCARD; await clickText(page, 'Close', '[role="dialog"]');
+  await clickText(page, 'Close', '[role="dialog"]');
+  await page.waitForSelector('[role="alertdialog"][aria-label="Discard unsaved variant details"]', {timeout: 5000});
+  await page.waitForFunction(() => document.activeElement?.closest('[role="alertdialog"]') !== null &&
+    document.activeElement?.textContent?.trim() === 'Keep editing', {timeout: 5000});
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('[role="alertdialog"]') &&
+    [...document.querySelectorAll('input')].some(input => input.value === 'Unrelated draft retained') &&
+    document.activeElement?.tagName === 'BUTTON' && document.activeElement?.textContent?.trim() === 'Close' &&
+    document.activeElement?.closest('[role="dialog"]') !== null, {timeout: 5000});
+  proof.escapePreserved = true; proof.escapeFocusRestored = true;
+  await clickText(page, 'Close', '[role="dialog"]');
+  await page.waitForSelector('[role="alertdialog"][aria-label="Discard unsaved variant details"]', {timeout: 5000});
+  await clickText(page, 'Keep editing', '[role="alertdialog"]');
+  await page.waitForFunction(() => !document.querySelector('[role="alertdialog"]') &&
+    [...document.querySelectorAll('input')].some(input => input.value === 'Unrelated draft retained') &&
+    document.activeElement?.tagName === 'BUTTON' && document.activeElement?.textContent?.trim() === 'Close' &&
+    document.activeElement?.closest('[role="dialog"]') !== null, {timeout: 5000});
+  proof.keepEditingPreserved = true; proof.keepEditingFocusRestored = true;
+  await clickText(page, 'Close', '[role="dialog"]');
+  await page.waitForSelector('[role="alertdialog"][aria-label="Discard unsaved variant details"]', {timeout: 5000});
+  await clickText(page, 'Discard and close', '[role="alertdialog"]');
+  proof.controlledDiscardAccepted = true;
   proof.editorPhase = 'cards';
   try {
     await page.waitForFunction(() => !document.querySelector('[role="dialog"]') && document.body.textContent?.includes('Downloading: Normal 1.0') &&

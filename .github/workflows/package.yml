@@ -38,6 +38,13 @@ jobs:
       version: ${{ steps.version.outputs.value }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Bind PR verification to the exact reviewed head
+        if: github.event_name == 'pull_request'
+        env:
+          REVIEWED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REVIEWED_HEAD"
 
       - uses: actions/setup-java@v5
         with:
@@ -288,6 +295,12 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Bind PR image build to the exact reviewed head
+        env:
+          REVIEWED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REVIEWED_HEAD"
 
       - uses: actions/setup-java@v5
         with:
@@ -355,6 +368,52 @@ jobs:
           sha256sum -c gameyfin-staging-image.sha256
           docker load --input gameyfin-staging-image.tar
           docker image inspect "$BUILT_IMAGE_ID" >/dev/null
+
+      - name: One original editor save and immediate clicked ZIP against this PR image
+        if: github.repository == 'Niborian/gameyfin'
+        env:
+          GAMEYFIN_ORIGINAL_EDITOR_FIXTURE: reviewed-pr-synthetic-only
+          REVIEWED_HEAD: ${{ github.event.pull_request.head.sha }}
+          BUILT_IMAGE_ID: ${{ steps.staging-image.outputs.imageid }}
+          EXPECTED_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          timeout --signal=TERM --kill-after=2s 180s docker pull ghcr.io/puppeteer/puppeteer@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3
+          # No application rebuild; normal authentication15s/browser90s gates remain.
+          timeout --signal=TERM --kill-after=10s 600s ./gradlew :app:test --tests org.gameyfin.tools.OriginalEditorImageFixtureTest -x :app:vaadinPrepareFrontend -x :app:vaadinBuildFrontend --max-workers=2 --no-daemon --console=plain
+
+      - name: Exact editor-labelled fallback cleanup
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f .editor-candidate/result.json ]]; then
+            owner=$(jq -er '.fixtureOwner' .editor-candidate/result.json)
+            [[ "$owner" =~ ^[a-f0-9]{32}$ ]]
+            ids=$(timeout 5s docker ps -aq --no-trunc --filter "label=gameyfin.fixture.owner=$owner")
+            for id in $ids; do
+              [[ "$id" =~ ^[a-f0-9]{64}$ ]]
+              [[ "$(timeout 5s docker inspect --format '{{index .Config.Labels "gameyfin.fixture.owner"}}' "$id")" == "$owner" ]]
+              timeout 10s docker rm --force "$id" >/dev/null
+            done
+            [[ -z "$(timeout 5s docker ps -aq --no-trunc --filter "label=gameyfin.fixture.owner=$owner")" ]]
+            network="gameyfin-fixture-$owner"
+            existing=$(timeout 5s docker network ls -q --filter "name=^${network}$")
+            if [[ -n "$existing" ]]; then
+              [[ "$(timeout 5s docker network inspect --format '{{index .Labels "gameyfin.fixture.owner"}}' "$network")" == "$owner" ]]
+              timeout 5s docker network rm "$network" >/dev/null
+            fi
+            [[ -z "$(timeout 5s docker network ls -q --filter "name=^${network}$")" ]]
+          fi
+
+      - name: Retain sanitized exact PR editor receipt only
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: candidate-editor-sanitized-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+          # No database, ZIP, credentials, source archive, raw logs or browser output.
+          path: .editor-candidate/result.json
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Exercise actual image H2 scans, recovery and exact selections
         env:

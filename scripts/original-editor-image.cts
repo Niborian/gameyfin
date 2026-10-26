@@ -13,6 +13,8 @@ const proof = {scope: 'published-2.4.6-synthetic-original-editor', stage: 'input
   adminProfileIdentityVerified: false, ordinaryProfileIdentityVerified: false,
   expectedNativeConfirmAccepted: false, immediateCanonicalCards: false, clickedExactDownload: false,
   ordinaryUserEditorAbsent: false, cleanupConfirmed: false,
+  loginPhase: 'not-started', profileResponseObserved: false, profileIdentityMatched: false,
+  authenticatedLandingObserved: false, profileTriggerObserved: false, profileDomIdentityMatched: false,
   sandboxDisabledForIsolatedSyntheticAppOnly: true};
 let browser: any;
 let zip = '';
@@ -42,30 +44,55 @@ async function clickText(page: any, text: string, scope = 'body'): Promise<void>
   try { await handle.asElement().click(); } finally { await handle.dispose(); }
 }
 async function login(page: any, input: FixtureInput, username: string, password: string): Promise<void> {
+  proof.loginPhase = 'opening-login';
+  proof.profileResponseObserved = false; proof.profileIdentityMatched = false;
+  proof.authenticatedLandingObserved = false; proof.profileTriggerObserved = false; proof.profileDomIdentityMatched = false;
   await page.goto(input.origin + '/login', {waitUntil: 'domcontentloaded', timeout: 15000});
   await page.waitForSelector('input[name="username"]', {timeout: 15000});
+  proof.loginPhase = 'form-ready';
   await page.type('input[name="username"]', username);
   await page.type('input[name="password"]', password);
   const start = performance.now();
   const remaining = () => { const value = 15000 - (performance.now() - start); if (value <= 0) throw new Error('Normal form auth deadline'); return Math.floor(value); };
+  const within = async <T>(operation: Promise<T>): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try { return await Promise.race([operation, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Normal form auth deadline')), remaining()); })]); }
+    finally { if (timer) clearTimeout(timer); }
+  };
   const authenticatedProfile = page.waitForResponse(async (response: any) => {
-    if (new URL(response.url()).origin !== input.origin || new URL(response.url()).pathname !== '/connect/UserEndpoint/getUserInfo' || response.status() !== 200) return false;
-    try { const value = await response.json(); return value?.username === username && value.enabled === true && Number.isSafeInteger(value.id) && value.id > 0 && Array.isArray(value.roles); }
+    if (new URL(response.url()).origin !== input.origin || new URL(response.url()).pathname !== '/connect/UserEndpoint/getUserInfo') return false;
+    proof.profileResponseObserved = true;
+    if (response.status() !== 200) return false;
+    try {
+      const value = await response.json();
+      const matches = value?.username === username && value.enabled === true && Number.isSafeInteger(value.id) && value.id > 0 && Array.isArray(value.roles);
+      if (matches) proof.profileIdentityMatched = true;
+      return matches;
+    }
     catch { return false; }
   }, {timeout: 15000});
   void authenticatedProfile.catch(() => {});
-  await page.click('button[type="submit"]');
-  await authenticatedProfile;
-  await page.waitForFunction(() => location.pathname === '/' && !!document.querySelector('nav button[aria-haspopup="menu"]') &&
+  proof.loginPhase = 'submitted';
+  await within(page.click('button[type="submit"]'));
+  proof.loginPhase = 'profile-response';
+  await within(authenticatedProfile);
+  proof.loginPhase = 'authenticated-landing';
+  await page.waitForFunction(() => location.pathname === '/' && document.querySelectorAll('nav div[data-slot="trigger"][aria-haspopup="true"] button').length === 1 &&
     !document.querySelector('input[name="password"]'), {timeout: remaining()});
-  const profile = await page.evaluateHandle(() => {
-    const buttons = [...document.querySelectorAll('nav button[aria-haspopup="menu"]')];
+  proof.authenticatedLandingObserved = true;
+  const profile = await within(page.evaluateHandle(() => {
+    // Published ProfileMenu wraps Avatar(as=button) in DropdownTrigger's DIV.
+    // Confirmed actual DOM: the wrapper, not Avatar, owns aria-haspopup=true.
+    const buttons = [...document.querySelectorAll('nav div[data-slot="trigger"][aria-haspopup="true"] button')];
     if (buttons.length !== 1) throw new Error('Unique profile trigger'); return buttons[0];
-  });
-  await profile.asElement().click(); await profile.dispose();
+  }));
+  proof.profileTriggerObserved = true; proof.loginPhase = 'profile-menu';
+  await within(profile.asElement().click()); await profile.dispose();
   await page.waitForFunction((name: string) => [...document.querySelectorAll('[role="menu"] p')].some(text => text.textContent?.trim() === `Signed in as ${name}`), {timeout: remaining()}, username);
-  await page.keyboard.press('Escape');
+  proof.profileDomIdentityMatched = true;
+  await within(page.keyboard.press('Escape'));
   if (performance.now() - start > 15000) throw new Error('Normal form auth deadline');
+  proof.loginPhase = 'complete';
 }
 async function run(): Promise<void> {
   const input = await privateInput();
@@ -169,7 +196,7 @@ async function run(): Promise<void> {
     const trigger = await page.evaluateHandle(() => {
       const buttons = [...document.querySelectorAll('button.w-52')];
       if (buttons.length !== 1) throw new Error('Unique download button');
-      const triggers = [...(buttons[0].parentElement?.querySelectorAll('button[aria-haspopup="menu"]') ?? [])];
+      const triggers = [...(buttons[0].parentElement?.querySelectorAll('button[data-slot="trigger"][aria-haspopup="true"]') ?? [])];
       if (triggers.length !== 1) throw new Error('Unique download menu');
       return triggers[0];
     });

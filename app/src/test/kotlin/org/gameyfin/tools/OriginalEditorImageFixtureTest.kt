@@ -186,6 +186,11 @@ class OriginalEditorImageFixtureTest {
             val browserStage = browserProof["stage"]?.asText()
             require(browserStage in setOf("input", "launch", "normal-login", "editor", "immediate-download", "ordinary-user", "complete"))
             proof["browserStage"] = browserStage
+            val loginPhase = browserProof["loginPhase"]?.asText()
+            require(loginPhase in setOf("not-started", "opening-login", "form-ready", "submitted", "profile-response", "authenticated-landing", "profile-menu", "complete"))
+            proof["loginPhase"] = loginPhase
+            proof["loginObservations"] = listOf("profileResponseObserved", "profileIdentityMatched", "authenticatedLandingObserved",
+                "profileTriggerObserved", "profileDomIdentityMatched").associateWith { browserProof[it]?.booleanValue() == true }
             require(expectedFlags.all { browserProof[it]?.booleanValue() == true }) { "Original UI gate failed" }
             require(owned.docker("wait", chrome, seconds = 5) == "0")
             val encoded = privateResult["zip"].asText(); require(encoded.length <= 90000)

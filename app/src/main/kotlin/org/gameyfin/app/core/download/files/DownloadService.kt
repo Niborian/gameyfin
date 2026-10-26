@@ -22,6 +22,7 @@ import org.gameyfin.pluginapi.download.DownloadSelection
 import org.gameyfin.pluginapi.download.DownloadSelectionContent
 import org.gameyfin.pluginapi.download.SelectionAwareDownloadProvider
 import org.springframework.stereotype.Service
+import org.springframework.beans.factory.annotation.Autowired
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -43,12 +44,13 @@ import kotlin.time.DurationUnit
 import kotlin.time.measureTime
 
 @Service
-class DownloadService(
+class DownloadService @Autowired constructor(
     private val pluginManager: GameyfinPluginManager,
     private val configService: ConfigService,
     private val sessionBandwidthManager: SessionBandwidthManager,
     private val downloadMetrics: DownloadMetrics,
     private val downloadPathLeases: DownloadPathLeases,
+    private val selectionResolver: DownloadSelectionResolver = DownloadSelectionResolver(),
 ) {
 
     companion object {
@@ -88,8 +90,7 @@ class DownloadService(
     }
 
     fun getDownload(game: Game, provider: String, variantId: Long?, contentIds: List<Long>?): Download {
-        val variant = selectVariant(game, variantId)
-        val selectedContents = selectContents(variant, contentIds)
+        val (variant, selectedContents) = resolveSelection(game, variantId, contentIds)
 
         val selectedProvider = downloadPlugins.firstOrNull { it.javaClass.name == provider }
         if (selectedProvider is SelectionAwareDownloadProvider) {
@@ -128,82 +129,13 @@ class DownloadService(
         } catch (error: Exception) { lease.close(); producerLease.close(); throw error }
     }
 
-    fun estimateDownloadSize(game: Game, variantId: Long?, contentIds: List<Long>?): Long {
-        val variant = selectVariant(game, variantId)
-        return selectContents(variant, contentIds).sumOf { content ->
+    internal fun resolveSelection(game: Game, variantId: Long?, contentIds: List<Long>?): Pair<GameVariant, List<VariantContent>> =
+        selectionResolver.resolveSelection(game, variantId, contentIds)
+
+    fun estimateDownloadSize(game: Game, variantId: Long?, contentIds: List<Long>?): Long =
+        resolveSelection(game, variantId, contentIds).second.sumOf { content ->
             content.fileSize ?: content.effectivePaths().sumOf { calculatePathSize(Path.of(it)) }
         }
-    }
-
-    private fun selectVariant(game: Game, variantId: Long?): GameVariant {
-        val availableVariants = game.variants.filter {
-            it.retirementState == VariantRetirementState.ACTIVE
-        }
-        if (availableVariants.isEmpty()) {
-            throw IllegalStateException("Game '${game.id}' has no downloadable variants")
-        }
-
-        return if (variantId != null) {
-            availableVariants.firstOrNull { it.id == variantId }
-                ?: throw IllegalArgumentException("Variant $variantId not found for game ${game.id}")
-        } else {
-            availableVariants.firstOrNull { it.defaultLocked }
-                ?: availableVariants.firstOrNull { it.name.equals("Normal", ignoreCase = true) && it.isLatestForVariant }
-                ?: availableVariants.firstOrNull { it.isDefault }
-                ?: availableVariants.firstOrNull { it.isLatestForVariant }
-                ?: availableVariants.first()
-        }
-    }
-
-    private fun selectContents(variant: GameVariant, contentIds: List<Long>?): List<VariantContent> {
-        val selected = if (contentIds == null) {
-            variant.contents.filter { it.required || it.defaultSelected }
-        } else {
-            val selectedIds = contentIds.toSet()
-            val availableIds = variant.contents.mapNotNull { it.id }.toSet()
-            require(availableIds.containsAll(selectedIds)) {
-                "Selected content does not belong to variant ${variant.id}"
-            }
-            variant.contents.filter { it.id in selectedIds || it.required }
-        }
-
-        val contents = selected.ifEmpty {
-            listOf(
-                VariantContent(
-                    variant = variant,
-                    name = "Base game",
-                    path = variant.path,
-                    fileSize = variant.fileSize,
-                    required = true,
-                    defaultSelected = true
-                )
-            )
-        }
-
-        validateContentPaths(variant, contents)
-        return contents
-    }
-
-    private fun validateContentPaths(variant: GameVariant, contents: List<VariantContent>) {
-        val variantPath = Path.of(variant.path).toRealPath()
-        // Variants can be folders below a game root, or files linked into a managed mirror.
-        // Their parent is the smallest stable root that permits shared, sibling content without
-        // allowing a selection to reach outside the game/mirror tree.
-        val contentRoot = variantPath.parent
-            ?: throw IllegalArgumentException("Variant ${variant.id} has no content root")
-
-        contents.forEach { content ->
-            val contentPaths = content.effectivePaths()
-            require(contentPaths.isNotEmpty()) { "Content '${content.name}' has no download paths" }
-
-            contentPaths.forEach { contentPath ->
-                val resolvedPath = Path.of(contentPath).toRealPath()
-                require(resolvedPath.startsWith(contentRoot)) {
-                    "Content path '$contentPath' is outside variant ${variant.id} content root '$contentRoot'"
-                }
-            }
-        }
-    }
 
     private fun streamSelectedContentsAsZip(contents: List<VariantContent>, onComplete: () -> Unit): InputStream {
         val pipeIn = PipedInputStream(512 * 1024)

@@ -22,6 +22,11 @@ application {
     mainClass.set(appMainClass)
 }
 
+val snapshotWorkerDistribution by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+}
+
 // Standalone rehearsal CLIs reuse the existing Kotlin test runtime, without running tests.
 for ((taskName, entry) in mapOf(
     "generateScanFixture" to "ScanFixture",
@@ -139,6 +144,8 @@ dependencies {
 
     // Plugins
     implementation(project(":plugin-api"))
+    implementation(project(":snapshot-worker"))
+    add(snapshotWorkerDistribution.name, project(path = ":snapshot-worker", configuration = "snapshotWorkerDistribution"))
 
     // Caching
     implementation("com.github.ben-manes.caffeine:caffeine:${rootProject.extra["caffeineVersion"]}")
@@ -208,6 +215,7 @@ sonar {
 }
 
 tasks.named<ProcessResources>("processResources") {
+    from(snapshotWorkerDistribution) { into("snapshot-worker") }
     val projectVersion = rootProject.version.toString()
     filesMatching("application.yml") {
         filter<ReplaceTokens>("tokens" to mapOf("project.version" to projectVersion))

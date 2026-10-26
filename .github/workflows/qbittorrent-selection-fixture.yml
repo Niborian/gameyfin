@@ -1,8 +1,15 @@
-name: Isolated qB creator validation foundation
+name: Isolated qB exact-selection distribution
 on:
   pull_request:
     branches: [main]
-    paths: ['app/src/test/kotlin/org/gameyfin/tools/**', '.github/workflows/qbittorrent-selection-fixture.yml']
+    paths:
+      - 'app/src/**/core/download/torrent/**'
+      - 'app/src/**/core/download/files/**'
+      - 'app/src/test/kotlin/org/gameyfin/tools/**'
+      - 'snapshot-worker/**'
+      - 'app/build.gradle.kts'
+      - 'settings.gradle.kts'
+      - '.github/workflows/qbittorrent-selection-fixture.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -21,16 +28,31 @@ jobs:
           java-version: '25'
       - uses: gradle/actions/setup-gradle@v5
       - name: Validate bounded metadata parser negative cases
-        run: ./gradlew :app:test --tests '*FixtureValidationTest' --no-daemon --console=plain
+        run: ./gradlew :app:test --tests '*FixtureValidationTest' -x :app:vaadinPrepareFrontend -x :app:vaadinBuildFrontend --no-daemon --console=plain --max-workers=2
       - name: Load reviewed immutable synthetic creator image
         run: docker pull ghcr.io/hotio/qbittorrent@sha256:91d59985ed65fe3504b405b51e6d586524c2189a6cffd56324101b70fe094bde
       - name: Verify exact metadata without adding or seeding torrents
         env:
           GAMEYFIN_QB_CREATOR_FIXTURE: 'true'
-        run: ./gradlew :app:test --tests '*QbCreatorFixtureTest' --no-daemon --console=plain
+        run: ./gradlew :app:test --tests '*QbCreatorFixtureTest' -x :app:vaadinPrepareFrontend -x :app:vaadinBuildFrontend --no-daemon --console=plain --max-workers=2
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: qb-creator-test-results
           path: app/build/test-results/test/TEST-*QbCreatorFixtureTest.xml
+          retention-days: 7
+      - name: Verify owned exact-selection transfer and cleanup with a second client
+        env:
+          GAMEYFIN_QB_DISTRIBUTION_PAIR_FIXTURE: 'true'
+        run: |
+          # Disposable encryption key for synthetic settings rows only. Never persist it.
+          fixture_key="$(openssl rand -base64 32)"
+          printf '::add-mask::%s\n' "$fixture_key"
+          APP_KEY="$fixture_key" ./gradlew :app:test --tests '*QbDistributionPairFixtureTest' -x :app:vaadinPrepareFrontend -x :app:vaadinBuildFrontend --no-daemon --console=plain --max-workers=2
+          unset fixture_key
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qb-distribution-test-results
+          path: app/build/test-results/test/TEST-*QbDistributionPairFixtureTest.xml
           retention-days: 7

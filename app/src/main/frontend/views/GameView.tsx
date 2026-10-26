@@ -1,5 +1,5 @@
-import React, {lazy, Suspense, useEffect, useState} from "react";
-import {DownloadProviderEndpoint, GameEndpoint} from "Frontend/generated/endpoints";
+import React, {lazy, Suspense, useEffect, useLayoutEffect, useRef, useState} from "react";
+import {DownloadProviderEndpoint, GameEndpoint, OwnedTorrentEndpoint} from "Frontend/generated/endpoints";
 import {useNavigate, useParams} from "react-router";
 import {GameCover} from "Frontend/components/general/covers/GameCover";
 import ComboButton, {ComboButtonOption} from "Frontend/components/general/input/ComboButton";
@@ -73,6 +73,15 @@ export default function GameView() {
     const selectedContents = selectedVariant?.contents?.filter((content) =>
         content.required || selectedContentIds.has(content.id)
     ) ?? [];
+    const torrentSelectionKey = selectedContents.map((content) => content.id).sort((a, b) => a - b).join(",");
+    const torrentOwnerKey = JSON.stringify([gameId, selectedVariant?.id, torrentSelectionKey,
+        auth.state.user?.id, auth.state.user?.username, auth.state.loading, auth.state.initializing]);
+    const torrentOwner = useRef<{key: string; controller: AbortController} | undefined>(undefined);
+    useLayoutEffect(() => {
+        const owner = {key: torrentOwnerKey, controller: new AbortController()};
+        torrentOwner.current = owner;
+        return () => { owner.controller.abort(); if (torrentOwner.current === owner) torrentOwner.current = undefined; };
+    }, [torrentOwnerKey]);
     const estimatedDownloadSize = selectedContents.length > 0
         ? selectedContents.reduce((total, content) => total + (content.fileSize ?? 0), 0)
         : selectedVariant?.fileSize ?? game?.metadata.fileSize ?? 0;
@@ -114,8 +123,11 @@ export default function GameView() {
 
     useEffect(() => {
         let active = true;
-        DownloadProviderEndpoint.getProviders().then((providers) => {
-            if (active) setDownloadProviders(providers);
+        Promise.all([DownloadProviderEndpoint.getProviders(), OwnedTorrentEndpoint.available().catch(() => false)]).then(([providers, owned]) => {
+            if (active) setDownloadProviders(owned ? [...providers, {
+                key: "owned-snapshot-qb", name: "Private torrent", priority: -100,
+                description: "Prepare an immutable copy of precisely this selection for private torrent download."
+            }] : providers);
         });
         return () => {active = false;};
     }, []);
@@ -132,7 +144,8 @@ export default function GameView() {
                         parseInt(gameId),
                         provider.key,
                         selectedVariant?.id,
-                        selectedContents.map((content) => content.id)
+                        selectedContents.map((content) => content.id),
+                        torrentOwner.current?.key === torrentOwnerKey ? torrentOwner.current.controller.signal : AbortSignal.abort()
                     );
                 }
             },

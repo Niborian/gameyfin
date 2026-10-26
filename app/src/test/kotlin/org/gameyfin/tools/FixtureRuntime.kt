@@ -76,8 +76,27 @@ internal object FixtureRuntime {
         }
     }
     fun temporary(prefix: String): Path {
+        return registerTemporary(prefix, null)
+    }
+    /** Descriptor-worker cache ancestry cannot traverse /tmp. This overload is only for
+     * a newly created owned fixture beneath the existing trusted hosted runner HOME. */
+    fun temporary(prefix: String, parent: Path): Path {
+        hosted()
+        val home = Path.of(requireNotNull(System.getenv("HOME"))).toAbsolutePath().normalize()
+        require(parent.isAbsolute && parent == parent.normalize() && parent.startsWith(home) && parent.toRealPath() == parent)
+        val uid = Files.getAttribute(home, "unix:uid")
+        var ancestor: Path? = parent
+        while (ancestor != null) {
+            val attributes = Files.readAttributes(ancestor, "unix:uid,mode", java.nio.file.LinkOption.NOFOLLOW_LINKS)
+            require(attributes["uid"] == uid || attributes["uid"] == 0)
+            require((attributes["mode"] as Int) and 0x12 == 0 && Files.isDirectory(ancestor, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+            ancestor = ancestor.parent
+        }
+        return registerTemporary(prefix, parent)
+    }
+    private fun registerTemporary(prefix: String, parent: Path?): Path {
         require(prefix.matches(Regex("gameyfin-[a-z-]+-")))
-        val root = Files.createTempDirectory(prefix).toAbsolutePath().normalize()
+        val root = (if (parent == null) Files.createTempDirectory(prefix) else Files.createTempDirectory(parent, prefix)).toAbsolutePath().normalize()
         ownedRoots[root] = requireNotNull(Files.readAttributes(root, java.nio.file.attribute.BasicFileAttributes::class.java, java.nio.file.LinkOption.NOFOLLOW_LINKS).fileKey())
         return root
     }
@@ -87,6 +106,37 @@ internal object FixtureRuntime {
         require(Files.readAttributes(root, java.nio.file.attribute.BasicFileAttributes::class.java, java.nio.file.LinkOption.NOFOLLOW_LINKS).fileKey() == identity) { "Fixture root identity changed" }
         Files.walk(root).use { paths -> paths.sorted(Comparator.reverseOrder()).forEach { Files.delete(it) } }
         check(!Files.exists(root, java.nio.file.LinkOption.NOFOLLOW_LINKS)); ownedRoots.remove(root)
+    }
+    /** CI fixture teardown only, after the resource ledger and all worker exits are proved.
+     * Production readonly modes and DB/client ownership are untouched. Open directory
+     * descriptors prevent a symlink from redirecting permission changes outside cache. */
+    fun deleteOwnedImmutableFixture(root: Path) {
+        val identity = requireNotNull(ownedRoots[root]) { "Unregistered fixture root" }
+        require(root.isAbsolute && root == root.normalize() && !Files.isSymbolicLink(root))
+        Files.newDirectoryStream(root).use { opened ->
+            val directory = opened as? java.nio.file.SecureDirectoryStream<Path> ?: error("Secure fixture cleanup unavailable")
+            val rootView = requireNotNull(directory.getFileAttributeView(java.nio.file.attribute.PosixFileAttributeView::class.java))
+            val rootAttributes = rootView.readAttributes()
+            require(rootAttributes.fileKey() == identity)
+            fun prepare(current: java.nio.file.SecureDirectoryStream<Path>, cache: Boolean, fixtureRoot: Boolean = false) {
+                val view = requireNotNull(current.getFileAttributeView(java.nio.file.attribute.PosixFileAttributeView::class.java))
+                val attributes = view.readAttributes()
+                require(attributes.owner() == rootAttributes.owner()) { "Foreign fixture directory owner" }
+                if (cache) view.setPermissions(attributes.permissions() + setOf(java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
+                    java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE))
+                for (entry in current) {
+                    val name = entry.fileName
+                    val before = requireNotNull(current.getFileAttributeView(name, java.nio.file.attribute.BasicFileAttributeView::class.java,
+                        java.nio.file.LinkOption.NOFOLLOW_LINKS)).readAttributes()
+                    if (before.isDirectory) current.newDirectoryStream(name, java.nio.file.LinkOption.NOFOLLOW_LINKS).use { child ->
+                        require(requireNotNull(child.getFileAttributeView(java.nio.file.attribute.BasicFileAttributeView::class.java)).readAttributes().fileKey() == before.fileKey())
+                        prepare(child, cache || fixtureRoot && name.toString() == "cache")
+                    }
+                }
+            }
+            prepare(directory, false, true)
+        }
+        deleteOwned(root)
     }
     fun await(seconds: Long, deadline: (() -> Long)? = null, action: () -> Boolean) {
         val end = System.nanoTime() + TimeUnit.SECONDS.toNanos(seconds)
@@ -217,7 +267,7 @@ internal class FixtureContainers(val root: Path, private val prefix: List<String
         for (mount in row["Mounts"]) require(mount["Type"].asText() == "bind" && Path.of(mount["Source"].asText()).toAbsolutePath().normalize().startsWith(root))
     }
     fun address(id: String): String = FixtureRuntime.tree(docker("inspect", id))[0]["NetworkSettings"]["Networks"][network]["IPAddress"].asText()
-    override fun close() {
+    private fun closeResources() {
         var failed = false
         for ((name, image) in intents.entries.reversed()) {
             try {
@@ -244,6 +294,16 @@ internal class FixtureContainers(val root: Path, private val prefix: List<String
             } catch (_: Exception) { failed = true }
         }
         check(!failed) { "Fixture resource cleanup uncertain; configuration retained" }
+    }
+    /** Only for synthetic immutable-cache fixtures; callback must throw unless every
+     * recorded descriptor worker is physically gone. Both client containers already are. */
+    fun closeImmutableFixture(requireWorkersExited: () -> Unit) {
+        closeResources()
+        requireWorkersExited()
+        FixtureRuntime.deleteOwnedImmutableFixture(root)
+    }
+    override fun close() {
+        closeResources()
         FixtureRuntime.deleteOwned(root)
     }
 }

@@ -64,6 +64,19 @@ jobs:
           fi
           echo "value=$gradle_version" >> "$GITHUB_OUTPUT"
 
+      - name: Verify the isolated snapshot worker on Linux
+        # Windows skips are not descriptor/race acceptance. Native access remains
+        # restricted to the minimal worker test JVM, never the application JVM.
+        run: ./gradlew :snapshot-worker:test :snapshot-worker:verifyNativeEvidence --no-daemon --console=plain --max-workers=2
+
+      - name: Retain exact native worker results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-worker-native-test-results
+          path: snapshot-worker/build/test-results/test/TEST-*.xml
+          retention-days: 7
+
       - name: Run automated tests
         if: github.event_name != 'workflow_dispatch' || inputs.operation != 'verify'
         run: ./gradlew :app:test --no-daemon --console=plain
@@ -92,6 +105,7 @@ jobs:
           node --test scripts/test-auth-startup.cts
           node --test scripts/test-login-redirect-owner.cts
           node --test scripts/test-variant-editor-selection.cts
+          node --test scripts/test-owned-torrent-download.cts
 
       - name: Verify read-only test report policy
         run: node --test scripts/test-junit-report-policy.cts

@@ -17,6 +17,8 @@ function gameDownloadFixture(delayedProviders = false) {
         lazy: () => 'VariantManagerModal',
         useState(initial: any) {const i = cursor++; if (!(i in slots)) slots[i] = initial;
             return [slots[i], (value: any) => {slots[i] = typeof value === 'function' ? value(slots[i]) : value;}];},
+        useRef(initial: any) {const i = cursor++; if (!(i in slots)) slots[i] = {current:initial}; return slots[i];},
+        useLayoutEffect(callback: () => any, deps: any[]) {return react.useEffect(callback, deps);},
         useEffect(callback: () => any, deps: any[]) {const i = cursor++, previous = slots[i];
             if (!previous || deps.some((value,index) => !Object.is(value,previous.deps[index]))) effects.push(() => {
                 previous?.cleanup?.(); slots[i] = {deps, cleanup:callback()};
@@ -26,16 +28,16 @@ function gameDownloadFixture(delayedProviders = false) {
     const module = {exports:{} as {default: () => unknown}};
     const source = fs.readFileSync(path.resolve(__dirname,'../app/src/main/frontend/views/GameView.tsx'),'utf8');
     const code = ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
-    vm.runInNewContext(code,{module,exports:module.exports,document:{title:''},require(name: string) {
+    vm.runInNewContext(code,{module,exports:module.exports,AbortController,AbortSignal,document:{title:''},require(name: string) {
         if (name === 'react') return {...react,default:react};
         if (name === 'react/jsx-runtime') return {jsx,jsxs:jsx};
         if (name === 'react-router') return {useParams:() => ({gameId:'1'}),useNavigate:() => () => {}};
         if (name === 'valtio/react') return {useSnapshot:(value: any) => value};
         if (name.endsWith('/GameState')) return {gameState:state};
         if (name.endsWith('/CollectionState')) return {collectionState:{state:{}}};
-        if (name.endsWith('/auth')) return {useAuth:() => ({})};
+        if (name.endsWith('/auth')) return {useAuth:() => ({state:{user:{id:7,username:'fixture'},loading:false,initializing:false}})};
         if (name.endsWith('/utils')) return {isAdmin:() => false,humanFileSize:String,starRatingAsString:() => ''};
-        if (name === 'Frontend/generated/endpoints') return {DownloadProviderEndpoint:{getProviders:() => {providerCalls++;return providerPromise;}},GameEndpoint:{}};
+        if (name === 'Frontend/generated/endpoints') return {DownloadProviderEndpoint:{getProviders:() => {providerCalls++;return providerPromise;}},OwnedTorrentEndpoint:{available:async () => false},GameEndpoint:{}};
         if (name === 'Frontend/endpoints/endpoints') return {DownloadEndpoint:{downloadGame:(...args: any[]) => downloads.push(args)}};
         if (name === '@heroui/react') return new Proxy({useDisclosure:() => ({isOpen:false})} as any,{get:(value,key) => value[key] ?? key});
         if (name.endsWith('/VariantContentType')) return {default:Object.fromEntries(['BASE','DLC','PATCH','MOD','EXTRA','DEDICATED_SERVER'].map(value => [value,value]))};
@@ -60,7 +62,7 @@ function downloadVariant(id: number, contents: any[]) {
 
 test('game-page action immediately uses replacement canonical base IDs without reopening', async () => {
     const f=gameDownloadFixture(); f.setVariants([downloadVariant(1,[baseContent(101,'Broad base')])]);
-    f.render(); await Promise.resolve(); f.render(); await Promise.resolve(); f.render();
+    f.render(); await new Promise(resolve => setImmediate(resolve)); f.render();
     f.download(); assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[101]);
     f.setVariants([downloadVariant(1,[baseContent(201,'Base child')])]);
     f.render(); f.download();
@@ -75,7 +77,7 @@ test('late provider lookup uses current variant and explicit optional selection'
     const second=downloadVariant(2,[baseContent(201,'Second'),optional]);
     f.setVariants([first,second]); f.render(); f.render();
     f.selectVariant(2); f.render(); f.toggleOptional(true); f.render();
-    f.resolveProviders(); await Promise.resolve(); f.render(); f.download();
+    f.resolveProviders(); await new Promise(resolve => setImmediate(resolve)); f.render(); f.download();
     assert.equal(f.downloads.at(-1)![2],2);
     assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[201,202]);
     f.toggleOptional(false); f.render(); f.download();

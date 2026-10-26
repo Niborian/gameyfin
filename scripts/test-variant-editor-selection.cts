@@ -130,6 +130,7 @@ type Editor = {key: string; variant: Variant; onDirtyChange: (value: boolean) =>
 type EffectSlot = {deps: unknown[]};
 function variant(id: number, pinned = false): Variant {return {id,name:'Normal',version:String(id),default:pinned,defaultLocked:pinned,contents:[]};}
 function fixture(initialVariantId?: number, listContents?: (path: string) => Promise<unknown[]>) {
+    let closeCalls = 0;
     const slots: unknown[] = []; let cursor = 0, effects: (() => void)[] = [], editor: Editor | undefined;
     let nodes: {type: string; props: any}[] = [];
     const react = {
@@ -159,9 +160,42 @@ function fixture(initialVariantId?: number, listContents?: (path: string) => Pro
         return {default:name};
     }});
     let game={id:1,title:'Synthetic',metadata:{path:'/synthetic'},variants:[variant(1,true),variant(2)]};
-    function render() {cursor=0;effects=[];editor=undefined;nodes=[];module.exports.default({game,initialVariantId,libraryGames:[],suggestions:[],isOpen:true,onOpenChange:() => {}});for (const effect of effects) effect();return editor!;}
-    return {render, setGame(value: typeof game) {game=value;}, get game() {return game;}, get nodes() {return nodes;}};
+    function render() {cursor=0;effects=[];editor=undefined;nodes=[];module.exports.default({game,initialVariantId,libraryGames:[],suggestions:[],isOpen:true,onOpenChange:() => {closeCalls++;}});for (const effect of effects) effect();return editor!;}
+    return {render, setGame(value: typeof game) {game=value;}, get game() {return game;}, get nodes() {return nodes;}, get closeCalls() {return closeCalls;}};
 }
+
+test('dirty editor close is controlled: keep editing preserves owner, duplicate requests do not discard, explicit discard closes once', () => {
+    const f = fixture(); f.render(); const editor = f.render(); editor.onDirtyChange(true); f.render();
+    const close = () => f.nodes.find(node => node.type === 'Button' && node.props.children === 'Close')!.props.onPress();
+    close(); close(); f.render();
+    assert.equal(f.closeCalls,0);
+    assert.equal(f.nodes.filter(node => node.props.role === 'alertdialog').length,1);
+    f.nodes.find(node => node.type === 'Button' && node.props.children === 'Keep editing')!.props.onPress();
+    const retained = f.render();
+    assert.equal(retained.key,editor.key); assert.equal(f.closeCalls,0);
+    assert.equal(f.nodes.some(node => node.props.role === 'alertdialog'),false);
+    close(); f.render();
+    let prevented = false, stopped = false;
+    f.nodes.find(node => node.props.role === 'alertdialog')!.props.onKeyDown({key:'Escape',
+        preventDefault:() => {prevented=true;}, stopPropagation:() => {stopped=true;}});
+    f.render();
+    assert.equal(prevented,true); assert.equal(stopped,true); assert.equal(f.closeCalls,0);
+    assert.equal(f.nodes.some(node => node.props.role === 'alertdialog'),false);
+    // Dirty remains set: the next close still requires an explicit decision.
+    f.nodes.find(node => node.type === 'Modal')!.props.onOpenChange(false); f.render();
+    const discard = f.nodes.find(node => node.type === 'Button' && node.props.children === 'Discard and close')!.props.onPress;
+    discard(); discard(); close();
+    assert.equal(f.closeCalls,1);
+});
+
+test('clean editor closes once normally and ignores an open notification', () => {
+    const f = fixture(); f.render(); f.render();
+    const modal = f.nodes.find(node => node.type === 'Modal')!;
+    modal.props.onOpenChange(true); assert.equal(f.closeCalls,0);
+    f.nodes.find(node => node.type === 'Button' && node.props.children === 'Close')!.props.onPress();
+    modal.props.onOpenChange(false); assert.equal(f.closeCalls,1);
+    f.render(); assert.equal(f.nodes.some(node => node.props.role === 'alertdialog'),false);
+});
 
 function baseContent(id: number, name: string) {return {id, name, path: `/fixture/${id}`, paths: [], memberNames:[], type:'BASE', required:true, defaultSelected:true, tags:[], pathCount:1, fileSize:1};}
 

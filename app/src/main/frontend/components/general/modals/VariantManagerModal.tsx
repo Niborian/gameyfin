@@ -106,6 +106,9 @@ export default function VariantManagerModal({
     const [removingSourceId, setRemovingSourceId] = useState<number>();
     const [settingDefaultVariantId, setSettingDefaultVariantId] = useState<number>();
     const [detailsDirty, setDetailsDirty] = useState(false);
+    const [discardClosePending, setDiscardClosePending] = useState(false);
+    const closeCommitted = useRef(false);
+    const closeButton = useRef<HTMLButtonElement>(null);
     const [replaceContentId, setReplaceContentId] = useState<number>();
     const previewGeneration = useRef(0);
     const canonicalContentDrafts = useRef<Record<number, DraftEntry>>({});
@@ -113,6 +116,8 @@ export default function VariantManagerModal({
 
     useEffect(() => {
         setIsLoadingChildren(false);
+        setDiscardClosePending(false);
+        closeCommitted.current = false;
         return () => { previewGeneration.current++; };
     }, [game?.id, isOpen]);
 
@@ -605,12 +610,27 @@ export default function VariantManagerModal({
     function discardDetailsIfConfirmed() {
         return !detailsDirty || window.confirm("Discard unsaved variant details before leaving this editor?");
     }
+    function closeEditor() {
+        if (closeCommitted.current) return;
+        closeCommitted.current = true;
+        setDiscardClosePending(false);
+        onOpenChange();
+    }
+    function requestEditorClose() {
+        if (closeCommitted.current) return;
+        if (detailsDirty) setDiscardClosePending(true);
+        else closeEditor();
+    }
+    function keepEditing() {
+        setDiscardClosePending(false);
+        closeButton.current?.focus();
+    }
 
     return (
         <>
-            <Modal isOpen={isOpen} onOpenChange={() => {if (discardDetailsIfConfirmed()) onOpenChange();}} size="5xl" scrollBehavior="inside">
+            <Modal isOpen={isOpen} onOpenChange={(open) => {if (!open) requestEditorClose();}} size="5xl" scrollBehavior="inside">
                 <ModalContent>
-                    {(onClose) => (
+                    {() => (
                         <>
                             <ModalHeader className="flex flex-col gap-1">
                                 <span>Versions &amp; content</span>
@@ -1036,7 +1056,15 @@ export default function VariantManagerModal({
                                 {game && <VariantRetirementControls gameId={game.id} libraryId={game.libraryId} onChanged={onChanged}/>}
                             </ModalBody>
                             <ModalFooter>
-                                <Button variant="light" onPress={onClose}>
+                                {discardClosePending && <div role="alertdialog" aria-label="Discard unsaved variant details" className="flex flex-col gap-2"
+                                    onKeyDown={(event) => {if (event.key === "Escape") {event.preventDefault(); event.stopPropagation(); keepEditing();}}}>
+                                    <p>Discard unsaved variant details before closing this editor?</p>
+                                    <div className="flex gap-2">
+                                        <Button autoFocus variant="flat" onPress={keepEditing}>Keep editing</Button>
+                                        <Button color="danger" onPress={closeEditor}>Discard and close</Button>
+                                    </div>
+                                </div>}
+                                <Button ref={closeButton} variant="light" onPress={requestEditorClose}>
                                     Close
                                 </Button>
                                 <Button

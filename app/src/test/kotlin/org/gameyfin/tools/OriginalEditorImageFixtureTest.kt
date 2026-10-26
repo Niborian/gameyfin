@@ -126,6 +126,9 @@ class OriginalEditorImageFixtureTest {
                     mapOf("Content-Type" to "application/x-www-form-urlencoded"), seconds = 10)
                 require(reply.status in 200..399) { "Synthetic setup login refused" }
                 token = requireNotNull(csrf(http.request("/", seconds = 5).bytes.toString(Charsets.UTF_8)))
+                val identity = FixtureRuntime.tree(rpc("UserEndpoint/getUserInfo", emptyMap<String, Any>()).toString(Charsets.UTF_8))
+                require(identity["username"]?.asText() == username && identity["enabled"]?.booleanValue() == true &&
+                    (identity["id"]?.longValue() ?: 0L) > 0L) { "Synthetic session identity not established" }
             }
             login("fixture-admin", password)
             proof["stage"] = "plugin-readiness"

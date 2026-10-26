@@ -79,6 +79,7 @@ import kotlin.test.*
 @SpringBootTest(classes = [OwnedTorrentHttpAcceptanceTest.HttpConfiguration::class], properties = [
     "spring.datasource.url=jdbc:h2:mem:owned-torrent-http-112;DB_CLOSE_DELAY=-1",
     "spring.jpa.hibernate.ddl-auto=validate", "spring.jpa.open-in-view=false", "spring.sql.init.mode=never",
+    "management.endpoint.health.group.readiness.include=readinessState",
     "gameyfin.owned-torrent.core-parity-enabled=true", "vaadin.productionMode=true", "vaadin.launch-browser=false",
 ])
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)

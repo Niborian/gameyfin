@@ -19,6 +19,7 @@ const proof = {scope: 'published-2.4.6-synthetic-original-editor', stage: 'input
   defaultVersionObserved: false, targetOptionObserved: false, targetVersionObserved: false,
   editorDialogObserved: false, splitPreviewObserved: false, typeTriggerFound: false, typeOptionsSeen: false,
   editorClosed: false, savedVersionShown: false, savedBaseShown: false, savedPatchShown: false, broadOriginalAbsent: false,
+  discardConfirmAccepted: false, unexpectedNativeDialog: false, editorDialogStillPresent: false,
   sandboxDisabledForIsolatedSyntheticAppOnly: true};
 let browser: any;
 let zip = '';
@@ -121,9 +122,11 @@ async function run(): Promise<void> {
   const DISCARD = 'Discard unsaved variant details before leaving this editor?';
   page.on('dialog', (dialog: any) => {
     if (dialog.type() !== 'confirm' || !expectedDialog || dialog.message() !== expectedDialog) {
+      proof.unexpectedNativeDialog = true;
       failed = true; void dialog.dismiss().catch(() => {}); return;
     }
     if (expectedDialog === REPLACE) proof.expectedNativeConfirmAccepted = true;
+    if (expectedDialog === DISCARD) proof.discardConfirmAccepted = true;
     expectedDialog = undefined;
     void dialog.accept().catch(() => { failed = true; });
   });
@@ -241,6 +244,7 @@ async function run(): Promise<void> {
   } finally {
     const cards = await page.evaluate(() => ({
       editorClosed: !document.querySelector('[role="dialog"]'),
+      editorDialogStillPresent: [...document.querySelectorAll('[role="dialog"]')].some(dialog => dialog.textContent?.includes('Versions & content')),
       savedVersionShown: document.body.textContent?.includes('Downloading: Normal 1.0') === true,
       savedBaseShown: document.body.textContent?.includes('Base') === true,
       savedPatchShown: document.body.textContent?.includes('patch.bin') === true,

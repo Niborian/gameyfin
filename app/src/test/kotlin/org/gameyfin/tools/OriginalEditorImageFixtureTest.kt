@@ -198,7 +198,8 @@ class OriginalEditorImageFixtureTest {
             proof["editorPhase"] = editorPhase
             proof["editorObservations"] = listOf("gameRouteMatches", "footerMatches", "versionTriggerUnique", "defaultVersionObserved",
                 "targetOptionObserved", "targetVersionObserved", "editorDialogObserved", "splitPreviewObserved", "typeTriggerFound", "typeOptionsSeen",
-                "editorClosed", "savedVersionShown", "savedBaseShown", "savedPatchShown", "broadOriginalAbsent")
+                "editorClosed", "savedVersionShown", "savedBaseShown", "savedPatchShown", "broadOriginalAbsent",
+                "discardConfirmAccepted", "unexpectedNativeDialog", "editorDialogStillPresent")
                 .associateWith { browserProof[it]?.booleanValue() == true }
             require(expectedFlags.all { browserProof[it]?.booleanValue() == true }) { "Original UI gate failed" }
             require(owned.docker("wait", chrome, seconds = 5) == "0")

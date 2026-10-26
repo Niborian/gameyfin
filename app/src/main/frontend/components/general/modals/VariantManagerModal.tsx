@@ -100,6 +100,7 @@ export default function VariantManagerModal({
     const [shareWithAllVariants, setShareWithAllVariants] = useState(false);
     const [contentDrafts, setContentDrafts] = useState<Record<number, DraftEntry>>({});
     const [isSaving, setIsSaving] = useState(false);
+    const [successNotice, setSuccessNotice] = useState<{owner: string; title: string; description?: string}>();
     const [isLoadingChildren, setIsLoadingChildren] = useState(false);
     const [savingContentId, setSavingContentId] = useState<number>();
     const [deletingContentId, setDeletingContentId] = useState<number>();
@@ -126,6 +127,11 @@ export default function VariantManagerModal({
     }, [game?.id, isOpen]);
 
     const selectedVariant = variants.find((variant) => variant.id === selectedVariantId) ?? defaultVariant;
+    const noticeOwner = JSON.stringify([game?.id, selectedVariant?.id]);
+    useEffect(() => {setSuccessNotice(undefined);}, [noticeOwner, isOpen]);
+    function showSuccess(title: string, description?: string) {
+        setSuccessNotice({owner: noticeOwner, title, description});
+    }
     const relevantSuggestions = useMemo(() => {
         if (!game) return [];
         return suggestions.filter((suggestion) =>
@@ -167,6 +173,7 @@ export default function VariantManagerModal({
     }
 
     function clearDraft() {
+        setSuccessNotice(undefined);
         previewGeneration.current++;
         setIsLoadingChildren(false);
         setReplaceContentId(undefined);
@@ -264,6 +271,7 @@ export default function VariantManagerModal({
     }
 
     function onPathSelected(path: string) {
+        setSuccessNotice(undefined);
         previewGeneration.current++;
         setIsLoadingChildren(false);
         setReplaceContentId(undefined);
@@ -275,6 +283,7 @@ export default function VariantManagerModal({
 
     async function previewSplit(variant: GameVariantDto, content: VariantContentDto) {
         if (!content.path || !discardDetailsIfConfirmed()) return;
+        setSuccessNotice(undefined);
         clearDraft();
         const generation = ++previewGeneration.current;
         setIsLoadingChildren(true);
@@ -415,6 +424,7 @@ export default function VariantManagerModal({
             variants.length > 1 &&
             requestEntries.some((entry) => entry.contentType !== VariantContentType.BASE);
         setIsSaving(true);
+        setSuccessNotice(undefined);
         try {
             const updated = await GameEndpoint.attachVariantContent(game.id, {
                 sourceGameId: replaceContentId === undefined ? sourceGameId : undefined,
@@ -434,11 +444,7 @@ export default function VariantManagerModal({
             }
             clearDraft();
             onChanged?.();
-            addToast({
-                title: "Variant content saved",
-                description: "Gameyfin metadata was updated without moving files.",
-                color: "success"
-            });
+            showSuccess("Variant content saved", "Gameyfin metadata was updated without moving files.");
         } catch (error) {
             addToast({
                 title: "Could not save variant content",
@@ -454,16 +460,13 @@ export default function VariantManagerModal({
         if (!game) return;
 
         setSettingDefaultVariantId(variant.id);
+        setSuccessNotice(undefined);
         try {
             const updated = await GameEndpoint.setDefaultVariant(game.id, variant.id);
             // @ts-ignore Hilla returns the admin shape for admins.
             gameState.state[updated.id] = updated;
             onChanged?.();
-            addToast({
-                title: "Default version updated",
-                description: `${variant.name} ${variant.version} is now the default download.`,
-                color: "success"
-            });
+            showSuccess("Default version updated", `${variant.name} ${variant.version} is now the default download.`);
         } catch (error) {
             addToast({
                 title: "Could not update default version",
@@ -484,6 +487,7 @@ export default function VariantManagerModal({
         if (paths.length === 0) return;
 
         setSavingContentId(content.id);
+        setSuccessNotice(undefined);
         try {
             const updated = await GameEndpoint.attachVariantContent(game.id, {
                 sourceGameId: undefined,
@@ -507,11 +511,7 @@ export default function VariantManagerModal({
             const shared = updated.variants?.flatMap(value => value.contents ?? []).find(value => value.id === content.id);
             if (shared) setContentDrafts(current => ({...current, [content.id]: createDraftFromContent(shared)}));
             onChanged?.();
-            addToast({
-                title: "Content shared",
-                description: "This content is now available on all versions.",
-                color: "success"
-            });
+            showSuccess("Content shared", "This content is now available on all versions.");
         } catch (error) {
             addToast({
                 title: "Could not share content",
@@ -531,6 +531,7 @@ export default function VariantManagerModal({
         if (paths.length === 0) return;
 
         setSavingContentId(content.id);
+        setSuccessNotice(undefined);
         try {
             const updated = await GameEndpoint.updateVariantContent(game.id, variant.id, content.id, {
                 path: paths[0],
@@ -548,7 +549,7 @@ export default function VariantManagerModal({
             const saved = updated.variants?.flatMap(value => value.contents ?? []).find(value => value.id === content.id);
             if (saved) setContentDrafts(current => ({...current, [content.id]: createDraftFromContent(saved)}));
             onChanged?.();
-            addToast({title: "Content updated", color: "success"});
+            showSuccess("Content updated");
         } catch (error) {
             addToast({
                 title: "Could not update content",
@@ -564,12 +565,13 @@ export default function VariantManagerModal({
         if (!game) return;
 
         setDeletingContentId(content.id);
+        setSuccessNotice(undefined);
         try {
             const updated = await GameEndpoint.deleteVariantContent(game.id, variant.id, content.id);
             // @ts-ignore Hilla returns the admin shape for admins.
             gameState.state[updated.id] = updated;
             onChanged?.();
-            addToast({title: "Content removed", color: "success"});
+            showSuccess("Content removed");
         } catch (error) {
             addToast({
                 title: "Could not remove content",
@@ -586,17 +588,14 @@ export default function VariantManagerModal({
         const sourceId = suggestion.targetGameId === game.id ? suggestion.sourceGameId : suggestion.targetGameId;
 
         setRemovingSourceId(sourceId);
+        setSuccessNotice(undefined);
         try {
             const updated = await GameEndpoint.removeDuplicateVariantSource(game.id, sourceId);
             // @ts-ignore Hilla returns the admin shape for admins.
             gameState.state[updated.id] = updated;
             delete gameState.state[sourceId];
             onChanged?.();
-            addToast({
-                title: "Duplicate source removed",
-                description: "The source game row was removed and its path was ignored. Files were not changed.",
-                color: "success"
-            });
+            showSuccess("Duplicate source removed", "The source game row was removed and its path was ignored. Files were not changed.");
         } catch (error) {
             addToast({
                 title: "Could not remove source",
@@ -641,6 +640,10 @@ export default function VariantManagerModal({
                                 {game && <span className="text-sm font-normal text-default-500">{game.title} · {game.metadata.path}</span>}
                             </ModalHeader>
                             <ModalBody>
+                                {successNotice?.owner === noticeOwner && <div role="status" className="rounded-lg bg-success-50 p-3">
+                                    <p>{successNotice.title}</p>
+                                    {successNotice.description && <p className="text-sm">{successNotice.description}</p>}
+                                </div>}
                                 {isOpen && game && selectedVariant && <VariantDetailsEditor key={`${game.id}:${selectedVariant.id}`}
                                     gameId={game.id} variant={selectedVariant} onChanged={onChanged} onDirtyChange={setDetailsDirty}/>}
                                 {game && (

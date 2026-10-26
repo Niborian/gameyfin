@@ -90,6 +90,14 @@ class OriginalEditorImageFixtureTest {
             // Published SetupFilter redirects /login to /setup before the first
             // administrator exists. Observe the real setup page, not a redirect.
             var token = ready("/setup")
+            fun pluginsReady() {
+                val health = FixtureHttp("http://${owned.address(app)}:8081", deadline = { deadline.remaining() })
+                FixtureRuntime.await(60, { deadline.remaining() }) {
+                    val response = health.request("/actuator/health/readiness", seconds = 3)
+                    proof["lastPluginReadinessHttpStatus"] = response.status
+                    response.status == 200 && FixtureRuntime.tree(response.bytes.toString(Charsets.UTF_8))["status"]?.asText() == "UP"
+                }
+            }
             fun rpc(endpoint: String, body: Any): ByteArray {
                 val response = http.request("/connect/$endpoint", FixtureRuntime.json.writeValueAsString(body),
                     mapOf("Content-Type" to "application/json", "X-CSRF-Token" to token), seconds = minOf(10, deadline.remaining()))
@@ -106,12 +114,25 @@ class OriginalEditorImageFixtureTest {
                 token = requireNotNull(csrf(http.request("/", seconds = 5).bytes.toString(Charsets.UTF_8)))
             }
             login("fixture-admin", password)
+            proof["stage"] = "plugin-readiness"
+            pluginsReady(); proof["pluginsReadyBeforeEnable"] = true
+            proof["stage"] = "fresh-setup"
             rpc("PluginEndpoint/enablePlugin", mapOf("pluginId" to "org.gameyfin.plugins.download.direct"))
             val providers = FixtureRuntime.tree(rpc("DownloadProviderEndpoint/getProviders", emptyMap<String, Any>()).toString(Charsets.UTF_8))
             require(providers.isArray) { "Provider list has unexpected shape" }
             val providerKey = "org.gameyfin.plugins.download.direct.DirectDownloadPlugin\$DirectDownloadProvider"
             val direct = providers.filter { it["key"]?.asText() == providerKey }
             proof["providerCount"] = providers.size(); proof["directProviderCount"] = direct.size
+            if (direct.size != 1) {
+                val plugins = FixtureRuntime.tree(rpc("PluginEndpoint/getAll", emptyMap<String, Any>()).toString(Charsets.UTF_8))
+                require(plugins.isArray)
+                val matches = plugins.filter { it["id"]?.asText() == "org.gameyfin.plugins.download.direct" }
+                proof["directPluginCount"] = matches.size
+                matches.singleOrNull()?.let { plugin ->
+                    proof["directPluginState"] = plugin["state"]?.asText()?.takeIf { it in setOf("CREATED", "DISABLED", "RESOLVED", "STARTED", "STOPPED", "FAILED", "UNLOADED") } ?: "OTHER"
+                    proof["directPluginTrust"] = plugin["trustLevel"]?.asText()?.takeIf { it in setOf("UNKNOWN", "OFFICIAL", "BUNDLED", "THIRD_PARTY", "UNTRUSTED") } ?: "OTHER"
+                }
+            }
             val selectedProvider = direct.single()
             require(selectedProvider["name"]?.isTextual == true)
             val providerName = selectedProvider["name"].asText()
@@ -145,7 +166,8 @@ class OriginalEditorImageFixtureTest {
                 "--mount", "type=bind,src=$sql,dst=/seed.sql,readonly"),
                 listOf("-Xmx96m", "-cp", h2, "org.h2.tools.RunScript", "-url", "jdbc:h2:/db/gameyfin_db", "-user", "gfadmin", "-password", "gameyfin", "-script", "/seed.sql"))
             require(owned.docker("wait", seeder, seconds = 30) == "0") { "Synthetic offline seed failed" }
-            owned.docker("start", app); ready()
+            owned.docker("start", app); ready(); pluginsReady()
+            proof["pluginsReadyBeforeBrowser"] = true
             proof["stage"] = "original-browser"
             val script = root.resolve("original-editor-image.cts")
             Files.copy(repository.resolve("scripts/original-editor-image.cts"), script, StandardCopyOption.COPY_ATTRIBUTES)

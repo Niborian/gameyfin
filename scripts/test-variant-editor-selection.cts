@@ -70,6 +70,46 @@ test('game-page action immediately uses replacement canonical base IDs without r
     assert.equal(f.downloads.at(-1)![2],1);
 });
 
+test('replacement selects new default extras and prunes removed IDs without restoring a deselected existing extra', async () => {
+    const f = gameDownloadFixture();
+    const oldPatch = {...baseContent(102, 'Existing patch'), type:'PATCH', required:false, defaultSelected:true};
+    f.setVariants([downloadVariant(1,[baseContent(101,'Broad base'),oldPatch])]);
+    f.render(); await new Promise(resolve => setImmediate(resolve)); f.render();
+    f.toggleOptional(false); f.render();
+    const newPatch = {...baseContent(203,'New patch'), type:'PATCH', required:false, defaultSelected:true};
+    const newOptional = {...baseContent(204,'Unselected extra'), type:'EXTRA', required:false, defaultSelected:false};
+    f.setVariants([downloadVariant(1,[baseContent(201,'New base'),oldPatch,newPatch,newOptional])]);
+    f.render(); f.download();
+    assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[201,203]);
+    f.render(); f.download();
+    assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[201,203]);
+});
+
+test('unrelated variant addition and default change preserve selected version and explicit optional choices', async () => {
+    const f = gameDownloadFixture();
+    const extra = {...baseContent(202,'Chosen extra'), type:'EXTRA', required:false, defaultSelected:false};
+    const selected = downloadVariant(2,[baseContent(201,'Base'),extra]);
+    f.setVariants([downloadVariant(1,[baseContent(101,'Other')]),selected]);
+    f.render(); await new Promise(resolve => setImmediate(resolve)); f.render();
+    f.selectVariant(2); f.render(); f.toggleOptional(true); f.render();
+    f.setVariants([{...downloadVariant(1,[baseContent(101,'Other')]),default:false,defaultLocked:false},selected,
+        {...downloadVariant(3,[baseContent(301,'Added')]),default:true,defaultLocked:true}]);
+    f.render(); f.render(); f.download();
+    assert.equal(f.downloads.at(-1)![2],2);
+    assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[201,202]);
+});
+
+test('switching variants initializes its defaults rather than carrying another variant selection', async () => {
+    const f = gameDownloadFixture();
+    f.setVariants([downloadVariant(1,[baseContent(101,'First')]),downloadVariant(2,[baseContent(201,'Second'),
+        {...baseContent(202,'Default patch'),type:'PATCH',required:false,defaultSelected:true}])]);
+    f.render(); await new Promise(resolve => setImmediate(resolve)); f.render();
+    f.selectVariant(2); f.render(); f.download();
+    assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[201,202]);
+    f.selectVariant(1); f.render(); f.download();
+    assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[101]);
+});
+
 test('late provider lookup uses current variant and explicit optional selection', async () => {
     const f=gameDownloadFixture(true);
     const optional={...baseContent(202,'Optional patch'),type:'PATCH',required:false,defaultSelected:false};

@@ -64,14 +64,28 @@ export default function GameView() {
     const [selectedVariantId, setSelectedVariantId] = useState<number>();
     const [selectedContentIds, setSelectedContentIds] = useState<Set<number>>(new Set());
     const [expandedContentGroups, setExpandedContentGroups] = useState<Set<string>>(new Set());
+    const contentGeneration = useRef<{gameId: number; variantId: number; ids: Set<number>} | undefined>(undefined);
+    const initializedGame = useRef<number | undefined>(undefined);
 
     const variants = (game?.variants ?? []) as GameVariantDto[];
     const effectiveDefaultVariant = preferredVariant(variants);
     const selectedVariant = variants.find((variant) => variant.id === selectedVariantId)
         ?? effectiveDefaultVariant
         ?? variants[0];
+    const previousContents = contentGeneration.current;
+    const sameContentOwner = previousContents?.gameId === game?.id && previousContents?.variantId === selectedVariant?.id;
+    const effectiveContentIds = new Set((selectedVariant?.contents ?? []).filter(content => content.required ||
+        (sameContentOwner && previousContents!.ids.has(content.id) ? selectedContentIds.has(content.id) : content.defaultSelected)
+    ).map(content => content.id));
+    useLayoutEffect(() => {
+        contentGeneration.current = game && selectedVariant
+            ? {gameId: game.id, variantId: selectedVariant.id, ids: new Set(selectedVariant.contents.map(content => content.id))}
+            : undefined;
+        setSelectedContentIds(current => current.size === effectiveContentIds.size && [...current].every(id => effectiveContentIds.has(id))
+            ? current : effectiveContentIds);
+    }, [game?.id, selectedVariant?.id, selectedVariant?.contents]);
     const selectedContents = selectedVariant?.contents?.filter((content) =>
-        content.required || selectedContentIds.has(content.id)
+        effectiveContentIds.has(content.id)
     ) ?? [];
     const torrentSelectionKey = selectedContents.map((content) => content.id).sort((a, b) => a - b).join(",");
     const torrentOwnerKey = JSON.stringify([gameId, selectedVariant?.id, torrentSelectionKey,
@@ -112,13 +126,14 @@ export default function GameView() {
         }
     ].filter((group) => group.contents.length > 0) : [];
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (!game || variants.length === 0) return;
 
         const defaultVariant = effectiveDefaultVariant ?? variants[0];
-        setSelectedVariantId(defaultVariant.id);
-        setSelectedContentIds(defaultContentIds(defaultVariant));
-        setExpandedContentGroups(new Set());
+        const changedGame = initializedGame.current !== game.id;
+        initializedGame.current = game.id;
+        setSelectedVariantId(current => !changedGame && variants.some(variant => variant.id === current) ? current : defaultVariant.id);
+        if (changedGame) setExpandedContentGroups(new Set());
     }, [game?.id, variants.length, effectiveDefaultVariant?.id]);
 
     useEffect(() => {
@@ -236,7 +251,7 @@ export default function GameView() {
                 <Checkbox
                     size="sm"
                     className="py-1"
-                    isSelected={content.required || selectedContentIds.has(content.id)}
+                    isSelected={effectiveContentIds.has(content.id)}
                     isDisabled={content.required}
                     onValueChange={(selected) => setContentSelected(content, selected)}
                 >

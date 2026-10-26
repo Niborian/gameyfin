@@ -28,6 +28,9 @@ const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', s
   escapeFocusRestored: false, keepEditingFocusRestored: false, unexpectedNativeDialog: false, editorDialogStillPresent: false,
   closePhase: 'not-started', closeSnapshotObserved: false, closePromptPresent: false,
   closeKeepFocused: false, closeButtonFocused: false, closeDraftPresent: false,
+  closeClick: {observed: false, preExists: false, preEnabled: false, preInViewport: false, preCenterOwn: false, preCenterToast: false,
+    postExists: false, postEnabled: false, postInViewport: false, postCenterOwn: false, postCenterToast: false,
+    trustedCloseClick: false, trustedOtherClick: false},
   gameDiagnostics: gameDiagnostic(),
   sandboxDisabledForIsolatedSyntheticAppOnly: true};
 let browser: any;
@@ -320,7 +323,58 @@ async function run(): Promise<void> {
   proof.editorPhase = 'closing-editor';
   try {
   proof.closePhase = 'first-close';
-  await clickText(page, 'Close', '[role="dialog"]');
+  const close = await page.evaluateHandle(() => {
+    const buttons = [...document.querySelectorAll('[role="dialog"] button')].filter(button => button.textContent?.trim() === 'Close');
+    if (buttons.length !== 1) throw new Error('Unique Close control'); return buttons[0];
+  });
+  let clickObservation: any;
+  async function boundedCloseObservation(operation: Promise<any>) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try { return await Promise.race([operation, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Close click observation deadline')), 1000);
+    })]); } finally {if (timer) clearTimeout(timer);}
+  }
+  try {
+    await close.asElement().scrollIntoView(); // Normal UI scrolling, not a scripted click.
+    try {clickObservation = await boundedCloseObservation(page.evaluateHandle((button: HTMLButtonElement) => {
+      let trustedCloseClick = false, trustedOtherClick = false;
+      const clicked = (event: MouseEvent) => {
+        if (!event.isTrusted) return;
+        if (event.target instanceof Node && button.contains(event.target)) trustedCloseClick = true;
+        else trustedOtherClick = true;
+      };
+      const sample = () => {
+        const rect = button.getBoundingClientRect(), x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+        const inside = rect.width > 0 && rect.height > 0 && x >= 0 && y >= 0 && x < innerWidth && y < innerHeight;
+        const hit = inside ? document.elementFromPoint(x, y) : null;
+        return {Exists: button.isConnected, Enabled: !button.disabled && button.getAttribute('aria-disabled') !== 'true',
+          InViewport: inside, CenterOwn: !!hit && button.contains(hit), CenterToast: !!hit?.closest('[aria-label="toast"]')};
+      };
+      const before = sample();
+      document.addEventListener('click', clicked, {capture: true, passive: true});
+      // Remote fallback also removes a listener if its handle arrives after the
+      // bounded observation call timed out. This never retries or delays a click.
+      const expiry = setTimeout(() => document.removeEventListener('click', clicked, true), 6000);
+      return {finish() {
+        clearTimeout(expiry);
+        document.removeEventListener('click', clicked, true);
+        const after = sample();
+        return {observed: true, preExists: before.Exists, preEnabled: before.Enabled, preInViewport: before.InViewport,
+          preCenterOwn: before.CenterOwn, preCenterToast: before.CenterToast, postExists: after.Exists,
+          postEnabled: after.Enabled, postInViewport: after.InViewport, postCenterOwn: after.CenterOwn,
+          postCenterToast: after.CenterToast, trustedCloseClick, trustedOtherClick};
+      }};
+    }, close));} catch { /* Observation absence never substitutes for the real click/prompt gate. */ }
+    await close.asElement().asLocator().setTimeout(5000).click();
+  } finally {
+    try {
+      if (clickObservation) {
+        try {proof.closeClick = await boundedCloseObservation(clickObservation.evaluate((value: any) => value.finish()));}
+        catch { /* Missing evidence cannot bypass the original prompt gate. */ }
+        finally {await clickObservation.dispose();}
+      }
+    } finally {await close.dispose();}
+  }
   proof.closePhase = 'first-prompt';
   await page.waitForSelector('[role="alertdialog"][aria-label="Discard unsaved variant details"]', {timeout: 5000});
   proof.closePhase = 'initial-focus';

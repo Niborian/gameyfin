@@ -221,6 +221,11 @@ class OriginalEditorImageFixtureTest {
                 "second-close", "second-prompt", "keep-editing", "keep-result", "third-close", "third-prompt", "discard", "complete"))
             proof["closePhase"] = closePhase
             proof["gameDiagnostics"] = validateEditorGameDiagnostics(browserProof["gameDiagnostics"])
+            val clickKeys = setOf("observed", "preExists", "preEnabled", "preInViewport", "preCenterOwn", "preCenterToast",
+                "postExists", "postEnabled", "postInViewport", "postCenterOwn", "postCenterToast", "trustedCloseClick", "trustedOtherClick")
+            val closeClick = browserProof["closeClick"]
+            require(closeClick.isObject && closeClick.properties().map { it.key }.toSet() == clickKeys)
+            proof["closeClick"] = clickKeys.associateWith { require(closeClick[it].isBoolean); closeClick[it].booleanValue() }
             proof["editorObservations"] = listOf("gameRouteMatches", "footerMatches", "versionTriggerUnique", "defaultVersionObserved",
                 "targetOptionObserved", "targetVersionObserved", "editorDialogObserved", "splitPreviewObserved", "typeTriggerFound", "typeOptionsSeen",
                 "editorClosed", "savedVersionShown", "savedBaseShown", "savedPatchShown", "broadOriginalAbsent",

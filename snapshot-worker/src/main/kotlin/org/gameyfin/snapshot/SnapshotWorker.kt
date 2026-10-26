@@ -39,6 +39,10 @@ object SnapshotWorker {
                                 SnapshotProtocol.OPEN -> session.reopen(UUID.fromString(SnapshotProtocol.text(this)), UUID.fromString(SnapshotProtocol.text(this)), SnapshotProtocol.text(this))
                                 SnapshotProtocol.READ -> session.read(SnapshotProtocol.text(this), readLong(), readInt())
                                 SnapshotProtocol.VERIFY -> session.verify()
+                                SnapshotProtocol.VERIFY_SOURCE -> {
+                                    val current = SnapshotCapture.read(this)
+                                    session.verifySource(current, SnapshotProtocol.digest(current.bytes()))
+                                }
                                 SnapshotProtocol.RETIRE -> {
                                     val length = readInt(); require(length in 1..SnapshotProtocol.MAX_FRAME)
                                     val preparation = ByteArray(length).also(::readFully)
@@ -62,7 +66,8 @@ object SnapshotWorker {
 }
 
 internal data class AcquisitionHooks(val beforeSourceOpen: () -> Unit = {}, val afterSourceOpen: () -> Unit = {},
-    val afterWrite: () -> Unit = {}, val beforePublication: () -> Unit = {}, val afterDirectoryNames: () -> Unit = {})
+    val afterWrite: () -> Unit = {}, val beforePublication: () -> Unit = {}, val afterDirectoryNames: () -> Unit = {},
+    val afterSourceVerifyRead: () -> Unit = {})
 
 internal class WorkerSession(private val native: LinuxDescriptors, private val hooks: AcquisitionHooks = AcquisitionHooks()) : Closeable {
     private var cache: LinuxDescriptors.Fd? = null
@@ -336,6 +341,100 @@ internal class WorkerSession(private val native: LinuxDescriptors, private val h
                 require(native.stat(fd).contentIdentity == selected.identity)
                 return buffer.asSlice(0, read.toLong()).toArray(ValueLayout.JAVA_BYTE)
             }
+        }
+    }
+    /** Read-only, descriptor-anchored proof of CURRENT source generation. All held
+     * source descriptors and their parent bindings are checked again after the
+     * complete traversal. An unstable/unsafe/unknown traversal is NOT a mismatch.
+     * This does not claim an atomic filesystem snapshot against privileged writers.
+     */
+    fun verifySource(request: SnapshotCapture, requestDigest: String): ByteArray {
+        val expected = requireNotNull(manifest)
+        require(request.snapshotId == expected.snapshotId && request.operation == expected.operation)
+        require(request.cacheRoot == cachePath && request.expectedCacheIdentity == expected.cacheIdentity)
+        verify() // held cache ownership/identity; no COPY or cache metadata write
+        data class Held(val fd: LinuxDescriptors.Fd, val parent: LinuxDescriptors.Fd, val relative: String,
+            val before: LinuxDescriptors.Stat, val names: List<String>?)
+        val held = mutableListOf<Held>()
+        val seen = mutableSetOf<String>()
+        val sourceIdentities = mutableSetOf<String>()
+        val old = expected.members.associateBy { it.name }
+        var mismatch = requestDigest != expected.requestDigest
+        var contentMismatch = false
+        val provenance = java.security.MessageDigest.getInstance("SHA-256")
+        fun receipt(value: String) {
+            val encoded = value.toByteArray(Charsets.UTF_8)
+            provenance.update(java.nio.ByteBuffer.allocate(4).putInt(encoded.size).array()); provenance.update(encoded)
+        }
+        receipt("source-proof-v1"); receipt(requestDigest)
+        var total = 0L
+        var entries = 0
+        try {
+            native.root(request.sourceRoot, owned = false).use { source ->
+                val sourceBefore = native.stat(source)
+                receipt(sourceBefore.contentIdentity)
+                fun walk(parent: LinuxDescriptors.Fd, relative: String, target: String, depth: Int) {
+                    require(depth <= 32 && ++entries <= request.fileLimit) { "Source proof entry quota exceeded" }
+                    val before = native.observe(parent, relative)
+                    require(before.directory || (before.regular && before.links >= 1 && before.size >= 0)) { "Unsafe source proof type" }
+                    hooks.beforeSourceOpen()
+                    val fd = native.open(parent, relative, directory = before.directory)
+                    try {
+                        hooks.afterSourceOpen()
+                        require(native.stat(fd).contentIdentity == before.contentIdentity) { "Source proof open race" }
+                        if (before.directory) {
+                            val names = native.names(fd).sorted()
+                            require(names.map { it.lowercase(java.util.Locale.ROOT) }.toSet().size == names.size)
+                            held += Held(fd, parent, relative, before, names)
+                            receipt("directory"); receipt(target); receipt(before.contentIdentity)
+                            receipt(names.size.toString())
+                            names.forEach(::receipt)
+                            hooks.afterDirectoryNames()
+                            for (name in names) walk(fd, name, "$target/$name", depth + 1)
+                        } else {
+                            require(seen.add(target) && sourceIdentities.add(before.objectIdentity)) { "Duplicate source proof identity or name" }
+                            require(before.size <= request.byteLimit - total) { "Source proof byte quota exceeded" }
+                            held += Held(fd, parent, relative, before, null)
+                            val digest = native.digest(fd, before.size) { hooks.afterSourceVerifyRead() }
+                            require(native.stat(fd).contentIdentity == before.contentIdentity) { "Source proof changed during read" }
+                            native.seek(fd, 0)
+                            require(native.digest(fd, before.size) == digest && native.stat(fd).contentIdentity == before.contentIdentity) { "Source proof unstable bytes" }
+                            val prior = old[target]
+                            if (prior == null || prior.bytes != before.size || prior.digest != digest) { mismatch = true; contentMismatch = true }
+                            if (prior == null || prior.sourceIdentity != before.contentIdentity) mismatch = true
+                            receipt("file"); receipt(target); receipt(before.size.toString()); receipt(before.contentIdentity); receipt(digest)
+                            total += before.size
+                        }
+                    } catch (failure: Throwable) {
+                        if (held.none { it.fd === fd }) runCatching { fd.close() }
+                        throw failure
+                    }
+                }
+                for (selection in request.selections) walk(source, selection.sourceRelative, selection.generatedRelative, 1)
+                require(held.size <= request.fileLimit)
+                for (item in held) {
+                    require(native.stat(item.fd).contentIdentity == item.before.contentIdentity &&
+                        native.observe(item.parent, item.relative).contentIdentity == item.before.contentIdentity) { "Source proof membership or identity changed" }
+                    if (item.names != null) require(native.names(item.fd).sorted() == item.names) { "Source proof directory membership changed" }
+                }
+                require(native.stat(source).contentIdentity == sourceBefore.contentIdentity) { "Source root changed during proof" }
+                native.root(request.sourceRoot, owned = false).use { currentRoot ->
+                    require(native.stat(currentRoot).contentIdentity == sourceBefore.contentIdentity) { "Source root path rebound during proof" }
+                }
+                if (seen != old.keys) { mismatch = true; contentMismatch = true }
+            }
+            verify() // the cache binding must still match after the source proof
+            val result = if (contentMismatch) SnapshotSourceVerification.MISMATCH else if (mismatch)
+                SnapshotSourceVerification.SAME_CONTENT_DIFFERENT_SOURCE else SnapshotSourceVerification.MATCH
+            return SnapshotSourceProof(result, SnapshotProtocol.digest(expected.bytes()),
+                provenance.digest().joinToString("") { "%02x".format(it) }).bytes()
+        } finally {
+            var closeFailure: Throwable? = null
+            for (item in held.asReversed()) runCatching { item.fd.close() }.exceptionOrNull()?.let {
+                if (closeFailure == null) closeFailure = it else closeFailure!!.addSuppressed(it)
+            }
+            // A close failure is unknown, never permission to admit another generation.
+            closeFailure?.let { throw it }
         }
     }
     fun verify(): ByteArray {

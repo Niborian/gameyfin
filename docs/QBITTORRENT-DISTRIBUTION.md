@@ -20,6 +20,28 @@ Copies consume additional disk space and hashing/creation work; admission and
 retention must be bounded. Unsupported capabilities fail closed; ZIP/direct
 downloads must remain available.
 
+### Shared selections, not duplicate copies
+
+The sharing draft gives identical authorized selections one owned immutable copy
+and one torrent/swarm. Each browser request keeps its own durable reference and
+session-restricted metadata URL; users do not receive another user's request URL.
+Canonical resolved variant/content membership and immutable client configuration
+identify candidates, but a candidate key or matching info-hash is never enough.
+
+Before attaching another request, recheck current authorization/membership, the
+complete current source tree through read-only descriptors and full byte hashes,
+the held cache, and the exact owned seeding client's metadata/member/piece tuple.
+Stable identical payload from replaced source files can reuse that proven owned
+copy; changed payload needs a separate bounded generation. Unknown I/O, unstable
+files or failed ownership proof refuse reuse and do not permit a speculative copy.
+Source verification still costs reads/hashing, but does not copy the files again.
+
+Releasing one reference leaves the seed intact while other references remain.
+The last release fences new attachments before owned stop/removal/cache retirement.
+It does not revoke metadata or data already obtained by peers. These are required
+sharing semantics, not a claim that the shared implementation has passed its
+runtime acceptance yet.
+
 The draft has two independent admission controls: saved administrator opt-in and
 the server's default-false `gameyfin.owned-torrent.core-parity-enabled` interlock.
 Neither a checked confirmation nor a saved configuration proves a safe deployment.
@@ -85,9 +107,13 @@ every crash window or a global storage bound merely from per-operation quotas.
 Administrator configuration/download wiring, descriptor-checked retention and
 restart/operator recovery, exact-head Linux checks, actual pinned seeder plus
 second-client transfer, unchanged source fingerprints and exact fixture cleanup
-must be evidenced. Mocked HTTP, Windows-skipped native checks or a creator-only
-metadata fixture are not feature parity. Production changes remain a separate
-reviewed cutover; never remove the original plugin merely because code merged.
+must be evidenced. Sharing additionally requires two independent requests with
+one copy/create/add, identical metadata, continued transfer after the first release,
+and exactly one non-destructive removal after the last release. Distinct/changed
+selections and attach-versus-retire/revoked-authority cases need focused evidence.
+Mocked HTTP, Windows-skipped native checks or a creator-only metadata fixture are
+not feature parity. Production changes remain a separate reviewed cutover; never
+remove the original plugin merely because code merged.
 
 Protocol references: [BitTorrent metainfo and peer protocol](https://www.bittorrent.org/beps/bep_0003.html),
 [private torrents and their limits](https://www.bittorrent.org/beps/bep_0027.html),

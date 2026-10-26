@@ -41,7 +41,7 @@ class OwnedTorrentFacadeBoundaryTest {
         every { requests.findById(id) } answers { revoked = true; Optional.of(row) }
         val facade = OwnedTorrentFacade(settings, requests, journal, mockk<OwnedSnapshotRegistry>(),
             mockk<DownloadSelectionResolver>(), mockk<DownloadPathLeases>(), mockk<GameService>(), access,
-            mockk<ObjectMapper>(), manager)
+            mockk<ObjectMapper>(), manager, mockk<OwnedTorrentSharing>())
         try {
             assertThrows<AccessDeniedException> { facade.status(id) }
             revoked = false

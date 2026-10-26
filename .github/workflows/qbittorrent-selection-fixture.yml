@@ -44,7 +44,12 @@ jobs:
       - name: Verify owned exact-selection transfer and cleanup with a second client
         env:
           GAMEYFIN_QB_DISTRIBUTION_PAIR_FIXTURE: 'true'
-        run: ./gradlew :app:test --tests '*QbDistributionPairFixtureTest' -x :app:vaadinPrepareFrontend -x :app:vaadinBuildFrontend --no-daemon --console=plain --max-workers=2
+        run: |
+          # Disposable encryption key for synthetic settings rows only. Never persist it.
+          fixture_key="$(openssl rand -base64 32)"
+          printf '::add-mask::%s\n' "$fixture_key"
+          APP_KEY="$fixture_key" ./gradlew :app:test --tests '*QbDistributionPairFixtureTest' -x :app:vaadinPrepareFrontend -x :app:vaadinBuildFrontend --no-daemon --console=plain --max-workers=2
+          unset fixture_key
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -314,4 +314,49 @@ class QbDistributionLifecycleTest {
         verify(exactly = 0) { api.start(any()) }
         verify(exactly = 0) { api.recheck(any()) }
     }
+
+    @Test fun `shared proof binds complete owned seed and rejects foreign incomplete substituted or revoked observations without mutations`() {
+        val api = mockk<QbDistributionApi>(); val journal = mockk<QbDistributionJournal>(); val lease = mockk<OwnedSnapshotLease>()
+        val payload = byteArrayOf(7)
+        val actualManifest = manifest.copy(members = listOf(org.gameyfin.snapshot.SnapshotMember("base.bin", 1,
+            QbDistributionPolicy.digest(payload), "copied", "original")))
+        val info = mapOf("files" to listOf(mapOf("length" to 1L, "path" to listOf("base.bin"))), "name" to "data",
+            "piece length" to 16384L, "pieces" to java.security.MessageDigest.getInstance("SHA-1").digest(payload), "private" to 1L)
+        val metadata = bencode(mapOf("announce" to policy.approvedTrackers.single(), "info" to info))
+        val hash = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-1").digest(bencode(info)))
+        val row = record(QbDistributionState.SEEDING).copy(infoHash = hash, metadata = metadata, manifestDigest = SnapshotProtocol.digest(actualManifest.bytes()))
+        var category = policy.category; var savePath = policy.savePath(snapshot); var progress = 1.0; var authorized = true
+        var exported = metadata
+        val mapper = JsonMapper.builder().build()
+        every { lease.snapshotId } returns snapshot; every { lease.leaseId } returns token; every { lease.manifest } returns actualManifest
+        every { lease.retainForClient(policy.clientId, id) } just Runs; every { lease.verifyForClient(policy.cacheIdentity) } just Runs
+        every { lease.openMember("base.bin") } answers { payload.inputStream() }
+        every { journal.get(id) } returns row
+        every { api.verifyClient() } just Runs
+        every { api.find(hash) } answers { mapper.readTree("""{"category":"$category","tags":"${policy.tag(id)}","save_path":"$savePath","auto_tmm":false,"downloaded":0,"state":"stalledUP","progress":$progress,"amount_left":0}""") }
+        every { api.properties(hash) } returns mapper.readTree("""{"comment":"${policy.comment(id)}","is_private":true}""")
+        every { api.export(hash) } answers { exported }
+        every { api.files(hash) } returns listOf(mapper.readTree("""{"name":"data/base.bin","size":1,"priority":1,"progress":1}"""))
+        every { api.webSeeds(hash) } returns emptyList()
+        val trackers = listOf(mapper.readTree("""{"url":"${policy.approvedTrackers.single()}"}"""))
+        every { api.trackers(hash) } returns trackers
+        val lifecycle = QbDistributionLifecycle(policy, api, journal) { check(authorized) { "Synthetic caller revoked" } }
+        assertEquals(QbDistributionSharedProof(id, policy.clientId, snapshot, token, row.manifestDigest,
+            policy.mappingDigest, hash, QbDistributionPolicy.digest(metadata)), lifecycle.proveSharedSeed(id, lease))
+        category = "foreign"; assertFails { lifecycle.proveSharedSeed(id, lease) }; category = policy.category
+        savePath = "/foreign/snapshot"; assertFails { lifecycle.proveSharedSeed(id, lease) }; savePath = policy.savePath(snapshot)
+        progress = 0.5; assertFails { lifecycle.proveSharedSeed(id, lease) }; progress = 1.0
+        exported = bencode(mapOf("announce" to policy.approvedTrackers.single(), "info" to info, "comment" to "substituted artifact"))
+        assertFails { lifecycle.proveSharedSeed(id, lease) }; exported = metadata
+        every { api.trackers(hash) } answers { authorized = false; trackers }
+        assertFails { lifecycle.proveSharedSeed(id, lease) }
+        verify(exactly = 0) { api.create(any(), any()) }
+        verify(exactly = 0) { api.addStopped(any(), any(), any()) }
+        verify(exactly = 0) { api.start(any()) }
+        verify(exactly = 0) { api.stop(any()) }
+        verify(exactly = 0) { api.remove(any()) }
+        verify(exactly = 0) { api.deleteTask(any()) }
+        verify(exactly = 0) { journal.transition(any(), any(), any(), any(), any(), any()) }
+        verify(exactly = 0) { lease.releaseAfterClientRemoval(any(), any()) }
+    }
 }

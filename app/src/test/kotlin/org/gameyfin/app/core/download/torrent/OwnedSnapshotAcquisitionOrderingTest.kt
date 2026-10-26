@@ -3,6 +3,9 @@ package org.gameyfin.app.core.download.torrent
 import io.mockk.*
 import org.gameyfin.app.core.download.files.DownloadPathLeases
 import org.gameyfin.app.core.download.files.DownloadSelectionResolver
+import org.gameyfin.app.games.entities.Game
+import org.gameyfin.app.games.entities.GameVariant
+import org.gameyfin.app.games.entities.VariantContent
 import org.gameyfin.snapshot.*
 import org.junit.jupiter.api.Test
 import java.nio.file.Path
@@ -56,5 +59,30 @@ class OwnedSnapshotAcquisitionOrderingTest {
         assertFails { service.reserveAndBegin(request, 1, 2, owner, worker,
             { throw SnapshotAdmissionRefused("different nested operation") }, onAdmissionRefused = { admissionProof = true }) }
         assertFalse(admissionProof)
+    }
+    @Test fun `torrent canonical selection ignores raw row order while retaining grouped exact paths`() {
+        val resolver = mockk<DownloadSelectionResolver>()
+        val canonical = OwnedSnapshotAcquisitionService(resolver, mockk(), registry, mockk(),
+            OwnedSnapshotSettings(Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath().normalize(), 1024, 8, 0))
+        val root = Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath().normalize().resolve("synthetic-only")
+        val game = mockk<Game>(); val variant = mockk<GameVariant>()
+        every { game.id } returns 42
+        every { variant.id } returns 84
+        every { variant.path } returns root.resolve("game.part01.rar").toString()
+        val base = VariantContent(id = 1, variant = variant, name = "Base", path = root.resolve("game.part01.rar").toString(),
+            paths = mutableListOf(root.resolve("game.part02.rar").toString(), root.resolve("game.part01.rar").toString()), required = true)
+        val optional = VariantContent(id = 2, variant = variant, name = "Optional", path = root.resolve("optional.bin").toString())
+        every { resolver.resolveSelection(game, 84, any()) } returnsMany listOf(variant to listOf(optional, base), variant to listOf(base, optional))
+        val first = canonical.resolveCanonicalSelection(game, 84, listOf(2, 1))
+        val second = canonical.resolveCanonicalSelection(game, 84, listOf(1, 2))
+        assertEquals(first, second)
+        every { resolver.resolveMembership(game, 84, any()) } returns (variant to listOf(optional, base))
+        assertEquals(first, canonical.resolveCanonicalMembership(game, 84, listOf(2, 1)))
+        verify(exactly = 2) { resolver.resolveSelection(game, 84, any()) }
+        verify(exactly = 1) { resolver.resolveMembership(game, 84, any()) }
+        assertEquals(listOf(1L, 2L), first.contentIds)
+        assertEquals(listOf("content-1/game.part01.rar", "content-1/game.part02.rar", "content-2/optional.bin"), first.selections.map { it.generatedRelative })
+        assertEquals(2, base.paths.size, "Torrent canonicalization must not reorder/mutate ZIP source rows")
+        assertTrue(base.paths.first().endsWith("game.part02.rar"))
     }
 }

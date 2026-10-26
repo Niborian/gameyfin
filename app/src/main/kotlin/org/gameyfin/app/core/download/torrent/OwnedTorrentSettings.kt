@@ -101,6 +101,20 @@ internal class OwnedTorrentSettings(private val repository: OwnedTorrentSettings
         OwnedTorrentRuntime(row.revision, config, policy,
             QbDistributionCredentials(requireNotNull(row.username), requireNotNull(row.password)))
     })
+    /** Settings is always the first lock. The callback participates in THIS transaction. */
+    internal fun <T : Any> withWriterLock(expectedRevision: Long?, action: (OwnedTorrentRuntime?) -> T): T =
+        requireNotNull(tx.execute {
+            val row = repository.locked()
+            val runtime = if (expectedRevision == null) null else {
+                require(parity && supportedHost()) { "Owned torrent unavailable" }
+                val config = decode(row)
+                require(config.enabled && row.revision == expectedRevision) { "Owned torrent configuration changed or disabled" }
+                val policy = policy(config); policy.requireAdmission()
+                OwnedTorrentRuntime(row.revision, config, policy,
+                    QbDistributionCredentials(requireNotNull(row.username), requireNotNull(row.password)))
+            }
+            action(runtime)
+        })
     private fun decode(row: OwnedTorrentSettingsRow) = mapper.readValue(row.configuration, OwnedTorrentConfiguration::class.java)
     /** Cleanup uses its immutable historical mapping, never a newly configured client. */
     fun historical(row: OwnedTorrentRequestRow): OwnedTorrentRuntime {

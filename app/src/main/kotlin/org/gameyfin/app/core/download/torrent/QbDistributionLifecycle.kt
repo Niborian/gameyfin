@@ -7,6 +7,14 @@ import java.util.UUID
 /** A proved owned ADD is still checking. This is not permission to add or start again. */
 internal class QbDistributionPendingConfirmation : IllegalStateException("Owned add still checking")
 
+/** Host-only observed proof, never an endpoint argument or permission by hash alone.
+ * The attach transaction must compare the entire tuple against its locked ACTIVE owner
+ * and current intent, then revalidate captured authority/admission before inserting a ref. */
+internal data class QbDistributionSharedProof(
+    val intentId: UUID, val clientId: UUID, val snapshotId: UUID, val leaseId: UUID,
+    val manifestDigest: String, val mappingDigest: String, val infoHash: String, val metadataDigest: String,
+)
+
 /** Host-only lifecycle. No endpoint/provider is registered. A caller owns one lease and
  * serializes operations for it; durable compare-and-transition also refuses duplicate I/O.
  * Every uncertain outcome retains its client-bound lease. Never automatically re-add/start.
@@ -114,6 +122,21 @@ internal class QbDistributionLifecycle(private val policy: QbDistributionPolicy,
         val info = verifyOwned(row, lease, requireComplete = true, requireStopped = false)
         require(info["state"]?.asText() in setOf("uploading", "stalledUP", "queuedUP", "forcedUP")) { "Client is not upload-only" }
         return if (row.state == QbDistributionState.SEEDING) row else journal.transition(id, setOf(row.state), QbDistributionState.SEEDING)
+    }
+
+    /** Reuse proof only. Never reserves a new primary token, adopts a matching hash,
+     * creates/adds/starts a torrent, or changes the durable lifecycle phase. Current
+     * authorized SOURCE-generation proof is separately required by the coordinator. */
+    fun proveSharedSeed(id: UUID, lease: OwnedSnapshotLease): QbDistributionSharedProof {
+        val row = checked(id, lease)
+        require(row.state == QbDistributionState.SEEDING) { "Shared owner is not seeding" }
+        api.verifyClient()
+        val info = verifyOwned(row, lease, requireComplete = true, requireStopped = false)
+        require(info["state"]?.asText() in setOf("uploading", "stalledUP", "queuedUP", "forcedUP")) { "Shared owner is not upload-only" }
+        authorityCheckpoint()
+        check(!Thread.currentThread().isInterrupted) { "Distribution cancelled" }
+        return QbDistributionSharedProof(row.id, row.clientId, row.snapshotId, row.leaseId, row.manifestDigest,
+            row.mappingDigest, requireNotNull(row.infoHash), QbDistributionPolicy.digest(requireNotNull(row.metadata)))
     }
 
     /** Two separately acknowledged phases; callers repeat reconcileRemoval, never deleteFiles. */

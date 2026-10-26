@@ -12,6 +12,13 @@ import java.nio.file.Path
 @Component
 class DownloadSelectionResolver {
     fun resolveSelection(game: Game, variantId: Long?, contentIds: List<Long>?): Pair<GameVariant, List<VariantContent>> {
+        val resolved = resolveMembership(game, variantId, contentIds)
+        validateContentPaths(resolved.first, resolved.second)
+        return resolved
+    }
+
+    /** Database-only membership check, safe inside the shared-reference writer. */
+    fun resolveMembership(game: Game, variantId: Long?, contentIds: List<Long>?): Pair<GameVariant, List<VariantContent>> {
         val variant = selectVariant(game, variantId)
         return variant to selectContents(variant, contentIds)
     }
@@ -61,7 +68,6 @@ class DownloadSelectionResolver {
             )
         }
 
-        validateContentPaths(variant, contents)
         return contents
     }
 

@@ -1,5 +1,14 @@
 package org.gameyfin.app.core.download.torrent
 
+import io.mockk.mockk
+import io.mockk.spyk
+import io.mockk.verify
+import org.gameyfin.app.core.plugins.PluginEndpointAccess
+import org.gameyfin.app.core.config.JacksonConfig
+import org.gameyfin.snapshot.SnapshotProtocol
+import org.gameyfin.snapshot.SnapshotSourceVerification
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 import org.gameyfin.app.core.download.files.DownloadPathLeases
 import org.gameyfin.app.core.download.files.DownloadSelectionResolver
 import org.gameyfin.app.games.entities.*
@@ -28,14 +37,19 @@ import kotlin.test.*
 /** Explicit disposable Actions-only acceptance; never an ordinary test or production probe.
  * Uses the real host selection/acquisition/worker/journals/lifecycle and real paired clients.
  * A private tracker URL is deliberately closed loopback; exact peers are supplied explicitly
- * on the sole owned internal network. This proves transfer, not a deployed tracker policy.
+ * on the sole owned internal network. Empty authorization callbacks represent synthetic
+ * authorized requests: this proves coordinator/transport/rollback, not HTTP session auth,
+ * deployed tracker policy or a complete host/JVM crash.
  */
 @EnabledIfEnvironmentVariable(named = "GAMEYFIN_QB_DISTRIBUTION_PAIR_FIXTURE", matches = "true")
 @DataJpaTest
 @Import(OwnedSnapshotRegistry::class, QbDistributionJournal::class)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class QbDistributionPairFixtureTest @Autowired internal constructor(private val registry: OwnedSnapshotRegistry,
-    private val journal: QbDistributionJournal) {
+    private val journal: QbDistributionJournal, private val settingsRows: OwnedTorrentSettingsRepository,
+    private val requests: OwnedTorrentRequestRepository, private val owners: OwnedTorrentSharedOwnerRepository,
+    private val references: OwnedTorrentSharedReferenceRepository, private val intents: QbDistributionIntentRepository,
+    private val manager: PlatformTransactionManager) {
     @Test @Timeout(value = 8, unit = TimeUnit.MINUTES)
     fun `real readonly snapshot seeder transfers exact selection to isolated second client`() {
         FixtureRuntime.hosted()
@@ -112,22 +126,68 @@ class QbDistributionPairFixtureTest @Autowired internal constructor(private val 
                 assertEquals("v5.2.3", client.qb("app/version").toString(Charsets.UTF_8))
                 client.qb("app/setPreferences", mapOf("json" to """{"dht":false,"pex":false,"lsd":false,"upnp":false,"random_port":false,"ip_filter_enabled":true,"ip_filter_path":"/config/ipfilter.dat","listen_port":6881}"""))
             }
-            val first = acquisition.acquire(game, variant.id, emptyList()); leases += first
+            val hello = SnapshotWorkerSupervisor(Duration.ofSeconds(10)).start()
+            val cacheIdentity = try {
+                SnapshotProtocol.decode(hello.exchange(SnapshotProtocol.encode {
+                    writeInt(SnapshotProtocol.VERSION); writeInt(SnapshotProtocol.HELLO)
+                    SnapshotProtocol.text(this, cache.toString()); SnapshotProtocol.text(this, "")
+                })) { SnapshotProtocol.text(this) }
+            } finally { check(hello.finish()) }
             // release-5.2.3/src/webui/webapplication.h pins API_VERSION {2,15,1}.
             // Never bless an observed unknown API version simply by echoing it into policy.
             val policy = QbDistributionPolicy(UUID.randomUUID(), seedRelay.origin, expectedWebApiVersion = "2.15.1",
-                qbCacheRoot = "/owned/cache", cacheIdentity = first.manifest.cacheIdentity, approvedTrackers = setOf("https://127.0.0.1:1/announce"),
+                qbCacheRoot = "/owned/cache", cacheIdentity = cacheIdentity, approvedTrackers = setOf("https://127.0.0.1:1/announce"),
                 dedicatedReadOnlyClientConfirmed = true, privatePeerEgressConfirmed = true)
-            val initialApi = QbDistributionApi(policy, QbDistributionCredentials("fixture", password))
+            // A spy counts literal mutations but delegates every call to the pinned real
+            // client. No network, native worker, transaction or settings lock is mocked.
+            val initialApi = spyk(QbDistributionApi(policy, QbDistributionCredentials("fixture", password)))
             api = initialApi
             var lifecycle = QbDistributionLifecycle(policy, initialApi, journal)
-            for (index in 0..1) {
+            val mapper = JacksonConfig().jsonMapperFactory().build()
+            val tx = TransactionTemplate(manager)
+            val config = OwnedTorrentConfiguration(true, policy.clientId.toString(), seedRelay.origin,
+                hostCacheRoot = cache.toString(), qbCacheRoot = "/owned/cache", cacheIdentity = cacheIdentity,
+                trackers = policy.approvedTrackers.toList(), readOnlyMappingConfirmed = true,
+                privatePeerEgressConfirmed = true, byteLimit = 1024 * 1024, fileLimit = 16, reserveBytes = 0)
+            tx.executeWithoutResult {
+                val row = settingsRows.locked()
+                row.configuration = mapper.writeValueAsString(config); row.username = "fixture"; row.password = password
+                settingsRows.saveAndFlush(row)
+            }
+            var settings = OwnedTorrentSettings(settingsRows, requests, mapper, mockk<PluginEndpointAccess>(), manager, true)
+            var sharing = OwnedTorrentSharing(settings, owners, references, requests, intents)
+            val profileDigest = ownedTorrentSharedProfileDigest(mapper, config)
+            val revision = settingsRows.findById(1).orElseThrow().revision
+            fun request(contentIds: List<Long>): UUID = UUID.randomUUID().also { id ->
+                val canonical = acquisition.resolveCanonicalSelection(game, 21, contentIds)
+                val creator = SnapshotProcessIdentity.current()
+                tx.executeWithoutResult {
+                    requests.saveAndFlush(OwnedTorrentRequestRow(id = id, ownerKey = SnapshotProtocol.digest(id.toString().toByteArray()),
+                        selection = mapper.writeValueAsString(OwnedTorrentSelection(canonical.gameId, canonical.variantId, canonical.contentIds, true)),
+                        settingsRevision = revision, state = "RUNNING", profile = mapper.writeValueAsString(config),
+                        profileUsername = "fixture", profilePassword = password).apply {
+                        plannedSnapshotId = id
+                        creatorScope = creator.scope; creatorPid = creator.pid; creatorStartedMillis = creator.startedMillis
+                        hostRequestDigest = ownedTorrentHostRequestDigest(this)
+                    })
+                }
+            }
+            fun key(ids: List<Long>) = ownedTorrentSharedSelectionKey(acquisition.resolveCanonicalSelection(game, 21, ids), profileDigest)
+            data class Seed(val id: UUID, val proof: QbDistributionSharedProof, val bytes: ByteArray)
+            fun create(ids: List<Long>, mismatched: Set<UUID> = emptySet()): Seed {
                 deadline.remaining()
-                var lease = if (index == 0) first else acquisition.acquire(game, variant.id, listOf(2)).also(leases::add)
-                val expected = sourceBytes.filterKeys { it.startsWith("base-") || index == 1 && it == "optional.bin" }.values
+                val id = request(ids)
+                sharing.begin(id, key(ids), profileDigest, revision, mismatched) {}
+                val request = requests.findById(id).orElseThrow()
+                val capturedMembership = ownedTorrentSharedMembershipDigest(acquisition.resolveCanonicalSelection(game, 21, ids))
+                val lease = acquisition.acquire(game, 21, ids, plannedSnapshotId = request.plannedSnapshotId,
+                    hostRequestDigest = requireNotNull(request.hostRequestDigest)).also(leases::add)
+                val expected = sourceBytes.filterKeys { it.startsWith("base-") || 2L in ids && it == "optional.bin" }.values
                 assertEquals(expected.size, lease.manifest.members.size)
                 assertEquals(expected.map { FixtureRuntime.sha(it) }.sorted(), lease.manifest.members.map { it.digest }.sorted())
-                val row = lifecycle.reserve(lease); lifecycle.create(row.id, lease)
+                val row = lifecycle.reserve(lease, id)
+                tx.executeWithoutResult { requests.locked(id)!!.also { it.snapshotId = lease.snapshotId; it.distributionId = row.id; requests.saveAndFlush(it) } }
+                lifecycle.create(row.id, lease)
                 FixtureRuntime.await(30, { deadline.remaining() }) { lifecycle.validate(row.id, lease); true }
                 lifecycle.addStopped(row.id, lease)
                 val addDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
@@ -145,8 +205,17 @@ class QbDistributionPairFixtureTest @Autowired internal constructor(private val 
                     if (journal.get(row.id).state != QbDistributionState.STARTING) throw failure
                 }
                 FixtureRuntime.await(30, { deadline.remaining() }) { lifecycle.confirmSeeding(row.id, lease); true }
-                val current = journal.get(row.id); val hash = requireNotNull(current.infoHash)
-                addReceiver(receiver, requireNotNull(current.metadata), "/downloads/case-$index")
+                val proof = lifecycle.proveSharedSeed(id, lease)
+                lease.closeAndRequireExit() // READY may not precede physical worker exit.
+                sharing.publish(id, proof, capturedMembership, revision) {}
+                return Seed(id, proof, sharing.metadata(id, revision) { assertEquals(capturedMembership, it) })
+            }
+            var transferIndex = 0
+            fun transfer(resource: Seed) {
+                val index = transferIndex++
+                val hash = resource.proof.infoHash
+                val lease = lifecycle.resume(resource.id, acquisition).also(leases::add)
+                addReceiver(receiver, resource.bytes, "/downloads/case-$index")
                 receiver.qb("torrents/addPeers", mapOf("hashes" to hash, "peers" to "${owned.address(seedId)}:6881"))
                 FixtureRuntime.await(45, { deadline.remaining() }) {
                     val rows = FixtureRuntime.tree(receiver.qb("torrents/info?" + FixtureHttp.form(mapOf("hashes" to hash))).toString(Charsets.UTF_8))
@@ -156,39 +225,116 @@ class QbDistributionPairFixtureTest @Autowired internal constructor(private val 
                 val files = Files.walk(directory).use { paths -> paths.filter { Files.isRegularFile(it, NOFOLLOW_LINKS) }.toList() }
                 assertEquals(lease.manifest.members.map { it.name }.toSet(), files.map { directory.relativize(it).toString() }.toSet())
                 lease.manifest.members.forEach { assertEquals(it.digest, FixtureRuntime.sha(Files.readAllBytes(directory.resolve(it.name)))) }
-                lifecycle.confirmSeeding(row.id, lease)
-                if (index == 0) {
-                    // Physical qB restart plus host service/worker reopen, not a full host
-                    // JVM crash test. Preserve the exact committed ownership/lease token.
-                    val retained = lease.leaseId
-                    lease.close()
-                    initialApi.close()
-                    owned.docker("restart", seedId, seconds = minOf(30, deadline.remaining()))
-                    seed.awaitQbAuthentication(password, 30, { FixtureRuntime.tree(owned.docker("inspect", seedId))[0]["State"] })
-                    val restartedApi = QbDistributionApi(policy, QbDistributionCredentials("fixture", password))
-                    api = restartedApi
-                    lifecycle = QbDistributionLifecycle(policy, restartedApi, journal)
-                    lease = lifecycle.resume(row.id, acquisition).also(leases::add)
-                    assertEquals(retained, lease.leaseId)
-                    assertEquals(row.snapshotId, lease.snapshotId)
-                    FixtureRuntime.await(30, { deadline.remaining() }) { lifecycle.confirmSeeding(row.id, lease); true }
-                }
+                lifecycle.proveSharedSeed(resource.id, lease)
+                lease.closeAndRequireExit()
                 receiver.qb("torrents/stop", mapOf("hashes" to hash)); receiver.qb("torrents/delete", mapOf("hashes" to hash, "deleteFiles" to "false"))
-                lifecycle.stopForRemoval(row.id, lease)
+                FixtureRuntime.await(10, { deadline.remaining() }) {
+                    FixtureRuntime.tree(receiver.qb("torrents/info?" + FixtureHttp.form(mapOf("hashes" to hash))).toString(Charsets.UTF_8)).isEmpty
+                }
+            }
+            fun retire(requestId: UUID, resource: Seed) {
+                assertTrue(sharing.release(requestId) {}!!.last)
+                val lease = lifecycle.resume(resource.id, acquisition).also(leases::add)
+                lifecycle.stopForRemoval(resource.id, lease)
                 FixtureRuntime.await(20, { deadline.remaining() }) {
-                    val state = requireNotNull(api).find(hash)?.get("state")?.asText()
+                    val state = requireNotNull(api).find(resource.proof.infoHash)?.get("state")?.asText()
                     state in setOf("stoppedUP", "stoppedDL")
                 }
-                lifecycle.removeStopped(row.id, lease) // Exactly one remove attempt.
-                FixtureRuntime.await(20, { deadline.remaining() }) { lifecycle.reconcileRemoval(row.id, lease); true }
+                lifecycle.removeStopped(resource.id, lease) // Exactly one remove attempt.
+                FixtureRuntime.await(20, { deadline.remaining() }) { lifecycle.reconcileRemoval(resource.id, lease); true }
                 assertEquals(0, registry.activeLeases(lease.snapshotId))
                 acquisition.retire(lease.snapshotId)
+                sharing.retired(resource.id) {}
                 assertFalse(Files.exists(cache.resolve(lease.snapshotId.toString()), NOFOLLOW_LINKS))
             }
+            val original = create(emptyList())
+            transfer(original)
+            val second = request(emptyList())
+            val candidate = sharing.candidates(key(emptyList())).single()
+            val sharedLease = lifecycle.resume(original.id, acquisition).also(leases::add)
+            val repeatedMembership = ownedTorrentSharedMembershipDigest(acquisition.resolveCanonicalSelection(game, 21, emptyList()))
+            val currentSource = acquisition.verifyCurrentSources(sharedLease, game, 21, emptyList())
+            assertEquals(SnapshotSourceVerification.MATCH, currentSource.result)
+            val repeatedProof = lifecycle.proveSharedSeed(original.id, sharedLease)
+            sharedLease.closeAndRequireExit()
+            // Actual writer transaction: an authority failure must not publish a
+            // reference or READY request. Reuse the same request only after proving
+            // its prior failed attach left the committed state unchanged.
+            assertFailsWith<IllegalStateException> {
+                sharing.attach(second, candidate, repeatedProof, currentSource.sourceDigest, currentSource.result.name, repeatedMembership, revision) {
+                    error("Synthetic captured actor revoked")
+                }
+            }
+            assertFalse(references.existsById(second))
+            assertEquals("RUNNING", requests.findById(second).orElseThrow().state)
+            assertEquals("ACTIVE", owners.findById(original.id).orElseThrow().state)
+            sharing.attach(second, candidate, repeatedProof, currentSource.sourceDigest, currentSource.result.name, repeatedMembership, revision) {}
+            assertContentEquals(original.bytes, sharing.metadata(second, revision) { assertEquals(repeatedMembership, it) })
+            assertEquals(1, Files.list(cache).use { entries -> entries.filter {
+                Files.isDirectory(it, NOFOLLOW_LINKS) && it.fileName.toString().matches(Regex("[a-f0-9-]{36}"))
+            }.count() }.toInt())
+            verify(exactly = 1) { initialApi.create(any(), any()) }
+            verify(exactly = 1) { initialApi.addStopped(any(), any(), any()) }
+            // Reopen real services/repositories and restart the exact owned qB
+            // container. This is durable table + same-token worker/API recovery,
+            // not a full host/JVM crash or HTTP session-auth acceptance claim.
+            initialApi.close()
+            owned.docker("restart", seedId, seconds = minOf(30, deadline.remaining()))
+            seed.awaitQbAuthentication(password, 30, { FixtureRuntime.tree(owned.docker("inspect", seedId))[0]["State"] })
+            val restartedApi = spyk(QbDistributionApi(policy, QbDistributionCredentials("fixture", password)))
+            api = restartedApi
+            lifecycle = QbDistributionLifecycle(policy, restartedApi, journal)
+            settings = OwnedTorrentSettings(settingsRows, requests, mapper, mockk<PluginEndpointAccess>(), manager, true)
+            sharing = OwnedTorrentSharing(settings, owners, references, requests, intents)
+            val reopened = lifecycle.resume(original.id, acquisition).also(leases::add)
+            assertEquals(original.proof.leaseId, reopened.leaseId)
+            assertEquals(original.proof.snapshotId, reopened.snapshotId)
+            FixtureRuntime.await(30, { deadline.remaining() }) {
+                assertEquals(original.proof, lifecycle.proveSharedSeed(original.id, reopened)); true
+            }
+            reopened.closeAndRequireExit()
+            assertEquals(candidate, sharing.candidates(key(emptyList())).single())
+            for (id in listOf(original.id, second)) {
+                assertEquals("ACTIVE", references.findById(id).orElseThrow().state)
+                assertEquals(original.id, references.findById(id).orElseThrow().ownerId)
+                assertEquals("READY", requests.findById(id).orElseThrow().state)
+                assertContentEquals(original.bytes, sharing.metadata(id, revision) { assertEquals(repeatedMembership, it) })
+            }
+            assertFalse(sharing.release(original.id) {}!!.last)
+            verify(exactly = 0) { initialApi.stop(any()) }
+            verify(exactly = 0) { initialApi.remove(any()) }
+            verify(exactly = 0) { restartedApi.stop(any()) }
+            verify(exactly = 0) { restartedApi.remove(any()) }
+            transfer(original) // First request release did not interrupt the second user.
+            val distinct = create(listOf(2))
+            assertNotEquals(original.proof.infoHash, distinct.proof.infoHash)
+            transfer(distinct)
             assertEquals(before, before.keys.associateWith { fingerprint(source.resolve(it)) })
+            // Explicit out-of-band SYNTHETIC source change. The app never writes source
+            // bytes. The old referenced swarm must remain the old immutable generation.
+            val changed = sourceBytes.getValue("base-a.bin").copyOf().also { it[0] = (it[0].toInt() xor 1).toByte() }
+            Files.write(source.resolve("base-a.bin"), changed); sourceBytes["base-a.bin"] = changed
+            val afterSyntheticMutation = before.keys.associateWith { fingerprint(source.resolve(it)) }
+            val oldLease = lifecycle.resume(original.id, acquisition).also(leases::add)
+            assertEquals(SnapshotSourceVerification.MISMATCH, acquisition.verifyCurrentSources(oldLease, game, 21, emptyList()).result)
+            assertEquals(original.proof, lifecycle.proveSharedSeed(original.id, oldLease))
+            oldLease.closeAndRequireExit()
+            val newGeneration = create(emptyList(), setOf(original.id))
+            assertNotEquals(original.proof.infoHash, newGeneration.proof.infoHash)
+            transfer(newGeneration)
+            retire(second, original)
+            verify(exactly = 1) { restartedApi.remove(original.proof.infoHash) }
+            retire(distinct.id, distinct); retire(newGeneration.id, newGeneration)
+            verify(exactly = 1) { initialApi.create(any(), any()) }
+            verify(exactly = 1) { initialApi.addStopped(any(), any(), any()) }
+            verify(exactly = 2) { restartedApi.create(any(), any()) }
+            verify(exactly = 2) { restartedApi.addStopped(any(), any(), any()) }
+            verify(exactly = 3) { restartedApi.stop(any()) }
+            verify(exactly = 3) { restartedApi.remove(any()) }
+            assertEquals(afterSyntheticMutation, before.keys.associateWith { fingerprint(source.resolve(it)) })
             assertTrue(FixtureRuntime.tree(seed.qb("torrents/info").toString(Charsets.UTF_8)).isEmpty)
             assertTrue(FixtureRuntime.tree(receiver.qb("torrents/info").toString(Charsets.UTF_8)).isEmpty)
-            println("""{"scope":"owned-qb-distribution-pair","version":"v5.2.3","exactSelectionCases":2,"originalHashesAndLinksUnchanged":true,"readonlyCacheMount":true,"seederDownloadedBytes":0,"sameTokenQbRestartAndWorkerReopen":true,"leasesReleased":true,"retirementConfirmed":true}""")
+            println("""{"scope":"shared-owned-qb-distribution-pair","version":"v5.2.3","requests":4,"copies":3,"createCalls":3,"addCalls":3,"removeCalls":3,"sameSelectionMetadataIdentical":true,"sharedTablesAndSameTokenQbRestartReopened":true,"revokedAttachRolledBack":true,"firstReleaseDidNotStop":true,"distinctSelectionAndChangedSourceSeparate":true,"appSourceHashesAndLinksUnchanged":true,"explicitSyntheticSourceMutation":true,"readonlyCacheMount":true,"leasesReleased":true,"retirementConfirmed":true}""")
         } catch (failure: Throwable) { primary = failure; throw failure }
         finally {
             // Teardown is not successful lifecycle/retention proof. End exact remote and
@@ -222,7 +368,7 @@ class QbDistributionPairFixtureTest @Autowired internal constructor(private val 
     }
 
     private fun addReceiver(client: FixtureHttp, metadata: ByteArray, path: String) {
-        require(path.matches(Regex("/downloads/case-[01]")) && metadata.size in 1..1024 * 1024)
+        require(path.matches(Regex("/downloads/case-[0-3]")) && metadata.size in 1..1024 * 1024)
         val boundary = "fixture" + UUID.randomUUID().toString().replace("-", "")
         val prefix = "--$boundary\r\nContent-Disposition: form-data; name=\"savepath\"\r\n\r\n$path\r\n--$boundary\r\nContent-Disposition: form-data; name=\"torrents\"; filename=\"fixture.torrent\"\r\nContent-Type: application/x-bittorrent\r\n\r\n"
         val body = prefix.toByteArray() + metadata + "\r\n--$boundary--\r\n".toByteArray()

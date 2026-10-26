@@ -20,6 +20,7 @@ object SnapshotProtocol {
     const val VERIFY = 6
     const val PREPARE = 7
     const val RETIRE = 8
+    const val VERIFY_SOURCE = 9
 
     fun frame(input: InputStream): ByteArray {
         val stream = DataInputStream(input)
@@ -89,7 +90,7 @@ data class SnapshotCapture(
         require(selections.none { a -> selections.any { b -> a !== b && (a.sourceRelative == b.sourceRelative || a.sourceRelative.startsWith(b.sourceRelative + "/") || b.sourceRelative.startsWith(a.sourceRelative + "/")) } })
     }
     fun bytes(command: Int = SnapshotProtocol.CAPTURE): ByteArray = SnapshotProtocol.encode {
-        require(command == SnapshotProtocol.CAPTURE || command == SnapshotProtocol.PREPARE)
+        require(command == SnapshotProtocol.CAPTURE || command == SnapshotProtocol.PREPARE || command == SnapshotProtocol.VERIFY_SOURCE)
         writeInt(SnapshotProtocol.VERSION); writeInt(command)
         SnapshotProtocol.text(this, snapshotId.toString()); SnapshotProtocol.text(this, operation.toString())
         SnapshotProtocol.text(this, sourceRoot); SnapshotProtocol.text(this, cacheRoot)
@@ -104,6 +105,24 @@ data class SnapshotCapture(
             val bytes = input.readLong(); val count = input.readInt(); val reserve = input.readLong()
             val selected = input.readInt(); require(selected in 1..SnapshotProtocol.MAX_MEMBERS)
             return SnapshotCapture(id, operation, source, cache, identity, List(selected) { SnapshotSelection(SnapshotProtocol.text(input), SnapshotProtocol.text(input)) }, bytes, count, reserve)
+        }
+    }
+}
+
+enum class SnapshotSourceVerification { MATCH, MISMATCH, SAME_CONTENT_DIFFERENT_SOURCE }
+
+/** Fresh observation provenance, NOT a durable capability or authorization token. */
+data class SnapshotSourceProof(val result: SnapshotSourceVerification, val manifestDigest: String, val sourceDigest: String) {
+    init { require(listOf(manifestDigest, sourceDigest).all { it.matches(Regex("[0-9a-f]{64}")) }) }
+    fun bytes(): ByteArray = SnapshotProtocol.encode {
+        writeInt(SnapshotProtocol.VERSION); writeInt(result.ordinal)
+        SnapshotProtocol.text(this, manifestDigest); SnapshotProtocol.text(this, sourceDigest)
+    }
+    companion object {
+        fun read(bytes: ByteArray): SnapshotSourceProof = SnapshotProtocol.decode(bytes) {
+            require(readInt() == SnapshotProtocol.VERSION)
+            val result = readInt(); require(result in SnapshotSourceVerification.entries.indices)
+            SnapshotSourceProof(SnapshotSourceVerification.entries[result], SnapshotProtocol.text(this, 64), SnapshotProtocol.text(this, 64))
         }
     }
 }

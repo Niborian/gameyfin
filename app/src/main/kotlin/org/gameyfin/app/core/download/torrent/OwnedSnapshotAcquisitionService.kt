@@ -3,11 +3,14 @@ package org.gameyfin.app.core.download.torrent
 import org.gameyfin.app.core.download.files.DownloadPathLeases
 import org.gameyfin.app.core.download.files.DownloadSelectionResolver
 import org.gameyfin.app.games.entities.Game
+import org.gameyfin.app.games.entities.GameVariant
+import org.gameyfin.app.games.entities.VariantContent
 import org.gameyfin.app.games.entities.effectivePaths
 import org.gameyfin.snapshot.SnapshotCapture
 import org.gameyfin.snapshot.SnapshotManifest
 import org.gameyfin.snapshot.SnapshotProtocol
 import org.gameyfin.snapshot.SnapshotSelection
+import org.gameyfin.snapshot.SnapshotSourceProof
 import java.io.InputStream
 import java.nio.file.Path
 import java.util.UUID
@@ -25,6 +28,9 @@ internal data class OwnedSnapshotSettings(val cacheRoot: Path, val byteLimit: Lo
         require(maxUnretiredSnapshots in 1..256 && maxUnretiredBytes in byteLimit..4L * 1024 * 1024 * 1024 * 1024)
     }
 }
+
+internal data class OwnedSnapshotLogicalSelection(val gameId: Long, val variantId: Long, val contentIds: List<Long>,
+    val sourceRoot: Path, val sources: List<Path>, val selections: List<SnapshotSelection>)
 
 /** Carries a reserved/intended identity even when a callback or database COMMIT
  * outcome was unknown. It contains no source paths, credentials or permission grant.
@@ -48,6 +54,50 @@ internal class OwnedSnapshotAcquisitionService(private val downloads: DownloadSe
     private val acquisition = Semaphore(1)
     private val workerSlots = Semaphore(2)
 
+    /** Torrent-only canonicalization. Legacy ZIP selection/order is unchanged. */
+    fun resolveCanonicalSelection(game: Game, variantId: Long?, contentIds: List<Long>?): OwnedSnapshotLogicalSelection {
+        val (variant, contents) = downloads.resolveSelection(game, variantId, contentIds)
+        return canonicalMapping(game, variant, contents)
+    }
+
+    /** Database-only lexical mapping for the locked attach writer. No filesystem
+     * validation is performed here; the full descriptor SOURCE proof stays outside.
+     */
+    fun resolveCanonicalMembership(game: Game, variantId: Long?, contentIds: List<Long>?): OwnedSnapshotLogicalSelection {
+        val (variant, contents) = downloads.resolveMembership(game, variantId, contentIds)
+        return canonicalMapping(game, variant, contents)
+    }
+
+    private fun canonicalMapping(game: Game, variant: GameVariant, contents: List<VariantContent>): OwnedSnapshotLogicalSelection {
+        val ordered = contents.sortedBy { requireNotNull(it.id) }
+        val ids = ordered.map { requireNotNull(it.id) }; require(ids.distinct().size == ids.size)
+        val root = requireNotNull(Path.of(variant.path).toAbsolutePath().normalize().parent)
+        val sources = mutableListOf<Path>()
+        val selected = ordered.flatMapIndexed { index, content ->
+            content.effectivePaths().map { Path.of(it).toAbsolutePath().normalize() }.sortedBy { it.toString() }.map { path ->
+                require(path.startsWith(root) && path != root) { "Selection outside host content root" }
+                sources.add(path)
+                SnapshotSelection(root.relativize(path).toString().replace('\\', '/'), "content-${index + 1}/${path.fileName}")
+            }
+        }
+        return OwnedSnapshotLogicalSelection(requireNotNull(game.id), requireNotNull(variant.id), ids, root, sources.toList(), selected)
+    }
+
+    /** Fresh authorization membership and filesystem proofs run outside owner DB locks.
+     * A proved source mismatch is not corruption of the old still-referenced cache.
+     */
+    fun verifyCurrentSources(lease: OwnedSnapshotLease, game: Game, variantId: Long?, contentIds: List<Long>?): SnapshotSourceProof {
+        val record = registry.get(lease.snapshotId)
+        val current = resolveCanonicalSelection(game, variantId, contentIds)
+        require(record.gameId == current.gameId && record.variantId == current.variantId)
+        val original = SnapshotProtocol.decode(record.request) {
+            require(readInt() == SnapshotProtocol.VERSION && readInt() == SnapshotProtocol.CAPTURE); SnapshotCapture.read(this)
+        }
+        require(original.cacheRoot == settings.cacheRoot.toString())
+        val fresh = original.copy(sourceRoot = current.sourceRoot.toString(), selections = current.selections)
+        return sourceLeases.acquire(current.sources).use { lease.verifyCurrentSources(fresh) }
+    }
+
     fun acquire(game: Game, variantId: Long?, contentIds: List<Long>?, onReserved: (UUID) -> Unit = {},
         plannedSnapshotId: UUID? = null, hostRequestDigest: String? = null): OwnedSnapshotLease {
         if (!acquisition.tryAcquire()) throw OwnedSnapshotAcquisitionFailure(null,
@@ -63,12 +113,9 @@ internal class OwnedSnapshotAcquisitionService(private val downloads: DownloadSe
         var admissionRefused = false
         try {
             val owner = workers.ownerIdentity() // fail before source I/O if host scope is unavailable
-            val (variant, contents) = downloads.resolveSelection(game, variantId, contentIds)
-            val gameId = requireNotNull(game.id); val canonicalVariantId = requireNotNull(variant.id)
-            val root = requireNotNull(Path.of(variant.path).toAbsolutePath().normalize().parent)
-            val sources = contents.flatMap { it.effectivePaths() }.map { Path.of(it).toAbsolutePath().normalize() }
-            require(sources.all { it.startsWith(root) && it != root }) { "Selection outside host content root" }
-            sourceLease = sourceLeases.acquire(sources)
+            val selection = resolveCanonicalSelection(game, variantId, contentIds)
+            val gameId = selection.gameId; val canonicalVariantId = selection.variantId
+            sourceLease = sourceLeases.acquire(selection.sources)
             require(workerSlots.tryAcquire()) { "Owned snapshot workers at capacity" }; slotHeld = true
             workerStartAttempted = true; worker = workers.start()
             val cacheIdentity = hello(worker, "")
@@ -76,11 +123,8 @@ internal class OwnedSnapshotAcquisitionService(private val downloads: DownloadSe
             // entering acquisition. An existing ID is still refused, NEVER resumed
             // or recopied here; reconciliation uses the separately verified APIs.
             val id = plannedSnapshotId ?: UUID.randomUUID()
-            val request = SnapshotCapture(id, UUID.randomUUID(), root.toString(), settings.cacheRoot.toString(), cacheIdentity,
-                contents.flatMapIndexed { contentIndex, content -> content.effectivePaths().map { selected ->
-                    val path = Path.of(selected).toAbsolutePath().normalize()
-                    SnapshotSelection(root.relativize(path).toString().replace('\\', '/'), "content-${contentIndex + 1}/${path.fileName}")
-                } }, settings.byteLimit, settings.fileLimit, settings.reserveBytes)
+            val request = SnapshotCapture(id, UUID.randomUUID(), selection.sourceRoot.toString(), settings.cacheRoot.toString(), cacheIdentity,
+                selection.selections, settings.byteLimit, settings.fileLimit, settings.reserveBytes)
             // Commit before COPY/publication; never blind-retry an unknown operation.
             // Assign BEFORE reserve: an ambiguous database COMMIT cannot be treated
             // as proof of absence or lose the intended identity for operator recovery.
@@ -261,6 +305,13 @@ internal class OwnedSnapshotLease(val snapshotId: UUID, val leaseId: UUID, val m
         require(manifest.cacheIdentity == expectedCacheIdentity)
         val encoded = worker.exchange(SnapshotProtocol.encode { writeInt(SnapshotProtocol.VERSION); writeInt(SnapshotProtocol.VERIFY) })
         require(SnapshotProtocol.digest(encoded) == SnapshotProtocol.digest(manifest.bytes())) { "Held snapshot identity changed" }
+    }
+    @Synchronized internal fun verifyCurrentSources(request: SnapshotCapture): SnapshotSourceProof {
+        check(!closed.get())
+        require(request.snapshotId == snapshotId && request.operation == manifest.operation)
+        val proof = SnapshotSourceProof.read(worker.exchange(request.bytes(SnapshotProtocol.VERIFY_SOURCE)))
+        require(proof.manifestDigest == SnapshotProtocol.digest(manifest.bytes())) { "Source proof acknowledged a different cache generation" }
+        return proof
     }
     /** Only the owning lifecycle calls this after exact stopped torrent removal with
      * deleteFiles=false AND creator-task absence have both been verified. No source/cache

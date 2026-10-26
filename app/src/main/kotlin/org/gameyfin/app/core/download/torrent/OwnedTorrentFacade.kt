@@ -7,6 +7,8 @@ import org.gameyfin.app.core.plugins.PluginAudience
 import org.gameyfin.app.core.plugins.PluginEndpointAccess
 import org.gameyfin.app.games.GameService
 import org.gameyfin.snapshot.SnapshotProtocol
+import org.gameyfin.snapshot.SnapshotCapture
+import org.gameyfin.snapshot.SnapshotSourceVerification
 import org.springframework.security.access.AccessDeniedException
 import org.springframework.stereotype.Service
 import org.springframework.data.domain.PageRequest
@@ -29,7 +31,8 @@ internal class OwnedTorrentFacade(private val settings: OwnedTorrentSettings,
     private val requests: OwnedTorrentRequestRepository, private val journal: QbDistributionJournal,
     private val snapshots: OwnedSnapshotRegistry, private val resolver: DownloadSelectionResolver,
     private val paths: DownloadPathLeases, private val games: GameService,
-    private val access: PluginEndpointAccess, private val mapper: ObjectMapper, manager: PlatformTransactionManager) {
+    private val access: PluginEndpointAccess, private val mapper: ObjectMapper, manager: PlatformTransactionManager,
+    private val sharing: OwnedTorrentSharing) {
     private val tx = TransactionTemplate(manager).apply { propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW }
     private val executor = ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, ArrayBlockingQueue(2),
         { task -> Thread(task, "owned-torrent").apply { isDaemon = true } }, ThreadPoolExecutor.AbortPolicy())
@@ -48,7 +51,7 @@ internal class OwnedTorrentFacade(private val settings: OwnedTorrentSettings,
             contentIds = resolved.second.mapNotNull { it.id }.distinct().sorted(), explicitSelection = true)
         val id = UUID.randomUUID()
         val creator = SnapshotProcessIdentity.current()
-        tx.executeWithoutResult {
+        settings.withWriterLock(runtime.revision) {
             requireSession(actor)
             require(ownedTorrentAdmissionOpen(requests.countByStateNotIn(listOf("REJECTED", "RETIRED")))) { "Owned torrent retention capacity reached" }
             requests.saveAndFlush(OwnedTorrentRequestRow(id, owner(actor), mapper.writeValueAsString(exact), runtime.revision).apply {
@@ -58,6 +61,7 @@ internal class OwnedTorrentFacade(private val settings: OwnedTorrentSettings,
                 creatorScope = creator.scope; creatorPid = creator.pid; creatorStartedMillis = creator.startedMillis
                 hostRequestDigest = ownedTorrentHostRequestDigest(this)
             })
+            Unit
         }
         submit(id, onRejected = "REJECTED") { acquire(id, actor) }
         return status(id)
@@ -87,11 +91,20 @@ internal class OwnedTorrentFacade(private val settings: OwnedTorrentSettings,
         val actor = access.captureAdministrator(); requireSession(actor)
         check(active.add(id)) { "Request still has a local owner" }
         try {
-            tx.executeWithoutResult {
-                val row = requireNotNull(requests.locked(id))
-                // Null comes only from successful exact lookups; exceptions roll back and retain ownership.
-                val proof = ownedTorrentResourceFreeCancellation(row, SnapshotProcessProbe.SYSTEM, attestation,
-                    { snapshots.find(row.plannedSnapshotId) }, { journal.find(id) })
+            val observed = row(id)
+            // Process/procfs proof is outside database writer locks. A dead exact process
+            // cannot revive; the writer compares its immutable identity and repeats DB absence.
+            val proof = ownedTorrentResourceFreeCancellation(observed, SnapshotProcessProbe.SYSTEM, attestation,
+                { snapshots.find(observed.plannedSnapshotId) }, { journal.find(id) })
+            sharing.rejectResourceFree(id) { row ->
+                require(row.state == observed.state && row.plannedSnapshotId == observed.plannedSnapshotId && row.hostRequestDigest == observed.hostRequestDigest &&
+                    ownedTorrentHostRequestDigest(row) == ownedTorrentHostRequestDigest(observed) &&
+                    row.creatorScope == observed.creatorScope && row.creatorPid == observed.creatorPid &&
+                    row.creatorStartedMillis == observed.creatorStartedMillis) { "Creator/request proof changed" }
+                // Null comes only from successful exact lookups; failures roll back and retain ownership.
+                require(snapshots.find(row.plannedSnapshotId) == null && journal.find(id) == null) {
+                    "Resource absence was not proved"
+                }
                 requireSession(actor)
                 if (proof == OwnedTorrentCreatorExit.FOREIGN_ATTESTED) {
                     val receipt = requireNotNull(attestation)
@@ -101,7 +114,6 @@ internal class OwnedTorrentFacade(private val settings: OwnedTorrentSettings,
                     row.creatorExitEvidenceSha256 = receipt.evidenceSha256; row.creatorExitContainerId = receipt.originalContainerId
                     row.creatorExitActorId = requireNotNull(actor.account).id; row.creatorExitAt = Instant.now()
                 }
-                row.state = "REJECTED"; requests.saveAndFlush(row)
             }
         } finally { active.remove(id) }
         return OwnedTorrentStatus(id.toString(), "REJECTED", null)
@@ -111,10 +123,23 @@ internal class OwnedTorrentFacade(private val settings: OwnedTorrentSettings,
         val state = visibleState(id, row.state)
         return OwnedTorrentStatus(id.toString(), state, if (state == "READY") "/owned-torrent/$id/metadata" else null)
     }
-    private fun visibleState(id: UUID, state: String) =
-        if (state in setOf("QUEUED", "RUNNING", "RETIRING", "RECOVERING") && id !in active) "NEEDS_OPERATOR" else state
+    private fun visibleState(id: UUID, state: String): String {
+        if (state !in setOf("QUEUED", "RUNNING", "RETIRING", "RECOVERING")) return state
+        // Display hint only: reference/session ownership and durable cleanup fencing are separate.
+        return ownedTorrentSharedVisibleState(state, id in active,
+            sharing.reference(id)?.ownerId?.let { it in active } == true)
+    }
     fun metadata(id: UUID): ByteArray {
         val actor = capture(); val row = row(id); requireOwner(actor, row)
+        val selection = mapper.readValue(row.selection, OwnedTorrentSelection::class.java)
+        requireExactMembership(selection, true)
+        requireSession(actor)
+        if (sharing.reference(id) != null) {
+            val host = acquisition(settings.runtime(row.settingsRevision))
+            return sharing.metadata(id, row.settingsRevision) { membershipDigest ->
+                requireExactMembership(selection, false, membershipDigest, host); requireOwner(actor, row)
+            }
+        }
         settings.runtime(row.settingsRevision)
         require(row.state == "READY") { "Torrent is not ready" }
         val distribution = journal.get(requireNotNull(row.distributionId))
@@ -124,20 +149,24 @@ internal class OwnedTorrentFacade(private val settings: OwnedTorrentSettings,
     }
     fun retire(id: UUID, retryUncertainRemoval: Boolean = false): OwnedTorrentStatus {
         val actor = access.captureAdministrator(); requireSession(actor)
-        submit(id, onRejected = "UNCERTAIN", prepare = {
-            repairSnapshotLink(id)
-            repairIntentLink(id)
-            mutate(id) {
+        val released = sharing.release(id) { requireSession(actor) }
+        if (released != null && !released.last) return OwnedTorrentStatus(id.toString(), "RELEASED", null)
+        val resourceId = released?.ownerId ?: id
+        submit(resourceId, onRejected = "UNCERTAIN", prepare = {
+            repairSnapshotLink(resourceId)
+            repairIntentLink(resourceId)
+            mutate(resourceId) {
                 require((it.snapshotId != null || it.distributionId != null) &&
-                    it.state in setOf("READY", "UNCERTAIN", "RUNNING", "RETIRING", "RECOVERED", "RECOVERING")) { "Request requires operator reconciliation" }
+                    it.state in setOf("READY", "RELEASED", "UNCERTAIN", "RUNNING", "RETIRING", "RECOVERED", "RECOVERING")) { "Request requires operator reconciliation" }
                 it.state = "RETIRING"
             }
-        }) { retireOwned(id, actor, retryUncertainRemoval) }
+        }) { retireOwned(resourceId, actor, retryUncertainRemoval) }
         return OwnedTorrentStatus(id.toString(), "RETIRING", null)
     }
     fun recover(id: UUID, action: OwnedTorrentRecoveryAction): OwnedTorrentStatus {
         val actor = access.captureAdministrator(); requireSession(actor)
         submit(id, onRejected = "UNCERTAIN", prepare = {
+            require(sharing.reference(id) == null) { "Shared active resources use shared release, not acquisition recovery" }
             repairSnapshotLink(id)
             repairIntentLink(id)
             mutate(id) {
@@ -179,14 +208,53 @@ internal class OwnedTorrentFacade(private val settings: OwnedTorrentSettings,
             val selection = mapper.readValue(row.selection, OwnedTorrentSelection::class.java)
             val host = acquisition(runtime)
             val game = games.getById(selection.gameId)
+            val canonical = host.resolveCanonicalSelection(game, selection.variantId, selected(selection))
+            val membershipDigest = ownedTorrentSharedMembershipDigest(canonical)
+            val profileDigest = ownedTorrentSharedProfileDigest(mapper, runtime.config)
+            val selectionKey = ownedTorrentSharedSelectionKey(canonical, profileDigest)
+            val mismatched = mutableSetOf<UUID>()
+            for (candidate in sharing.candidates(selectionKey)) {
+                require(candidate.profileDigest == profileDigest)
+                val checkpoint = { current(actor, runtime.revision) }
+                QbDistributionApi(runtime.policy, runtime.credentials, checkpoint).use { api ->
+                    val lifecycle = QbDistributionLifecycle(runtime.policy, api, journal, checkpoint)
+                    val existing = lifecycle.resume(candidate.proof.intentId, host)
+                    lease = existing
+                    val source = host.verifyCurrentSources(existing, game, selection.variantId, selected(selection))
+                    if (source.result == SnapshotSourceVerification.MISMATCH) {
+                        existing.closeAndRequireExit(); lease = null
+                        mismatched.add(candidate.ownerId)
+                    } else {
+                        // MATCH and proved identical payload with replaced source identity are both
+                        // fresh full-byte proofs. Neither permits adoption of an unrelated seed.
+                        val proof = lifecycle.proveSharedSeed(candidate.proof.intentId, existing)
+                        existing.closeAndRequireExit(); lease = null
+                        require(source.manifestDigest == candidate.proof.manifestDigest)
+                        sharing.attach(id, candidate, proof, source.sourceDigest, source.result.name, membershipDigest, runtime.revision) {
+                            requireExactMembership(selection, false, membershipDigest, host); requireSession(actor)
+                        }
+                        return
+                    }
+                }
+            }
+            sharing.begin(id, selectionKey, profileDigest, runtime.revision, mismatched) {
+                requireExactMembership(selection, false, membershipDigest, host); requireSession(actor)
+            }
             acquisitionStarted = true
             val held = host.acquire(game, selection.variantId, selected(selection), onReserved = { snapshotId ->
                 mutate(id) { require(it.snapshotId == null || it.snapshotId == snapshotId); it.snapshotId = snapshotId }
             }, plannedSnapshotId = row.plannedSnapshotId, hostRequestDigest = requireNotNull(row.hostRequestDigest))
             lease = held
+            val captured = SnapshotProtocol.decode(snapshots.get(held.snapshotId).request) {
+                require(readInt() == SnapshotProtocol.VERSION && readInt() == SnapshotProtocol.CAPTURE)
+                SnapshotCapture.read(this)
+            }
+            require(captured.sourceRoot == canonical.sourceRoot.toString() && captured.selections == canonical.selections) {
+                "Captured logical selection changed after shared admission"
+            }
             mutate(id) { it.snapshotId = held.snapshotId }
             val checkpoint = { current(actor, runtime.revision) }
-            QbDistributionApi(runtime.policy, runtime.credentials, checkpoint).use { api ->
+            val sharedProof = QbDistributionApi(runtime.policy, runtime.credentials, checkpoint).use { api ->
                 val lifecycle = QbDistributionLifecycle(runtime.policy, api, journal, checkpoint)
                 current(actor, runtime.revision)
                 val intent = lifecycle.reserve(held, id)
@@ -208,18 +276,26 @@ internal class OwnedTorrentFacade(private val settings: OwnedTorrentSettings,
                 }
                 current(actor, runtime.revision); lifecycle.confirmChecked(intent.id, held)
                 current(actor, runtime.revision); lifecycle.start(intent.id, held)
+                lifecycle.proveSharedSeed(intent.id, held)
             }
             held.closeAndRequireExit()
-            current(actor, runtime.revision); mutate(id) { it.state = "READY" }
+            sharing.publish(id, sharedProof, membershipDigest, runtime.revision) {
+                requireExactMembership(selection, false, membershipDigest, host); requireSession(actor)
+            }
         } catch (failure: Exception) {
             // Never repeat create/add/start, nor release client ownership on an uncertain outcome.
             val acquisitionFailure = failure as? OwnedSnapshotAcquisitionFailure
-            mutate(id) {
-                acquisitionFailure?.snapshotId?.takeUnless { acquisitionFailure.reservationRefused }?.let { snapshotId ->
-                    require(it.snapshotId == null || it.snapshotId == snapshotId); it.snapshotId = snapshotId
-                }
-                it.state = ownedTorrentFailureState(acquisitionStarted, acquisitionFailure?.safeToReject == true)
-            }
+            val retainedSnapshot = acquisitionFailure?.snapshotId?.takeUnless { acquisitionFailure.reservationRefused }
+            if (!acquisitionStarted || acquisitionFailure?.safeToReject == true) {
+                try {
+                    sharing.rejectResourceFree(id) { request ->
+                        require(snapshots.find(request.plannedSnapshotId) == null && journal.find(id) == null) {
+                            "Resource absence was not proved"
+                        }
+                        requireSession(actor)
+                    }
+                } catch (_: Exception) { sharing.acquisitionFailed(id, retainedSnapshot) }
+            } else sharing.acquisitionFailed(id, retainedSnapshot)
         } finally { lease?.close() }
     }
     private fun retireOwned(id: UUID, actor: PluginAudience, retryUncertainRemoval: Boolean) {
@@ -238,7 +314,7 @@ internal class OwnedTorrentFacade(private val settings: OwnedTorrentSettings,
                         QbDistributionLifecycle(runtime.policy, api, journal, checkpoint).cancelUnboundReserved(intent.id, snapshots)
                     }
                     requireSession(actor); host.retire(intent.snapshotId)
-                    mutate(id) { it.state = "RETIRED" }
+                    finishRetirement(id, actor)
                     return
                 }
             }
@@ -248,7 +324,7 @@ internal class OwnedTorrentFacade(private val settings: OwnedTorrentSettings,
             val action = ownedTorrentRetirement(intent?.state, released)
             if (action == OwnedTorrentRetirement.RETIRE_SNAPSHOT) {
                 requireSession(actor); host.retire(requireNotNull(row.snapshotId))
-                mutate(id) { it.state = "RETIRED" }
+                finishRetirement(id, actor)
                 return
             }
             require(action != OwnedTorrentRetirement.RECONCILE_REQUIRED) { "Explicit lifecycle reconciliation is required before cancellation" }
@@ -280,10 +356,14 @@ internal class OwnedTorrentFacade(private val settings: OwnedTorrentSettings,
                 require(journal.get(intentId).state in setOf(QbDistributionState.REMOVED, QbDistributionState.CANCELLED))
                 held.closeAndRequireExit()
                 requireSession(actor); host.retire(held.snapshotId)
-                mutate(id) { it.state = "RETIRED" }
+                finishRetirement(id, actor)
             }
-        } catch (_: Exception) { mutate(id) { it.state = "UNCERTAIN" } }
+        } catch (_: Exception) { sharing.uncertain(id); mutate(id) { it.state = "UNCERTAIN" } }
         finally { lease?.close() }
+    }
+    private fun finishRetirement(id: UUID, actor: PluginAudience) {
+        sharing.retired(id) { requireSession(actor) }
+        mutate(id) { it.state = "RETIRED" }
     }
     @Synchronized private fun acquisition(runtime: OwnedTorrentRuntime): OwnedSnapshotAcquisitionService {
         val config = runtime.config
@@ -314,6 +394,18 @@ internal class OwnedTorrentFacade(private val settings: OwnedTorrentSettings,
         mutate(id) { require(it.snapshotId == null || it.snapshotId == snapshotId); it.snapshotId = snapshotId }
     }
     private fun selected(selection: OwnedTorrentSelection) = if (selection.explicitSelection) selection.contentIds ?: emptyList() else selection.contentIds
+    private fun requireExactMembership(selection: OwnedTorrentSelection, paths: Boolean,
+                                       expectedMembership: String? = null, host: OwnedSnapshotAcquisitionService? = null) {
+        val game = games.getById(selection.gameId)
+        val resolved = if (paths) resolver.resolveSelection(game, selection.variantId, selected(selection))
+            else resolver.resolveMembership(game, selection.variantId, selected(selection))
+        require(resolved.first.id == selection.variantId && resolved.second.map { requireNotNull(it.id) }.distinct().sorted() ==
+            requireNotNull(selection.contentIds).distinct().sorted()) { "Current download membership changed" }
+        if (expectedMembership != null) {
+            val current = requireNotNull(host).resolveCanonicalMembership(game, selection.variantId, selected(selection))
+            require(ownedTorrentSharedMembershipDigest(current) == expectedMembership) { "Current download path membership changed" }
+        }
+    }
     private fun capture(): PluginAudience = access.capture().also { actor ->
         if (actor.authentication == null || actor.account == null) throw AccessDeniedException("Authentication required")
         requireSession(actor)

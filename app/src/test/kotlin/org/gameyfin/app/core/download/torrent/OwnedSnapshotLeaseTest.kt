@@ -70,4 +70,21 @@ class OwnedSnapshotLeaseTest {
         assertEquals(1, releasedSlots)
         verify(exactly = 1) { registry.release(id, token) }
     }
+    @Test fun `source proof results preserve manifest binding and unknown failures are not mismatches`() {
+        val worker = mockk<SnapshotWorkerConnection>(); val registry = mockk<OwnedSnapshotRegistry>()
+        val lease = OwnedSnapshotLease(id, token, manifest, worker, registry) {}
+        val request = org.gameyfin.snapshot.SnapshotCapture(id, manifest.operation, "/source", "/cache", manifest.cacheIdentity,
+            listOf(org.gameyfin.snapshot.SnapshotSelection("base.bin", "base")), 1024, 8, 0)
+        for (result in org.gameyfin.snapshot.SnapshotSourceVerification.entries) {
+            val proof = org.gameyfin.snapshot.SnapshotSourceProof(result, org.gameyfin.snapshot.SnapshotProtocol.digest(manifest.bytes()), "c".repeat(64))
+            every { worker.exchange(any()) } returns proof.bytes()
+            assertEquals(proof, lease.verifyCurrentSources(request))
+        }
+        every { worker.exchange(any()) } throws IllegalStateException("synthetic unknown I/O")
+        assertFailsWith<IllegalStateException> { lease.verifyCurrentSources(request) }
+        verify(exactly = 0) { registry.uncertain(any()) }
+        every { worker.exchange(any()) } returns org.gameyfin.snapshot.SnapshotSourceProof(
+            org.gameyfin.snapshot.SnapshotSourceVerification.MATCH, "d".repeat(64), "c".repeat(64)).bytes()
+        assertFails { lease.verifyCurrentSources(request) }
+    }
 }

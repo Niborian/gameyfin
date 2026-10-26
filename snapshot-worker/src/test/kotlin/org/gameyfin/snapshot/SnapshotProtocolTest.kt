@@ -40,4 +40,13 @@ class SnapshotProtocolTest {
         assertEquals(SnapshotProtocol.digest(manifest.bytes()), SnapshotProtocol.digest(manifest.bytes()))
         assertFails { SnapshotManifest.read(manifest.copy(members = manifest.members + manifest.members.single()).bytes()) }
     }
+    @Test fun `source proof results are explicit bounded and cannot encode unknown as match`() {
+        for (result in SnapshotSourceVerification.entries) {
+            val proof = SnapshotSourceProof(result, "a".repeat(64), "b".repeat(64))
+            assertEquals(proof, SnapshotSourceProof.read(proof.bytes()))
+            assertFails { SnapshotSourceProof.read(proof.bytes() + byteArrayOf(0)) }
+        }
+        assertFails { SnapshotSourceProof.read(SnapshotProtocol.encode { writeInt(SnapshotProtocol.VERSION); writeInt(99) }) }
+        assertFails { SnapshotSourceProof(SnapshotSourceVerification.MATCH, "not-a-digest", "b".repeat(64)) }
+    }
 }

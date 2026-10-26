@@ -224,4 +224,101 @@ class LinuxSnapshotBoundaryTest {
             assertFalse(Files.exists(cache.resolve(request.snapshotId.toString())))
         } }
     }
+    @Test fun `source verification is read only and distinguishes stable content and source generation changes`() = fixture { source, cache ->
+        Files.writeString(source.resolve("base.bin"), "ORIGINAL")
+        LinuxDescriptors().use { native -> WorkerSession(native).use { session ->
+            val request = capture(session, source, cache)
+            session.capture(request, SnapshotProtocol.digest(request.bytes()))
+            val cacheNames = Files.list(cache).use { it.map(Path::getFileName).toList() }
+            fun proof() = SnapshotSourceProof.read(session.verifySource(request, SnapshotProtocol.digest(request.bytes())))
+            val original = proof()
+            assertEquals(SnapshotSourceVerification.MATCH, original.result)
+            assertEquals(original, proof(), "Unchanged descriptors produce the same provenance without another COPY")
+            Files.writeString(source.resolve("new-source.bin"), "ORIGINAL")
+            Files.move(source.resolve("new-source.bin"), source.resolve("base.bin"), ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            val replaced = proof()
+            assertEquals(SnapshotSourceVerification.SAME_CONTENT_DIFFERENT_SOURCE, replaced.result)
+            assertNotEquals(original.sourceDigest, replaced.sourceDigest)
+            Files.writeString(source.resolve("base.bin"), "DIFFERENT")
+            assertEquals(SnapshotSourceVerification.MISMATCH, proof().result)
+            assertContentEquals("ORIGINAL".toByteArray(), session.read("base", 0, 1024), "Old referenced immutable cache is not changed by a source mismatch")
+            assertEquals(cacheNames, Files.list(cache).use { it.map(Path::getFileName).toList() })
+        } }
+    }
+    @Test fun `source proof instability and unsafe links throw rather than authorize a new generation`() = fixture { source, cache ->
+        Files.writeString(source.resolve("base.bin"), "ORIGINAL")
+        lateinit var request: SnapshotCapture
+        LinuxDescriptors().use { native -> WorkerSession(native).use { session ->
+            request = capture(session, source, cache); session.capture(request, SnapshotProtocol.digest(request.bytes()))
+        } }
+        var mutated = false
+        LinuxDescriptors().use { native -> WorkerSession(native, AcquisitionHooks(afterSourceVerifyRead = {
+            if (!mutated) { mutated = true; Files.writeString(source.resolve("base.bin"), "CHANGED!") }
+        })).use { session ->
+            session.hello(cache.toString(), request.expectedCacheIdentity)
+            session.reopen(request.snapshotId, request.operation, SnapshotProtocol.digest(request.bytes()))
+            assertFailsWith<IllegalArgumentException> { session.verifySource(request, SnapshotProtocol.digest(request.bytes())) }
+            assertTrue(mutated)
+        } }
+        Files.move(source.resolve("base.bin"), source.resolve("outside.bin"), ATOMIC_MOVE)
+        Files.createSymbolicLink(source.resolve("base.bin"), Path.of("outside.bin"))
+        LinuxDescriptors().use { native -> WorkerSession(native).use { session ->
+            session.hello(cache.toString(), request.expectedCacheIdentity)
+            session.reopen(request.snapshotId, request.operation, SnapshotProtocol.digest(request.bytes()))
+            assertFails { session.verifySource(request, SnapshotProtocol.digest(request.bytes())) }
+        } }
+        assertEquals("CHANGED!", Files.readString(source.resolve("outside.bin")))
+    }
+    @Test fun `source proof checks complete directory membership and final parent bindings`() = fixture { source, cache ->
+        val selected = Files.createDirectory(source.resolve("tree")); Files.writeString(selected.resolve("base.bin"), "ORIGINAL")
+        lateinit var request: SnapshotCapture
+        LinuxDescriptors().use { native -> WorkerSession(native).use { session ->
+            val identity = SnapshotProtocol.decode(session.hello(cache.toString(), "")) { SnapshotProtocol.text(this) }
+            request = SnapshotCapture(UUID.randomUUID(), UUID.randomUUID(), source.toString(), cache.toString(), identity,
+                listOf(SnapshotSelection("tree", "group/tree")), 1024, 16, 0)
+            session.prepare(request, SnapshotProtocol.digest(request.bytes())); session.capture(request, SnapshotProtocol.digest(request.bytes()))
+            Files.writeString(selected.resolve("extra.bin"), "NEW MEMBER")
+            val proof = SnapshotSourceProof.read(session.verifySource(request, SnapshotProtocol.digest(request.bytes())))
+            assertEquals(SnapshotSourceVerification.MISMATCH, proof.result)
+            Files.delete(selected.resolve("extra.bin"))
+        } }
+        var rebound = false
+        LinuxDescriptors().use { native -> WorkerSession(native, AcquisitionHooks(afterDirectoryNames = {
+            if (!rebound) {
+                Files.move(selected, source.resolve("retained-tree"), ATOMIC_MOVE)
+                Files.createDirectory(selected); Files.writeString(selected.resolve("base.bin"), "FOREIGN")
+                rebound = true
+            }
+        })).use { session ->
+            session.hello(cache.toString(), request.expectedCacheIdentity)
+            session.reopen(request.snapshotId, request.operation, SnapshotProtocol.digest(request.bytes()))
+            assertFailsWith<IllegalArgumentException> { session.verifySource(request, SnapshotProtocol.digest(request.bytes())) }
+            assertTrue(rebound)
+        } }
+        assertEquals("FOREIGN", Files.readString(selected.resolve("base.bin")))
+    }
+    @Test fun `source proof refuses an ancestor rebind even when held descendants remain stable`() = fixture { source, cache ->
+        val parent = Files.createDirectory(source.resolve("parent"))
+        val actual = Files.createDirectory(parent.resolve("actual")); Files.writeString(actual.resolve("base.bin"), "ORIGINAL")
+        lateinit var request: SnapshotCapture
+        LinuxDescriptors().use { native -> WorkerSession(native).use { session ->
+            request = capture(session, actual, cache); session.capture(request, SnapshotProtocol.digest(request.bytes()))
+        } }
+        var swapped = false
+        LinuxDescriptors().use { native -> WorkerSession(native, AcquisitionHooks(afterSourceVerifyRead = {
+            if (!swapped) {
+                Files.move(parent, source.resolve("retained-parent"), ATOMIC_MOVE)
+                Files.createDirectory(parent); Files.createDirectory(actual); Files.writeString(actual.resolve("base.bin"), "FOREIGN")
+                swapped = true
+            }
+        })).use { session ->
+            session.hello(cache.toString(), request.expectedCacheIdentity)
+            session.reopen(request.snapshotId, request.operation, SnapshotProtocol.digest(request.bytes()))
+            val failure = assertFailsWith<IllegalArgumentException> { session.verifySource(request, SnapshotProtocol.digest(request.bytes())) }
+            assertTrue(swapped)
+            assertEquals("Source root path rebound during proof", failure.message)
+        } }
+        assertEquals("FOREIGN", Files.readString(actual.resolve("base.bin")))
+        assertEquals("ORIGINAL", Files.readString(source.resolve("retained-parent/actual/base.bin")))
+    }
 }

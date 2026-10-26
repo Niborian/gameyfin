@@ -5,10 +5,11 @@ const fs = require('node:fs'), path = require('node:path'), vm = require('node:v
 const {createRequire} = require('node:module');
 const ts = process.env.TEST_TYPESCRIPT_MODULE ? require(process.env.TEST_TYPESCRIPT_MODULE) : createRequire(path.resolve(__dirname,'../app/package.json'))('typescript');
 
-function gameDownloadFixture(delayedProviders = false, providerRequest?: (init: {signal: AbortSignal}) => Promise<any[]>) {
+function gameDownloadFixture(delayedProviders = false, providerRequest?: (init: {signal: AbortSignal}) => Promise<any[]>,
+    ownedRequest?: (init: {signal: AbortSignal}) => Promise<boolean>) {
     const slots: any[] = []; let cursor = 0, effects: (() => void)[] = [];
     let nodes: {type: string; props: any}[] = [], providerCalls = 0;
-    const downloads: any[][] = [];
+    const downloads: any[][] = []; let stateWrites=0, ownedCalls=0;
     let actor = {id:7,username:'fixture'};
     let resolveProviders!: (value: any[]) => void;
     const providers = [{key: 'direct', name: 'Direct', description: 'Fixture'}];
@@ -17,7 +18,7 @@ function gameDownloadFixture(delayedProviders = false, providerRequest?: (init: 
     const react = {
         lazy: () => 'VariantManagerModal',
         useState(initial: any) {const i = cursor++; if (!(i in slots)) slots[i] = initial;
-            return [slots[i], (value: any) => {slots[i] = typeof value === 'function' ? value(slots[i]) : value;}];},
+            return [slots[i], (value: any) => {stateWrites++;slots[i] = typeof value === 'function' ? value(slots[i]) : value;}];},
         useRef(initial: any) {const i = cursor++; if (!(i in slots)) slots[i] = {current:initial}; return slots[i];},
         useLayoutEffect(callback: () => any, deps: any[]) {return react.useEffect(callback, deps);},
         useEffect(callback: () => any, deps: any[]) {const i = cursor++, previous = slots[i];
@@ -38,7 +39,7 @@ function gameDownloadFixture(delayedProviders = false, providerRequest?: (init: 
         if (name.endsWith('/CollectionState')) return {collectionState:{state:{}}};
         if (name.endsWith('/auth')) return {useAuth:() => ({state:{user:actor,loading:false,initializing:false}})};
         if (name.endsWith('/utils')) return {isAdmin:() => false,humanFileSize:String,starRatingAsString:() => ''};
-        if (name === 'Frontend/generated/endpoints') return {DownloadProviderEndpoint:{getProviders:(init: {signal: AbortSignal}) => {providerCalls++;return providerRequest ? providerRequest(init) : providerPromise;}},OwnedTorrentEndpoint:{available:async () => false},GameEndpoint:{}};
+        if (name === 'Frontend/generated/endpoints') return {DownloadProviderEndpoint:{getProviders:(init: {signal: AbortSignal}) => {providerCalls++;return providerRequest ? providerRequest(init) : providerPromise;}},OwnedTorrentEndpoint:{available:(init: {signal: AbortSignal}) => {ownedCalls++;return ownedRequest ? ownedRequest(init) : Promise.resolve(false);}},GameEndpoint:{}};
         if (name === 'Frontend/endpoints/endpoints') return {DownloadEndpoint:{downloadGame:(...args: any[]) => downloads.push(args)}};
         if (name === '@heroui/react') return new Proxy({useDisclosure:() => ({isOpen:false})} as any,{get:(value,key) => value[key] ?? key});
         if (name.endsWith('/VariantContentType')) return {default:Object.fromEntries(['BASE','DLC','PATCH','MOD','EXTRA','DEDICATED_SERVER'].map(value => [value,value]))};
@@ -54,9 +55,48 @@ function gameDownloadFixture(delayedProviders = false, providerRequest?: (init: 
         resolveProviders() {resolveProviders(providers);},
         setActor(value: typeof actor) {actor=value;},
         unmount() {slots.forEach(slot => slot?.cleanup?.());},
-        get downloads() {return downloads;}, get providerCalls() {return providerCalls;}, get nodes() {return nodes;}
+        get downloads() {return downloads;}, get providerCalls() {return providerCalls;}, get nodes() {return nodes;},
+        get stateWrites() {return stateWrites;}, get ownedCalls() {return ownedCalls;}
     };
 }
+
+test('pending optional capability cannot block exact ordinary downloads; late true appends without refetching', async () => {
+    let resolve!: (value: boolean) => void;
+    const f=gameDownloadFixture(false,undefined,() => new Promise(done => {resolve=done;}));
+    f.setVariants([downloadVariant(1,[baseContent(101,'Base')])]); f.render();
+    await new Promise(done => setImmediate(done)); f.render(); f.download();
+    assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[101]);
+    assert.deepEqual(Object.keys(f.nodes.find(node => node.type==='ComboButton')!.props.options),['direct']);
+    f.setVariants([downloadVariant(1,[baseContent(201,'New base')])]); f.render();
+    resolve(true); await new Promise(done => setImmediate(done)); f.render(); f.download();
+    assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[201]);
+    assert.deepEqual(Object.keys(f.nodes.find(node => node.type==='ComboButton')!.props.options),['direct','owned-snapshot-qb']);
+    assert.equal(f.providerCalls,1);assert.equal(f.ownedCalls,1);
+});
+
+test('optional rejection retains ordinary providers; ordinary failure is not hidden by optional availability', async () => {
+    const f=gameDownloadFixture(false,undefined,async () => {throw new TypeError('Synthetic optional failure');});
+    f.setVariants([downloadVariant(1,[baseContent(101,'Base')])]);f.render();await new Promise(done => setImmediate(done));f.render();f.download();
+    assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[101]);assert.equal(f.nodes.some(node => node.props.role==='alert'),false);
+    const failed=gameDownloadFixture(false,async () => {throw new TypeError('Synthetic ordinary failure');},async () => true);
+    failed.setVariants([downloadVariant(1,[baseContent(101,'Base')])]);failed.render();await new Promise(done => setImmediate(done));failed.render();
+    assert.equal(failed.nodes.some(node => node.props.role==='alert'),true);
+    assert.equal(failed.nodes.some(node => node.type==='ComboButton'),false);
+});
+
+test('late optional results cannot attach after identity replacement or unmount', async () => {
+    const pending: {signal: AbortSignal; resolve: (value: boolean) => void}[]=[];
+    const f=gameDownloadFixture(false,undefined,init => new Promise(resolve => pending.push({signal:init.signal,resolve})));
+    f.setVariants([downloadVariant(1,[baseContent(101,'Base')])]);f.render();await new Promise(done => setImmediate(done));f.render();
+    f.setActor({id:8,username:'replacement'});f.render();await new Promise(done => setImmediate(done));f.render();
+    assert.equal(pending[0].signal.aborted,true);
+    const writes=f.stateWrites;pending[0].resolve(true);await new Promise(done => setImmediate(done));
+    assert.equal(f.stateWrites,writes);f.render();
+    assert.deepEqual(Object.keys(f.nodes.find(node => node.type==='ComboButton')!.props.options),['direct']);
+    f.unmount();assert.equal(pending[1].signal.aborted,true);
+    const unmountedWrites=f.stateWrites;pending[1].resolve(true);await new Promise(done => setImmediate(done));
+    assert.equal(f.stateWrites,unmountedWrites);
+});
 
 test('provider failure shows honest error and explicit retry restores current exact download without automatic retries', async () => {
     let calls=0;

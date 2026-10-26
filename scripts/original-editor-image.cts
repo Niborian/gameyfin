@@ -4,7 +4,7 @@
 const {createRequire} = require('node:module');
 const {readFile, readdir, mkdir, stat} = require('node:fs/promises');
 const puppeteer = createRequire('/home/pptruser/package.json')('puppeteer');
-interface FixtureInput { origin: string; username: string; password: string; viewerPassword: string; providerName: string; }
+interface FixtureInput { origin: string; username: string; password: string; viewerPassword: string; providerName: string; providerKey: string; }
 interface SavedContent { id: number; name: string; required: boolean; defaultSelected: boolean; type: string; memberNames: string[]; }
 interface SavedVariant { id: number; version: string; default: boolean; contents: SavedContent[]; }
 interface SavedGame { id: number; variants: SavedVariant[]; }
@@ -27,7 +27,8 @@ async function privateInput(): Promise<FixtureInput> {
       origin.protocol !== 'http:' || origin.port !== '8080' || !/^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(origin.hostname) ||
       origin.href !== value.origin + '/' || value.username !== 'fixture-admin' ||
       !/^[A-Za-z0-9_-]{32,64}$/.test(value.password) || !/^[A-Za-z0-9_-]{32,64}$/.test(value.viewerPassword) ||
-      typeof value.providerName !== 'string' || value.providerName.length > 128) throw new Error('Fixture admission');
+      typeof value.providerName !== 'string' || value.providerName.length < 1 || value.providerName.length > 128 ||
+      value.providerKey !== 'org.gameyfin.plugins.download.direct.DirectDownloadPlugin$DirectDownloadProvider') throw new Error('Fixture admission');
   return value;
 }
 async function clickText(page: any, text: string, scope = 'body'): Promise<void> {
@@ -156,10 +157,33 @@ async function run(): Promise<void> {
     const url = new URL(request.url());
     if (url.origin === input.origin && url.pathname === '/download/34000') {
       const ids = url.searchParams.getAll('contentIds').map(Number).sort((a, b) => a - b);
-      exactDownload = url.searchParams.get('variantId') === '134001' && url.searchParams.get('explicitSelection') === 'true' &&
+      exactDownload = url.searchParams.get('provider') === input.providerKey && url.searchParams.get('variantId') === '134001' && url.searchParams.get('explicitSelection') === 'true' &&
         ids.length === 2 && ids.join(',') === [base.id, patch.id].sort((a, b) => a - b).join(',');
     }
   });
+  // ComboButton shows the preferred/first provider only; other published
+  // providers are legitimate. Choose Direct through the original dropdown,
+  // never by mutating preferences or calling a download endpoint ourselves.
+  const directVisible = await page.evaluate((name: string) => [...document.querySelectorAll('button.w-52 p')].some(text => text.textContent?.trim() === name), input.providerName);
+  if (!directVisible) {
+    const trigger = await page.evaluateHandle(() => {
+      const buttons = [...document.querySelectorAll('button.w-52')];
+      if (buttons.length !== 1) throw new Error('Unique download button');
+      const triggers = [...(buttons[0].parentElement?.querySelectorAll('button[aria-haspopup="menu"]') ?? [])];
+      if (triggers.length !== 1) throw new Error('Unique download menu');
+      return triggers[0];
+    });
+    await trigger.asElement().click(); await trigger.dispose();
+    await page.waitForSelector('[role="menu"][aria-label="Merge options"]', {timeout: 5000});
+    const option = await page.evaluateHandle((key: string) => {
+      const items = [...document.querySelectorAll('[role="menu"][aria-label="Merge options"] [data-key]')]
+        .filter(item => item.getAttribute('data-key') === key && item.getAttribute('aria-disabled') !== 'true');
+      if (items.length !== 1) throw new Error('Unique direct provider option');
+      return items[0];
+    }, input.providerKey);
+    await option.asElement().click(); await option.dispose();
+    await page.waitForFunction((name: string) => [...document.querySelectorAll('button.w-52 p')].some(text => text.textContent?.trim() === name), {timeout: 5000}, input.providerName);
+  }
   const downloadButton = await page.evaluateHandle((name: string) => [...document.querySelectorAll('button')].find(button =>
     [...button.querySelectorAll('p')].some(text => text.textContent?.trim() === name)), input.providerName);
   await downloadButton.asElement().click(); await downloadButton.dispose();

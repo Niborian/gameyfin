@@ -108,8 +108,14 @@ class OriginalEditorImageFixtureTest {
             login("fixture-admin", password)
             rpc("PluginEndpoint/enablePlugin", mapOf("pluginId" to "org.gameyfin.plugins.download.direct"))
             val providers = FixtureRuntime.tree(rpc("DownloadProviderEndpoint/getProviders", emptyMap<String, Any>()).toString(Charsets.UTF_8))
-            require(providers.size() == 1)
-            val providerName = providers[0]["name"].asText()
+            require(providers.isArray) { "Provider list has unexpected shape" }
+            val providerKey = "org.gameyfin.plugins.download.direct.DirectDownloadPlugin\$DirectDownloadProvider"
+            val direct = providers.filter { it["key"]?.asText() == providerKey }
+            proof["providerCount"] = providers.size(); proof["directProviderCount"] = direct.size
+            val selectedProvider = direct.single()
+            require(selectedProvider["name"]?.isTextual == true)
+            val providerName = selectedProvider["name"].asText()
+            require(providerName.isNotBlank() && providerName.length <= 128)
             val invitation = FixtureRuntime.tree(rpc("RegistrationEndpoint/createInvitation", mapOf("email" to "viewer@example.invalid")).toString(Charsets.UTF_8))["secret"].asText()
             val accepted = rpc("RegistrationEndpoint/acceptInvitation", mapOf("token" to invitation,
                 "registration" to mapOf("username" to "fixture-user", "password" to viewerPassword, "email" to "viewer@example.invalid")))
@@ -149,7 +155,7 @@ class OriginalEditorImageFixtureTest {
                 "--env", "GAMEYFIN_ORIGINAL_EDITOR=published-246-synthetic-only", "--env", "XDG_CONFIG_HOME=/tmp/config", "--env", "XDG_CACHE_HOME=/tmp/cache",
                 "--entrypoint", "node"), listOf("--experimental-strip-types", "/opt/original-editor-image.cts"), browserTmpfs = true)
             val input = FixtureRuntime.json.writeValueAsString(mapOf("origin" to "http://${owned.address(app)}:8080", "username" to "fixture-admin",
-                "password" to password, "viewerPassword" to viewerPassword, "providerName" to providerName))
+                "password" to password, "viewerPassword" to viewerPassword, "providerName" to providerName, "providerKey" to providerKey))
             val privateResult = browserPipe(chrome, input)
             val browserProof = privateResult["proof"]
             val expectedFlags = listOf("success", "loginWithin15Seconds", "nonDefaultPreserved", "unrelatedDraftPreserved", "expectedNativeConfirmAccepted",

@@ -60,6 +60,14 @@ jobs:
             --env XDG_CONFIG_HOME=/tmp/xdg-config --env XDG_CACHE_HOME=/tmp/xdg-cache \
             --entrypoint node "$image" --experimental-strip-types /opt/native-confirm-smoke.cts >/dev/null
           timeout --signal=TERM --kill-after=2s 45s docker start --attach "$name" > .native-confirm/result.json
+          [[ "$(timeout 5s docker inspect --format '{{.State.Status}}:{{.State.ExitCode}}' "$name")" == 'exited:0' ]]
+          timeout 5s node -e '
+            const assert = require("node:assert/strict");
+            const receipt = JSON.parse(require("node:fs").readFileSync(".native-confirm/result.json", "utf8"));
+            assert.equal(receipt.scope, "synthetic-blank-page-native-confirm-only");
+            assert.equal(receipt.stage, "complete");
+            for (const key of ["success", "nativeDialogSeen", "confirmationAccepted", "originalConfirmReturnedTrue", "cleanupConfirmed", "sandboxDisabledForSyntheticOnly"]) assert.equal(receipt[key], true);
+          '
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:

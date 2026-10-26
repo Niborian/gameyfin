@@ -312,7 +312,8 @@ internal fun validateEditorGameDiagnostics(node: tools.jackson.databind.JsonNode
     flags.forEach { require(node[it].isBoolean) }
     val families = node["families"]
     require(families.isObject && families.properties().map { it.key }.toSet() == setOf("game", "library", "user"))
-    val observations = setOf("finished", "failed", "canceled", "bodyPending", "bodyClassified", "bodyUnavailable",
+    val observations = setOf("finished", "failed", "canceled", "continueAttempted", "continueFulfilled", "continueRejected",
+        "bodyPending", "bodyClassified", "bodyUnavailable",
         "authNull", "authMatch", "arrayResponse", "targetPresent")
     families.properties().forEach { (_, row) ->
         require(row.isObject && row.properties().map { it.key }.toSet() == observations + setOf("count", "status"))

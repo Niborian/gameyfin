@@ -11,7 +11,8 @@ interface SavedGame { id: number; variants: SavedVariant[]; }
 const gameDiagnostic = () => ({phase: 'not-started', truncated: false, pageerrorSeen: false,
   domObserved: false, profilePresent: false, signInPresent: false, loginFormPresent: false, errorHeadingPresent: false,
   families: Object.fromEntries(['game', 'library', 'user'].map(key => [key, {count: 0, status: null as number | null,
-    finished: false, failed: false, canceled: false, bodyPending: false, bodyClassified: false,
+    finished: false, failed: false, canceled: false, continueAttempted: false, continueFulfilled: false, continueRejected: false,
+    bodyPending: false, bodyClassified: false,
     bodyUnavailable: false, authNull: false, authMatch: false, arrayResponse: false, targetPresent: false}]))});
 const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', success: false,
   loginWithin15Seconds: false, nonDefaultPreserved: false, unrelatedDraftPreserved: false,
@@ -93,13 +94,19 @@ function observeGameNavigation(page: any, input: FixtureInput) {
     });
   };
   const finished = (request: any) => {const row = current(request); if (row) row.finished = true;};
+  const continuation = (request: any, phase: 'attempted' | 'fulfilled' | 'rejected') => {
+    const row = current(request); if (!row) return;
+    if (phase === 'attempted') row.continueAttempted = true;
+    else if (phase === 'fulfilled') row.continueFulfilled = true;
+    else row.continueRejected = true;
+  };
   const requestFailed = (request: any) => {const row = current(request); if (row) {row.failed = true; row.canceled = request.failure()?.errorText === 'net::ERR_ABORTED';}};
   const pageerror = () => {if (active) diagnostic.pageerrorSeen = true;};
-  page.on('request', requested); page.on('response', responded); page.on('requestfinished', finished);
+  page.on('response', responded); page.on('requestfinished', finished);
   page.on('requestfailed', requestFailed); page.on('pageerror', pageerror);
-  return {diagnostic, stop() {
+  return {diagnostic, requested, continuation, stop() {
     active = false; diagnostic.phase = 'complete'; timers.forEach(clearTimeout); timers.clear(); latest.clear();
-    page.off('request', requested); page.off('response', responded); page.off('requestfinished', finished);
+    page.off('response', responded); page.off('requestfinished', finished);
     page.off('requestfailed', requestFailed); page.off('pageerror', pageerror);
   }};
 }
@@ -190,11 +197,18 @@ async function run(): Promise<void> {
   await mkdir('/tmp/editor-downloads', {mode: 0o700});
   const context = await browser.createBrowserContext({downloadBehavior: {policy: 'allowAndName', downloadPath: '/tmp/editor-downloads'}});
   const page = await context.newPage();
+  let continuationObserver: ReturnType<typeof observeGameNavigation> | undefined;
   await page.setRequestInterception(true);
   page.on('request', (request: any) => {
     const url = new URL(request.url());
     const allowed = url.origin === input.origin || url.protocol === 'data:' || url.protocol === 'blob:' && url.origin === input.origin;
-    void (allowed ? request.continue() : request.abort()).catch(() => { failed = true; });
+    const resolution = allowed ? request.continue() : request.abort();
+    // The original decision/command runs first, without waiting for observation.
+    const observer = continuationObserver;
+    observer?.requested(request); observer?.continuation(request, 'attempted');
+    void resolution.then(() => {observer?.continuation(request, 'fulfilled');}, () => {
+      failed = true; observer?.continuation(request, 'rejected');
+    });
   });
   let expectedDialog: string | undefined;
   const REPLACE = 'Replace the original broad BASE selection with these reviewed items? Only catalogue metadata changes; no files will be moved or deleted.';
@@ -214,6 +228,7 @@ async function run(): Promise<void> {
   const gameReadyDeadline = performance.now() + 15000;
   const gameReadyRemaining = () => { const value = Math.floor(gameReadyDeadline - performance.now()); if (value < 1) throw new Error('Game-ready deadline'); return value; };
   const navigationObservation = observeGameNavigation(page, input);
+  continuationObserver = navigationObservation;
   proof.gameDiagnostics = navigationObservation.diagnostic;
   // MainLayout's footer is not evidence that asynchronous catalogue data has
   // rendered GameView. Require the actual route, original Version control and
@@ -226,6 +241,7 @@ async function run(): Promise<void> {
       [...document.querySelectorAll('button[aria-haspopup="listbox"]')].filter(node => node.parentElement?.textContent?.includes('Version')).length === 1,
     {timeout: gameReadyRemaining()}, input.expectedVersion);
   } finally {
+    continuationObserver = undefined;
     navigationObservation.stop();
     // Diagnostic only: independently sample each predicate even when the combined
     // gate fails. Never replace that failure, retry navigation, or retain DOM text.

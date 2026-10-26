@@ -10,9 +10,9 @@ import kotlin.test.*
 /** Daemon-free rejection contracts; these never stand in for real provider/proxy acceptance. */
 class FixtureValidationTest {
     @Test fun `editor game diagnostics admit only capped fixed value-free observations`() {
-        fun sample(extra: Map<String, Any?> = emptyMap(), count: Any = 1, status: Any? = 200): tools.jackson.databind.JsonNode {
-            val row = listOf("finished", "failed", "canceled", "bodyPending", "bodyClassified", "bodyUnavailable",
-                "authNull", "authMatch", "arrayResponse", "targetPresent").associateWith { false } + mapOf("count" to count, "status" to status)
+        fun sample(extra: Map<String, Any?> = emptyMap(), count: Any = 1, status: Any? = 200, fulfilled: Any = false): tools.jackson.databind.JsonNode {
+            val row = listOf("finished", "failed", "canceled", "continueAttempted", "continueRejected", "bodyPending", "bodyClassified", "bodyUnavailable",
+                "authNull", "authMatch", "arrayResponse", "targetPresent").associateWith { false } + mapOf("count" to count, "status" to status, "continueFulfilled" to fulfilled)
             return FixtureRuntime.tree(FixtureRuntime.json.writeValueAsString(
                 listOf("truncated", "pageerrorSeen", "domObserved", "profilePresent", "signInPresent", "loginFormPresent", "errorHeadingPresent")
                     .associateWith { false } + mapOf("phase" to "complete", "families" to listOf("game", "library", "user").associateWith { row }) + extra))
@@ -24,6 +24,7 @@ class FixtureValidationTest {
         assertFails { validateEditorGameDiagnostics(sample(count = 5)) }
         assertFails { validateEditorGameDiagnostics(sample(status = 600)) }
         assertFails { validateEditorGameDiagnostics(sample(status = "200")) }
+        assertFails { validateEditorGameDiagnostics(sample(fulfilled = "true")) }
     }
     @Test fun `images require exact config IDs or digest references never mutable tags`() {
         val hash = "a".repeat(64)

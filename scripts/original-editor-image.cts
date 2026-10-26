@@ -32,6 +32,8 @@ const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', s
     postExists: false, postEnabled: false, postInViewport: false, postCenterOwn: false, postCenterToast: false,
     trustedCloseClick: false, trustedOtherClick: false},
   gameDiagnostics: gameDiagnostic(),
+  repeatPhase: 'not-started', viewerLogoutObserved: false, navbarSignInObserved: false,
+  repeatedViewerIdentityVerified: false,
   sandboxDisabledForIsolatedSyntheticAppOnly: true};
 let browser: any;
 let zip = '';
@@ -125,11 +127,11 @@ async function clickText(page: any, text: string, scope = 'body'): Promise<void>
   }, text, scope);
   try { await handle.asElement().asLocator().setTimeout(5000).click(); } finally { await handle.dispose(); }
 }
-async function login(page: any, input: FixtureInput, username: string, password: string): Promise<void> {
+async function login(page: any, input: FixtureInput, username: string, password: string, alreadyOnForm = false): Promise<void> {
   proof.loginPhase = 'opening-login';
   proof.profileResponseObserved = false; proof.profileIdentityMatched = false;
   proof.authenticatedLandingObserved = false; proof.profileTriggerObserved = false; proof.profileDomIdentityMatched = false;
-  await page.goto(input.origin + '/login', {waitUntil: 'domcontentloaded', timeout: 15000});
+  if (!alreadyOnForm) await page.goto(input.origin + '/login', {waitUntil: 'domcontentloaded', timeout: 15000});
   await page.waitForSelector('input[name="username"]', {timeout: 15000});
   proof.loginPhase = 'form-ready';
   await page.type('input[name="username"]', username);
@@ -498,6 +500,47 @@ async function run(): Promise<void> {
   await viewerPage.waitForFunction(() => document.body.textContent?.includes('Downloading: Normal 0.9'), {timeout: 10000});
   proof.ordinaryUserEditorAbsent = await viewerPage.evaluate(() => ![...document.querySelectorAll('button')].some(button => button.textContent?.trim() === 'Versions & content'));
   if (!proof.ordinaryUserEditorAbsent || failed || expectedDialog) throw new Error('UI gate');
+  proof.stage = 'repeat-login'; proof.repeatPhase = 'profile-menu';
+  const viewerProfile = await viewerPage.evaluateHandle(() => {
+    const buttons = [...document.querySelectorAll('nav div[data-slot="trigger"][aria-haspopup="true"] button')];
+    if (buttons.length !== 1) throw new Error('Unique viewer profile'); return buttons[0];
+  });
+  try { await viewerProfile.asElement().click(); } finally { await viewerProfile.dispose(); }
+  await viewerPage.waitForFunction(() => [...document.querySelectorAll('[role="menuitem"]')].some(item => item.textContent?.trim() === 'Sign Out'), {timeout: 5000});
+  const loggedOut = viewerPage.waitForResponse((response: any) => {
+    const url = new URL(response.url());
+    // Native no-options Hilla logout submits a document form. With OIDC disabled,
+    // Vaadin's default logout success handler redirects (not the OIDC-only200 branch).
+    return url.origin === input.origin && url.pathname === '/logout' && response.request().method() === 'POST' &&
+      response.request().isNavigationRequest() && response.status() === 302;
+  }, {timeout: 10000});
+  void loggedOut.catch(() => {});
+  proof.repeatPhase = 'sign-out';
+  const signOut = await viewerPage.evaluateHandle(() => {
+    const items = [...document.querySelectorAll('[role="menuitem"]')].filter(item => item.textContent?.trim() === 'Sign Out');
+    if (items.length !== 1) throw new Error('Unique Sign Out'); return items[0];
+  });
+  try { await signOut.asElement().click(); } finally { await signOut.dispose(); }
+  await loggedOut; proof.viewerLogoutObserved = true;
+  proof.repeatPhase = 'anonymous-navbar';
+  await viewerPage.waitForFunction(() => document.querySelectorAll('nav div[data-slot="trigger"][aria-haspopup="true"] button').length === 0 &&
+    document.querySelectorAll('nav button.gradient-primary').length === 1, {timeout: 10000});
+  const signIn = await viewerPage.evaluateHandle(() => {
+    const buttons = [...document.querySelectorAll('nav button.gradient-primary')];
+    if (buttons.length !== 1) throw new Error('Unique navbar Sign In'); return buttons[0];
+  });
+  const signInRequest = viewerPage.waitForRequest((request: any) => {
+    const url = new URL(request.url()); return url.origin === input.origin && url.pathname === '/loginredirect' && request.isNavigationRequest();
+  }, {timeout: 10000});
+  void signInRequest.catch(() => {});
+  proof.repeatPhase = 'navbar-sign-in';
+  try { await signIn.asElement().click(); } finally { await signIn.dispose(); }
+  await signInRequest;
+  await viewerPage.waitForFunction(() => location.pathname === '/login' && !!document.querySelector('input[name="username"]'), {timeout: 10000});
+  proof.navbarSignInObserved = true; proof.repeatPhase = 'normal-form';
+  await login(viewerPage, input, 'fixture-user', input.viewerPassword, true);
+  proof.repeatedViewerIdentityVerified = true; proof.repeatPhase = 'complete';
+  if (failed) throw new Error('Repeat UI gate');
   proof.success = true;
 }
 async function main(): Promise<void> {

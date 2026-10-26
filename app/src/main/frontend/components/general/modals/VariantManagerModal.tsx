@@ -108,6 +108,7 @@ export default function VariantManagerModal({
     const [detailsDirty, setDetailsDirty] = useState(false);
     const [discardClosePending, setDiscardClosePending] = useState(false);
     const closeCommitted = useRef(false);
+    const closeButton = useRef<HTMLButtonElement>(null);
     const [replaceContentId, setReplaceContentId] = useState<number>();
     const previewGeneration = useRef(0);
     const canonicalContentDrafts = useRef<Record<number, DraftEntry>>({});
@@ -620,6 +621,10 @@ export default function VariantManagerModal({
         if (detailsDirty) setDiscardClosePending(true);
         else closeEditor();
     }
+    function keepEditing() {
+        setDiscardClosePending(false);
+        closeButton.current?.focus();
+    }
 
     return (
         <>
@@ -1051,14 +1056,15 @@ export default function VariantManagerModal({
                                 {game && <VariantRetirementControls gameId={game.id} libraryId={game.libraryId} onChanged={onChanged}/>}
                             </ModalBody>
                             <ModalFooter>
-                                {discardClosePending && <div role="alertdialog" aria-label="Discard unsaved variant details" className="flex flex-col gap-2">
+                                {discardClosePending && <div role="alertdialog" aria-label="Discard unsaved variant details" className="flex flex-col gap-2"
+                                    onKeyDown={(event) => {if (event.key === "Escape") {event.preventDefault(); event.stopPropagation(); keepEditing();}}}>
                                     <p>Discard unsaved variant details before closing this editor?</p>
                                     <div className="flex gap-2">
-                                        <Button autoFocus variant="flat" onPress={() => setDiscardClosePending(false)}>Keep editing</Button>
+                                        <Button autoFocus variant="flat" onPress={keepEditing}>Keep editing</Button>
                                         <Button color="danger" onPress={closeEditor}>Discard and close</Button>
                                     </div>
                                 </div>}
-                                <Button variant="light" onPress={requestEditorClose}>
+                                <Button ref={closeButton} variant="light" onPress={requestEditorClose}>
                                     Close
                                 </Button>
                                 <Button

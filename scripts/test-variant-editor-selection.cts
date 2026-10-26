@@ -174,6 +174,13 @@ test('dirty editor close is controlled: keep editing preserves owner, duplicate 
     const retained = f.render();
     assert.equal(retained.key,editor.key); assert.equal(f.closeCalls,0);
     assert.equal(f.nodes.some(node => node.props.role === 'alertdialog'),false);
+    close(); f.render();
+    let prevented = false, stopped = false;
+    f.nodes.find(node => node.props.role === 'alertdialog')!.props.onKeyDown({key:'Escape',
+        preventDefault:() => {prevented=true;}, stopPropagation:() => {stopped=true;}});
+    f.render();
+    assert.equal(prevented,true); assert.equal(stopped,true); assert.equal(f.closeCalls,0);
+    assert.equal(f.nodes.some(node => node.props.role === 'alertdialog'),false);
     // Dirty remains set: the next close still requires an explicit decision.
     f.nodes.find(node => node.type === 'Modal')!.props.onOpenChange(false); f.render();
     const discard = f.nodes.find(node => node.type === 'Button' && node.props.children === 'Discard and close')!.props.onPress;

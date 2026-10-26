@@ -74,15 +74,22 @@ class OriginalEditorImageFixtureTest {
             relay = FixtureRelay(owned.address(app), 8080)
             val http = FixtureHttp(relay.origin, deadline = { deadline.remaining() })
             fun csrf(text: String) = Regex("<meta[^>]*name=\"_csrf\"[^>]*content=\"([^\"]+)\"").find(text)?.groupValues?.get(1)
-            fun ready(): String {
+            fun ready(path: String = "/login"): String {
+                require(path in setOf("/setup", "/login"))
+                proof["readinessPath"] = path
                 var value: String? = null
                 FixtureRuntime.await(120, { deadline.remaining() }) {
-                    val response = http.request("/login", seconds = 3)
-                    value = csrf(response.bytes.toString(Charsets.UTF_8)); response.status == 200 && value != null
+                    val response = http.request(path, seconds = 3)
+                    value = csrf(response.bytes.toString(Charsets.UTF_8))
+                    proof["lastReadinessHttpStatus"] = response.status
+                    proof["readinessCsrfPresent"] = value != null
+                    response.status == 200 && value != null
                 }
                 return requireNotNull(value)
             }
-            var token = ready()
+            // Published SetupFilter redirects /login to /setup before the first
+            // administrator exists. Observe the real setup page, not a redirect.
+            var token = ready("/setup")
             fun rpc(endpoint: String, body: Any): ByteArray {
                 val response = http.request("/connect/$endpoint", FixtureRuntime.json.writeValueAsString(body),
                     mapOf("Content-Type" to "application/json", "X-CSRF-Token" to token), seconds = minOf(10, deadline.remaining()))

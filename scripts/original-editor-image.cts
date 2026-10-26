@@ -18,6 +18,7 @@ const proof = {scope: 'published-2.4.6-synthetic-original-editor', stage: 'input
   editorPhase: 'not-started', gameRouteMatches: false, footerMatches: false, versionTriggerUnique: false,
   defaultVersionObserved: false, targetOptionObserved: false, targetVersionObserved: false,
   editorDialogObserved: false, splitPreviewObserved: false, typeTriggerFound: false, typeOptionsSeen: false,
+  editorClosed: false, savedVersionShown: false, savedBaseShown: false, savedPatchShown: false, broadOriginalAbsent: false,
   sandboxDisabledForIsolatedSyntheticAppOnly: true};
 let browser: any;
 let zip = '';
@@ -234,8 +235,19 @@ async function run(): Promise<void> {
   proof.editorPhase = 'closing-editor';
   expectedDialog = DISCARD; await clickText(page, 'Close', '[role="dialog"]');
   proof.editorPhase = 'cards';
-  await page.waitForFunction(() => !document.querySelector('[role="dialog"]') && document.body.textContent?.includes('Downloading: Normal 1.0') &&
-    document.body.textContent?.includes('Base') && document.body.textContent?.includes('patch.bin') && !document.body.textContent?.includes('Broad original'), {timeout: 5000});
+  try {
+    await page.waitForFunction(() => !document.querySelector('[role="dialog"]') && document.body.textContent?.includes('Downloading: Normal 1.0') &&
+      document.body.textContent?.includes('Base') && document.body.textContent?.includes('patch.bin') && !document.body.textContent?.includes('Broad original'), {timeout: 5000});
+  } finally {
+    const cards = await page.evaluate(() => ({
+      editorClosed: !document.querySelector('[role="dialog"]'),
+      savedVersionShown: document.body.textContent?.includes('Downloading: Normal 1.0') === true,
+      savedBaseShown: document.body.textContent?.includes('Base') === true,
+      savedPatchShown: document.body.textContent?.includes('patch.bin') === true,
+      broadOriginalAbsent: !document.body.textContent?.includes('Broad original')
+    }));
+    Object.assign(proof, cards);
+  }
   proof.immediateCanonicalCards = true;
   proof.editorPhase = 'complete';
   proof.stage = 'immediate-download';

@@ -34,6 +34,8 @@ jobs:
       - name: Compile production code
         # CodeQL must observe compiler processes; restoring Gradle task outputs leaves it with no source to analyze.
         # Analysis needs production compilation, not the entire test/benchmark suite or packaging.
-        run: ./gradlew clean classes -Pkotlin.compiler.execution.strategy=in-process --no-build-cache --no-daemon --console=plain --max-workers=2
+        # In-process Kotlin plus extraction needs more class metadata than the ordinary build.
+        # Override only this CI daemon; application heap/container limits remain unchanged.
+        run: ./gradlew clean classes -Pkotlin.compiler.execution.strategy=in-process '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g' --no-build-cache --no-daemon --console=plain --max-workers=2
 
       - uses: github/codeql-action/analyze@v4

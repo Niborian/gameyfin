@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useRef, useState} from "react";
+import React, {useEffect, useLayoutEffect, useMemo, useRef, useState} from "react";
 import {
     addToast,
     Button,
@@ -109,6 +109,10 @@ export default function VariantManagerModal({
     const [discardClosePending, setDiscardClosePending] = useState(false);
     const closeCommitted = useRef(false);
     const closeButton = useRef<HTMLButtonElement>(null);
+    const keepEditingButton = useRef<HTMLButtonElement>(null);
+    useLayoutEffect(() => {
+        if (discardClosePending) keepEditingButton.current?.focus();
+    }, [discardClosePending]);
     const [replaceContentId, setReplaceContentId] = useState<number>();
     const previewGeneration = useRef(0);
     const canonicalContentDrafts = useRef<Record<number, DraftEntry>>({});
@@ -1060,7 +1064,7 @@ export default function VariantManagerModal({
                                     onKeyDown={(event) => {if (event.key === "Escape") {event.preventDefault(); event.stopPropagation(); keepEditing();}}}>
                                     <p>Discard unsaved variant details before closing this editor?</p>
                                     <div className="flex gap-2">
-                                        <Button autoFocus variant="flat" onPress={keepEditing}>Keep editing</Button>
+                                        <Button ref={keepEditingButton} variant="flat" onPress={keepEditing}>Keep editing</Button>
                                         <Button color="danger" onPress={closeEditor}>Discard and close</Button>
                                     </div>
                                 </div>}

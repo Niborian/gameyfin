@@ -216,10 +216,15 @@ class OriginalEditorImageFixtureTest {
                 "editor-open", "split-preview", "base-classification", "type-trigger", "type-options", "draft", "replace", "replacement-response", "canonical-check",
                 "draft-preserved", "closing-editor", "cards", "complete"))
             proof["editorPhase"] = editorPhase
+            val closePhase = browserProof["closePhase"]?.asText()
+            require(closePhase in setOf("not-started", "first-close", "first-prompt", "initial-focus", "escape", "escape-result",
+                "second-close", "second-prompt", "keep-editing", "keep-result", "third-close", "third-prompt", "discard", "complete"))
+            proof["closePhase"] = closePhase
             proof["editorObservations"] = listOf("gameRouteMatches", "footerMatches", "versionTriggerUnique", "defaultVersionObserved",
                 "targetOptionObserved", "targetVersionObserved", "editorDialogObserved", "splitPreviewObserved", "typeTriggerFound", "typeOptionsSeen",
                 "editorClosed", "savedVersionShown", "savedBaseShown", "savedPatchShown", "broadOriginalAbsent",
-                "controlledDiscardAccepted", "keepEditingPreserved", "escapePreserved", "escapeFocusRestored", "keepEditingFocusRestored", "unexpectedNativeDialog", "editorDialogStillPresent")
+                "controlledDiscardAccepted", "keepEditingPreserved", "escapePreserved", "escapeFocusRestored", "keepEditingFocusRestored", "unexpectedNativeDialog", "editorDialogStillPresent",
+                "closeSnapshotObserved", "closePromptPresent", "closeKeepFocused", "closeButtonFocused", "closeDraftPresent")
                 .associateWith { browserProof[it]?.booleanValue() == true }
             require(expectedFlags.all { browserProof[it]?.booleanValue() == true }) { "Original UI gate failed" }
             require(owned.docker("wait", chrome, seconds = 5) == "0")

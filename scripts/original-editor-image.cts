@@ -21,6 +21,8 @@ const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', s
   editorClosed: false, savedVersionShown: false, savedBaseShown: false, savedPatchShown: false, broadOriginalAbsent: false,
   controlledDiscardAccepted: false, keepEditingPreserved: false, escapePreserved: false,
   escapeFocusRestored: false, keepEditingFocusRestored: false, unexpectedNativeDialog: false, editorDialogStillPresent: false,
+  closePhase: 'not-started', closeSnapshotObserved: false, closePromptPresent: false,
+  closeKeepFocused: false, closeButtonFocused: false, closeDraftPresent: false,
   sandboxDisabledForIsolatedSyntheticAppOnly: true};
 let browser: any;
 let zip = '';
@@ -236,28 +238,57 @@ async function run(): Promise<void> {
     return label?.htmlFor && (document.getElementById(label.htmlFor) as HTMLInputElement)?.value === 'Unrelated draft retained';
   }, {timeout: 5000}); proof.unrelatedDraftPreserved = true;
   proof.editorPhase = 'closing-editor';
+  try {
+  proof.closePhase = 'first-close';
   await clickText(page, 'Close', '[role="dialog"]');
+  proof.closePhase = 'first-prompt';
   await page.waitForSelector('[role="alertdialog"][aria-label="Discard unsaved variant details"]', {timeout: 5000});
+  proof.closePhase = 'initial-focus';
   await page.waitForFunction(() => document.activeElement?.closest('[role="alertdialog"]') !== null &&
     document.activeElement?.textContent?.trim() === 'Keep editing', {timeout: 5000});
+  proof.closePhase = 'escape';
   await page.keyboard.press('Escape');
+  proof.closePhase = 'escape-result';
   await page.waitForFunction(() => !document.querySelector('[role="alertdialog"]') &&
     [...document.querySelectorAll('input')].some(input => input.value === 'Unrelated draft retained') &&
     document.activeElement?.tagName === 'BUTTON' && document.activeElement?.textContent?.trim() === 'Close' &&
     document.activeElement?.closest('[role="dialog"]') !== null, {timeout: 5000});
   proof.escapePreserved = true; proof.escapeFocusRestored = true;
+  proof.closePhase = 'second-close';
   await clickText(page, 'Close', '[role="dialog"]');
+  proof.closePhase = 'second-prompt';
   await page.waitForSelector('[role="alertdialog"][aria-label="Discard unsaved variant details"]', {timeout: 5000});
+  proof.closePhase = 'keep-editing';
   await clickText(page, 'Keep editing', '[role="alertdialog"]');
+  proof.closePhase = 'keep-result';
   await page.waitForFunction(() => !document.querySelector('[role="alertdialog"]') &&
     [...document.querySelectorAll('input')].some(input => input.value === 'Unrelated draft retained') &&
     document.activeElement?.tagName === 'BUTTON' && document.activeElement?.textContent?.trim() === 'Close' &&
     document.activeElement?.closest('[role="dialog"]') !== null, {timeout: 5000});
   proof.keepEditingPreserved = true; proof.keepEditingFocusRestored = true;
+  proof.closePhase = 'third-close';
   await clickText(page, 'Close', '[role="dialog"]');
+  proof.closePhase = 'third-prompt';
   await page.waitForSelector('[role="alertdialog"][aria-label="Discard unsaved variant details"]', {timeout: 5000});
+  proof.closePhase = 'discard';
   await clickText(page, 'Discard and close', '[role="alertdialog"]');
   proof.controlledDiscardAccepted = true;
+  proof.closePhase = 'complete';
+  } finally {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const snapshot = await Promise.race([page.evaluate(() => ({
+        editorClosed: !document.querySelector('[role="dialog"]'),
+        editorDialogStillPresent: [...document.querySelectorAll('[role="dialog"]')].some(dialog => dialog.textContent?.includes('Versions & content')),
+        closePromptPresent: !!document.querySelector('[role="alertdialog"][aria-label="Discard unsaved variant details"]'),
+        closeKeepFocused: document.activeElement?.closest('[role="alertdialog"]') != null && document.activeElement?.textContent?.trim() === 'Keep editing',
+        closeButtonFocused: document.activeElement?.tagName === 'BUTTON' && document.activeElement?.textContent?.trim() === 'Close',
+        closeDraftPresent: [...document.querySelectorAll('input')].some(input => input.value === 'Unrelated draft retained')
+      })), new Promise<never>((_, reject) => {timer=setTimeout(() => reject(new Error('Close observation deadline')),1000);})]);
+      Object.assign(proof,snapshot); proof.closeSnapshotObserved=true;
+    } catch { /* Diagnostic absence never replaces the original failure. */ }
+    finally {if (timer) clearTimeout(timer);}
+  }
   proof.editorPhase = 'cards';
   try {
     await page.waitForFunction(() => !document.querySelector('[role="dialog"]') && document.body.textContent?.includes('Downloading: Normal 1.0') &&

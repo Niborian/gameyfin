@@ -162,9 +162,11 @@ type EffectSlot = {deps: unknown[]};
 function variant(id: number, pinned = false): Variant {return {id,name:'Normal',version:String(id),default:pinned,defaultLocked:pinned,contents:[]};}
 function fixture(initialVariantId?: number, listContents?: (path: string) => Promise<unknown[]>) {
     let closeCalls = 0;
+    let focusedControl = '';
     const slots: unknown[] = []; let cursor = 0, effects: (() => void)[] = [], editor: Editor | undefined;
     let nodes: {type: string; props: any}[] = [];
     const react = {
+        useLayoutEffect(callback: () => void, deps: unknown[]) {return react.useEffect(callback,deps);},
         useState<T>(initial: T) {const i=cursor++; if (!(i in slots)) slots[i]=initial; return [slots[i], (value: T | ((old: T) => T)) => {slots[i]=typeof value==='function' ? (value as (old: T) => T)(slots[i] as T) : value;}];},
         useRef<T>(initial: T) {const i=cursor++; if (!(i in slots)) slots[i]={current:initial}; return slots[i];},
         useMemo<T>(callback: () => T) {return callback();},
@@ -173,6 +175,7 @@ function fixture(initialVariantId?: number, listContents?: (path: string) => Pro
     };
     function jsx(type: string, props: any, key?: string) {
         nodes.push({type, props});
+        if (type === 'Button' && props.ref) props.ref.current = {focus() {focusedControl=props.children;}};
         if (type==='VariantDetailsEditor') editor={key:key!,variant:props.variant,onDirtyChange:props.onDirtyChange};
         if (type==='ModalContent') return props.children(() => {});
         return {type,props,key};
@@ -192,7 +195,7 @@ function fixture(initialVariantId?: number, listContents?: (path: string) => Pro
     }});
     let game={id:1,title:'Synthetic',metadata:{path:'/synthetic'},variants:[variant(1,true),variant(2)]};
     function render() {cursor=0;effects=[];editor=undefined;nodes=[];module.exports.default({game,initialVariantId,libraryGames:[],suggestions:[],isOpen:true,onOpenChange:() => {closeCalls++;}});for (const effect of effects) effect();return editor!;}
-    return {render, setGame(value: typeof game) {game=value;}, get game() {return game;}, get nodes() {return nodes;}, get closeCalls() {return closeCalls;}};
+    return {render, setGame(value: typeof game) {game=value;}, get game() {return game;}, get nodes() {return nodes;}, get closeCalls() {return closeCalls;}, get focusedControl() {return focusedControl;}};
 }
 
 test('dirty editor close is controlled: keep editing preserves owner, duplicate requests do not discard, explicit discard closes once', () => {
@@ -201,16 +204,19 @@ test('dirty editor close is controlled: keep editing preserves owner, duplicate 
     close(); close(); f.render();
     assert.equal(f.closeCalls,0);
     assert.equal(f.nodes.filter(node => node.props.role === 'alertdialog').length,1);
+    assert.equal(f.focusedControl,'Keep editing');
     f.nodes.find(node => node.type === 'Button' && node.props.children === 'Keep editing')!.props.onPress();
     const retained = f.render();
     assert.equal(retained.key,editor.key); assert.equal(f.closeCalls,0);
     assert.equal(f.nodes.some(node => node.props.role === 'alertdialog'),false);
+    assert.equal(f.focusedControl,'Close');
     close(); f.render();
     let prevented = false, stopped = false;
     f.nodes.find(node => node.props.role === 'alertdialog')!.props.onKeyDown({key:'Escape',
         preventDefault:() => {prevented=true;}, stopPropagation:() => {stopped=true;}});
     f.render();
     assert.equal(prevented,true); assert.equal(stopped,true); assert.equal(f.closeCalls,0);
+    assert.equal(f.focusedControl,'Close');
     assert.equal(f.nodes.some(node => node.props.role === 'alertdialog'),false);
     // Dirty remains set: the next close still requires an explicit decision.
     f.nodes.find(node => node.type === 'Modal')!.props.onOpenChange(false); f.render();

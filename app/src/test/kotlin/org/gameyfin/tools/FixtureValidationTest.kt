@@ -9,6 +9,22 @@ import kotlin.test.*
 
 /** Daemon-free rejection contracts; these never stand in for real provider/proxy acceptance. */
 class FixtureValidationTest {
+    @Test fun `tmpfs is admitted only for exact explicit bounded nonroot readonly browser intent`() {
+        val root = Path.of("/owned/fixture").toAbsolutePath().normalize()
+        fun sample(options: String = "rw,nosuid,nodev,size=128m,mode=1777", user: String = "10042:10042", readonly: Boolean = true,
+                   destination: String = "/tmp", type: String = "tmpfs") = FixtureRuntime.tree("""{"Config":{"User":"$user"},"HostConfig":{"ReadonlyRootfs":$readonly,"Tmpfs":{"$destination":"$options"}},"Mounts":[{"Type":"$type","Destination":"$destination"}]}""")
+        verifyFixtureMountPolicy(sample(), root, true)
+        verifyFixtureMountPolicy(sample("mode=1777,nodev,size=134217728,nosuid,rw"), root, true)
+        assertFails { verifyFixtureMountPolicy(sample(), root, false) }
+        for (options in listOf("rw,nosuid,size=128m,mode=1777", "rw,nosuid,nodev,size=1g,mode=1777", "rw,nosuid,nodev,size=128m,mode=1777,exec", "rw,nosuid,nodev,size=128m,rw"))
+            assertFails { verifyFixtureMountPolicy(sample(options), root, true) }
+        assertFails { verifyFixtureMountPolicy(sample(user = "0:0"), root, true) }
+        assertFails { verifyFixtureMountPolicy(sample(readonly = false), root, true) }
+        assertFails { verifyFixtureMountPolicy(sample(destination = "/other"), root, true) }
+        assertFails { verifyFixtureMountPolicy(sample(type = "volume"), root, true) }
+        assertFails { verifyFixtureMountPolicy(FixtureRuntime.tree("""{"HostConfig":{},"Mounts":[{"Type":"bind","Source":"/foreign"}]}"""), root, false) }
+        verifyFixtureMountPolicy(FixtureRuntime.tree("""{"HostConfig":{},"Mounts":[{"Type":"bind","Source":"/owned/fixture/script.cts"}]}"""), root, false)
+    }
     private fun zip(vararg members: Pair<String, ByteArray>): ByteArray {
         val output = ByteArrayOutputStream()
         ZipOutputStream(output).use { archive -> for ((name, bytes) in members) { archive.putNextEntry(ZipEntry(name)); archive.write(bytes); archive.closeEntry() } }

@@ -44,7 +44,7 @@ async function clickText(page: any, text: string, scope = 'body'): Promise<void>
     if (candidates.length !== 1) throw new Error('Unique UI control');
     return candidates[0];
   }, text, scope);
-  try { await handle.asElement().click(); } finally { await handle.dispose(); }
+  try { await handle.asElement().asLocator().setTimeout(5000).click(); } finally { await handle.dispose(); }
 }
 async function login(page: any, input: FixtureInput, username: string, password: string): Promise<void> {
   proof.loginPhase = 'opening-login';
@@ -166,7 +166,9 @@ async function run(): Promise<void> {
     const buttons = [...document.querySelectorAll('button[aria-haspopup="listbox"]')].filter(node => node.parentElement?.textContent?.includes('Version'));
     if (buttons.length !== 1) throw new Error('Unique version control'); return buttons[0];
   });
-  await version.asElement().click(); await version.dispose();
+  // Real pointer interaction, with visibility/enabled/stable-layout preconditions.
+  // A raw handle click can hit an animating control before its final position.
+  await version.asElement().asLocator().setTimeout(5000).click(); await version.dispose();
   proof.editorPhase = 'version-options';
   await page.waitForFunction(() => [...document.querySelectorAll('[role="option"]')].some(option => option.textContent?.trim() === 'Normal 1.0 (latest)'), {timeout: 5000});
   proof.targetOptionObserved = true; proof.editorPhase = 'selected-version';
@@ -195,7 +197,7 @@ async function run(): Promise<void> {
     const trigger = type.asElement();
     if (!trigger) throw new Error('Content type trigger');
     proof.typeTriggerFound = true;
-    await trigger.click();
+    await trigger.asLocator().setTimeout(5000).click();
   } finally { await type.dispose(); }
   proof.editorPhase = 'type-options';
   await page.waitForFunction(() => [...document.querySelectorAll('[role="option"]')].some(option =>

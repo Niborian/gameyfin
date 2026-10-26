@@ -160,11 +160,15 @@ type Variant = {id: number; name: string; version: string; default: boolean; def
 type Editor = {key: string; variant: Variant; onDirtyChange: (value: boolean) => void};
 type EffectSlot = {deps: unknown[]};
 function variant(id: number, pinned = false): Variant {return {id,name:'Normal',version:String(id),default:pinned,defaultLocked:pinned,contents:[]};}
-function fixture(initialVariantId?: number, listContents?: (path: string) => Promise<unknown[]>) {
+function fixture(initialVariantId?: number, listContents?: (path: string) => Promise<unknown[]>, gameApi: Record<string, unknown> = {}) {
     let closeCalls = 0;
+    let focusedControl = '';
+    const toasts: any[] = [];
+    const canonical: {state: Record<number, unknown>} = {state:{}};
     const slots: unknown[] = []; let cursor = 0, effects: (() => void)[] = [], editor: Editor | undefined;
     let nodes: {type: string; props: any}[] = [];
     const react = {
+        useLayoutEffect(callback: () => void, deps: unknown[]) {return react.useEffect(callback,deps);},
         useState<T>(initial: T) {const i=cursor++; if (!(i in slots)) slots[i]=initial; return [slots[i], (value: T | ((old: T) => T)) => {slots[i]=typeof value==='function' ? (value as (old: T) => T)(slots[i] as T) : value;}];},
         useRef<T>(initial: T) {const i=cursor++; if (!(i in slots)) slots[i]={current:initial}; return slots[i];},
         useMemo<T>(callback: () => T) {return callback();},
@@ -173,6 +177,7 @@ function fixture(initialVariantId?: number, listContents?: (path: string) => Pro
     };
     function jsx(type: string, props: any, key?: string) {
         nodes.push({type, props});
+        if (type === 'Button' && props.ref) props.ref.current = {focus() {focusedControl=props.children;}};
         if (type==='VariantDetailsEditor') editor={key:key!,variant:props.variant,onDirtyChange:props.onDirtyChange};
         if (type==='ModalContent') return props.children(() => {});
         return {type,props,key};
@@ -183,17 +188,41 @@ function fixture(initialVariantId?: number, listContents?: (path: string) => Pro
     vm.runInNewContext(code,{module,exports:module.exports,window:{confirm:() => {throw Error('Harmless refresh must not discard or prompt');}},require(name: string) {
         if (name==='react') return {...react,default:react};
         if (name==='react/jsx-runtime') return {jsx,jsxs:jsx};
-        if (name==='Frontend/generated/endpoints') return {FilesystemEndpoint: {listContents}, GameEndpoint: {}};
+        if (name==='Frontend/generated/endpoints') return {FilesystemEndpoint: {listContents}, GameEndpoint: gameApi};
+        if (name==='Frontend/state/GameState') return {gameState:canonical};
         if (name==='Frontend/util/utils') return {humanFileSize: (value: number) => String(value)};
-        if (name==='@heroui/react') return new Proxy({useDisclosure:() => ({})} as Record<string,unknown>,{get:(value,key) => value[String(key)] ?? key});
+        if (name==='@heroui/react') return new Proxy({useDisclosure:() => ({}),addToast:(value: any) => toasts.push(value)} as Record<string,unknown>,{get:(value,key) => value[String(key)] ?? key});
         if (name.endsWith('/VariantContentType')) return {default:Object.fromEntries(['BASE','DLC','DEDICATED_SERVER','PATCH','MOD','EXTRA'].map(value => [value,value]))};
         if (name.endsWith('/VariantDetailsEditor')) return {default:'VariantDetailsEditor'};
         return {default:name};
     }});
     let game={id:1,title:'Synthetic',metadata:{path:'/synthetic'},variants:[variant(1,true),variant(2)]};
     function render() {cursor=0;effects=[];editor=undefined;nodes=[];module.exports.default({game,initialVariantId,libraryGames:[],suggestions:[],isOpen:true,onOpenChange:() => {closeCalls++;}});for (const effect of effects) effect();return editor!;}
-    return {render, setGame(value: typeof game) {game=value;}, get game() {return game;}, get nodes() {return nodes;}, get closeCalls() {return closeCalls;}};
+    return {render, setGame(value: typeof game) {game=value;}, get game() {return game;}, get nodes() {return nodes;}, get closeCalls() {return closeCalls;}, get focusedControl() {return focusedControl;}, toasts, canonical};
 }
+
+test('successful content attachment and default update use inline status, never a floating success toast', async () => {
+    let calls=0, fail=false;
+    const updated={id:1,title:'Saved',metadata:{path:'/synthetic'},variants:[variant(1,true),variant(2)]};
+    const f=fixture(undefined,undefined,{attachVariantContent:async () => {calls++;if (fail) throw new Error('Synthetic rejected save');return updated;},setDefaultVariant:async () => updated});
+    f.render();f.render();
+    f.nodes.find(node => node.type==='Input' && node.props.label==='Source root path')!.props.onValueChange('/synthetic/new.bin');f.render();
+    await f.nodes.find(node => node.type==='Button' && node.props.children==='Save content')!.props.onPress();f.render();
+    assert.equal(calls,1);assert.equal(f.canonical.state[1],updated);
+    assert.equal(f.nodes.some(node => node.props.role==='status'),true);
+    assert.equal(f.nodes.some(node => node.type==='p' && node.props.children==='Variant content saved'),true);
+    assert.equal(f.toasts.length,0);
+    f.nodes.find(node => node.type==='Input' && node.props.label==='Source root path')!.props.onValueChange('/synthetic/other.bin');f.render();
+    assert.equal(f.nodes.some(node => node.props.role==='status'),false);
+    const defaultButton=f.nodes.find(node => node.type==='Button' && node.props.children==='Set default');
+    assert.ok(defaultButton);await defaultButton!.props.onPress();f.render();
+    assert.equal(f.nodes.some(node => node.type==='p' && node.props.children==='Default version updated'),true);
+    assert.equal(f.toasts.length,0);
+    fail=true;
+    await f.nodes.find(node => node.type==='Button' && node.props.children==='Save content')!.props.onPress();f.render();
+    assert.equal(f.nodes.some(node => node.props.role==='status'),false);
+    assert.equal(f.toasts.length,1);assert.equal(f.toasts[0].color,'danger');
+});
 
 test('dirty editor close is controlled: keep editing preserves owner, duplicate requests do not discard, explicit discard closes once', () => {
     const f = fixture(); f.render(); const editor = f.render(); editor.onDirtyChange(true); f.render();
@@ -201,16 +230,19 @@ test('dirty editor close is controlled: keep editing preserves owner, duplicate 
     close(); close(); f.render();
     assert.equal(f.closeCalls,0);
     assert.equal(f.nodes.filter(node => node.props.role === 'alertdialog').length,1);
+    assert.equal(f.focusedControl,'Keep editing');
     f.nodes.find(node => node.type === 'Button' && node.props.children === 'Keep editing')!.props.onPress();
     const retained = f.render();
     assert.equal(retained.key,editor.key); assert.equal(f.closeCalls,0);
     assert.equal(f.nodes.some(node => node.props.role === 'alertdialog'),false);
+    assert.equal(f.focusedControl,'Close');
     close(); f.render();
     let prevented = false, stopped = false;
     f.nodes.find(node => node.props.role === 'alertdialog')!.props.onKeyDown({key:'Escape',
         preventDefault:() => {prevented=true;}, stopPropagation:() => {stopped=true;}});
     f.render();
     assert.equal(prevented,true); assert.equal(stopped,true); assert.equal(f.closeCalls,0);
+    assert.equal(f.focusedControl,'Close');
     assert.equal(f.nodes.some(node => node.props.role === 'alertdialog'),false);
     // Dirty remains set: the next close still requires an explicit decision.
     f.nodes.find(node => node.type === 'Modal')!.props.onOpenChange(false); f.render();

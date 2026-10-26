@@ -245,6 +245,7 @@ internal class FixtureContainers(val root: Path, private val prefix: List<String
     val network = "gameyfin-fixture-$owner"
     private val intents = linkedMapOf<String, String>()
     private val identities = linkedMapOf<String, String>()
+    private val browserTmpfsIntents = mutableSetOf<String>()
     private var networkAttempted = false
     fun docker(vararg args: String, seconds: Long = 60) = FixtureRuntime.command(prefix, *args, seconds = seconds)
     fun createNetwork() {
@@ -253,18 +254,22 @@ internal class FixtureContainers(val root: Path, private val prefix: List<String
         val row = FixtureRuntime.tree(docker("network", "inspect", network))[0]
         require(row["Internal"].booleanValue() && row["Labels"]["gameyfin.fixture.owner"].asText() == owner)
     }
-    fun create(role: String, image: String, args: List<String>, command: List<String> = emptyList()): String {
-        require(role.matches(Regex("[a-z]+")) && image.matches(Regex("[a-z0-9./-]+@sha256:[a-f0-9]{64}")))
+    fun create(role: String, image: String, args: List<String>, command: List<String> = emptyList(), browserTmpfs: Boolean = false): String {
+        require(role.matches(Regex("[a-z]+")))
+        requireFixtureImage(image)
         val name = "gameyfin-fixture-$owner-$role"; require(!intents.containsKey(name)); intents[name] = image
-        val id = docker(*(listOf("create", "--pull", "never", "--name", name, "--label", "gameyfin.fixture.owner=$owner", "--network", network) + args + image + command).toTypedArray())
+        if (browserTmpfs) { require(role == "browser"); browserTmpfsIntents.add(name) }
+        val temporary = if (browserTmpfs) listOf("--tmpfs", "/tmp:rw,nosuid,nodev,size=128m,mode=1777") else emptyList()
+        val id = docker(*(listOf("create", "--pull", "never", "--name", name, "--label", "gameyfin.fixture.owner=$owner", "--network", network) + args + temporary + image + command).toTypedArray())
         require(id.matches(Regex("[a-f0-9]{64}"))); identities[name] = id; verified(name, image, id)
         docker("start", id); return id
     }
     private fun verified(name: String, image: String, id: String) {
         val row = FixtureRuntime.tree(docker("inspect", id))[0]
         require(row["Id"].asText() == id && row["Name"].asText() == "/$name" && row["Config"]["Image"].asText() == image && row["Config"]["Labels"]["gameyfin.fixture.owner"].asText() == owner)
+        if (image.startsWith("sha256:")) require(row["Image"].asText() == image)
         require(row["HostConfig"]["NetworkMode"].asText() == network && row["HostConfig"]["PortBindings"].let { it.isNull || it.isObject && it.isEmpty })
-        for (mount in row["Mounts"]) require(mount["Type"].asText() == "bind" && Path.of(mount["Source"].asText()).toAbsolutePath().normalize().startsWith(root))
+        verifyFixtureMountPolicy(row, root, name in browserTmpfsIntents)
     }
     fun address(id: String): String = FixtureRuntime.tree(docker("inspect", id))[0]["NetworkSettings"]["Networks"][network]["IPAddress"].asText()
     private fun closeResources() {
@@ -306,4 +311,33 @@ internal class FixtureContainers(val root: Path, private val prefix: List<String
         closeResources()
         FixtureRuntime.deleteOwned(root)
     }
+}
+
+/** Only immutable image identities; never a mutable tag or abbreviated ID. */
+internal fun requireFixtureImage(image: String) {
+    require(image.matches(Regex("(?:[a-z0-9./-]+@)?sha256:[a-f0-9]{64}")))
+}
+
+/** Default remains bind-only; the one explicit browser intent retains this policy
+ * for creation AND cleanup verification. Unknown Docker mount options fail closed.
+ */
+internal fun verifyFixtureMountPolicy(row: JsonNode, root: Path, browserTmpfs: Boolean) {
+    val tmpfs = row["HostConfig"]["Tmpfs"]
+    if (!browserTmpfs) require(tmpfs == null || tmpfs.isNull || tmpfs.isObject && tmpfs.isEmpty)
+    else {
+        require(tmpfs != null && tmpfs.isObject && tmpfs.size() == 1 && tmpfs["/tmp"]?.isTextual == true)
+        val options = tmpfs["/tmp"].asText().split(',')
+        require(options.size == 5 && options.toSet().size == 5 && options.toSet().containsAll(setOf("rw", "nosuid", "nodev", "mode=1777")))
+        require(options.single { it.startsWith("size=") } in setOf("size=128m", "size=134217728"))
+        require(row["HostConfig"]["ReadonlyRootfs"]?.booleanValue() == true && row["Config"]["User"]?.asText() == "10042:10042")
+    }
+    var temporaryMounts = 0
+    for (mount in row["Mounts"]) {
+        when (mount["Type"].asText()) {
+            "bind" -> require(Path.of(mount["Source"].asText()).toAbsolutePath().normalize().startsWith(root))
+            "tmpfs" -> { require(browserTmpfs && mount["Destination"].asText() == "/tmp"); temporaryMounts++ }
+            else -> error("Unexpected fixture mount type")
+        }
+    }
+    require(temporaryMounts <= 1)
 }

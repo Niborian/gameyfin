@@ -9,6 +9,45 @@ import kotlin.test.*
 
 /** Daemon-free rejection contracts; these never stand in for real provider/proxy acceptance. */
 class FixtureValidationTest {
+    @Test fun `editor game diagnostics admit only capped fixed value-free observations`() {
+        fun sample(extra: Map<String, Any?> = emptyMap(), count: Any = 1, status: Any? = 200): tools.jackson.databind.JsonNode {
+            val row = listOf("finished", "failed", "canceled", "bodyPending", "bodyClassified", "bodyUnavailable",
+                "authNull", "authMatch", "arrayResponse", "targetPresent").associateWith { false } + mapOf("count" to count, "status" to status)
+            return FixtureRuntime.tree(FixtureRuntime.json.writeValueAsString(
+                listOf("truncated", "pageerrorSeen", "domObserved", "profilePresent", "signInPresent", "loginFormPresent", "errorHeadingPresent")
+                    .associateWith { false } + mapOf("phase" to "complete", "families" to listOf("game", "library", "user").associateWith { row }) + extra))
+        }
+        validateEditorGameDiagnostics(sample()); validateEditorGameDiagnostics(sample(count = 0, status = null))
+        assertFails { validateEditorGameDiagnostics(sample(extra = mapOf("rawError" to "forbidden"))) }
+        assertFails { validateEditorGameDiagnostics(sample(extra = mapOf("phase" to "unbounded"))) }
+        assertFails { validateEditorGameDiagnostics(sample(extra = mapOf("pageerrorSeen" to "true"))) }
+        assertFails { validateEditorGameDiagnostics(sample(count = 5)) }
+        assertFails { validateEditorGameDiagnostics(sample(status = 600)) }
+        assertFails { validateEditorGameDiagnostics(sample(status = "200")) }
+    }
+    @Test fun `images require exact config IDs or digest references never mutable tags`() {
+        val hash = "a".repeat(64)
+        requireFixtureImage("sha256:$hash")
+        requireFixtureImage("ghcr.io/niborian/gameyfin@sha256:$hash")
+        for (image in listOf("gameyfin:latest", "gameyfin:2.4.7", "sha256:abc", "sha256:${"A".repeat(64)}",
+            "@sha256:$hash", "sha256:$hash --privileged", "sha256:$hash\n")) assertFails { requireFixtureImage(image) }
+    }
+    @Test fun `tmpfs is admitted only for exact explicit bounded nonroot readonly browser intent`() {
+        val root = Path.of("/owned/fixture").toAbsolutePath().normalize()
+        fun sample(options: String = "rw,nosuid,nodev,size=128m,mode=1777", user: String = "10042:10042", readonly: Boolean = true,
+                   destination: String = "/tmp", type: String = "tmpfs") = FixtureRuntime.tree("""{"Config":{"User":"$user"},"HostConfig":{"ReadonlyRootfs":$readonly,"Tmpfs":{"$destination":"$options"}},"Mounts":[{"Type":"$type","Destination":"$destination"}]}""")
+        verifyFixtureMountPolicy(sample(), root, true)
+        verifyFixtureMountPolicy(sample("mode=1777,nodev,size=134217728,nosuid,rw"), root, true)
+        assertFails { verifyFixtureMountPolicy(sample(), root, false) }
+        for (options in listOf("rw,nosuid,size=128m,mode=1777", "rw,nosuid,nodev,size=1g,mode=1777", "rw,nosuid,nodev,size=128m,mode=1777,exec", "rw,nosuid,nodev,size=128m,rw"))
+            assertFails { verifyFixtureMountPolicy(sample(options), root, true) }
+        assertFails { verifyFixtureMountPolicy(sample(user = "0:0"), root, true) }
+        assertFails { verifyFixtureMountPolicy(sample(readonly = false), root, true) }
+        assertFails { verifyFixtureMountPolicy(sample(destination = "/other"), root, true) }
+        assertFails { verifyFixtureMountPolicy(sample(type = "volume"), root, true) }
+        assertFails { verifyFixtureMountPolicy(FixtureRuntime.tree("""{"HostConfig":{},"Mounts":[{"Type":"bind","Source":"/foreign"}]}"""), root, false) }
+        verifyFixtureMountPolicy(FixtureRuntime.tree("""{"HostConfig":{},"Mounts":[{"Type":"bind","Source":"/owned/fixture/script.cts"}]}"""), root, false)
+    }
     private fun zip(vararg members: Pair<String, ByteArray>): ByteArray {
         val output = ByteArrayOutputStream()
         ZipOutputStream(output).use { archive -> for ((name, bytes) in members) { archive.putNextEntry(ZipEntry(name)); archive.write(bytes); archive.closeEntry() } }

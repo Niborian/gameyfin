@@ -1,0 +1,77 @@
+name: Synthetic native confirmation control
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/native-confirm-smoke.cts
+      - .github/workflows/native-confirm-smoke.yml
+  workflow_dispatch:
+    inputs:
+      reviewed_head:
+        description: Exact reviewed workflow commit SHA
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  native-confirm:
+    if: github.repository == 'Niborian/gameyfin' && (github.event_name == 'pull_request' || inputs.reviewed_head == github.sha)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: One native blank-page confirmation; no application or network
+        shell: bash
+        run: |
+          set -euo pipefail
+          image='ghcr.io/puppeteer/puppeteer:25.13.0@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3'
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ && "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]]
+          name="native-confirm-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          label="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            result=$?
+            trap - EXIT INT TERM
+            if id=$(timeout 5s docker inspect --format '{{.Id}}' "$name" 2>/dev/null); then
+              [[ "$id" =~ ^[a-f0-9]{64}$ ]]
+              [[ "$(timeout 5s docker inspect --format '{{index .Config.Labels "org.gameyfin.native-confirm"}}' "$id")" == "$label" ]]
+              [[ "$(timeout 5s docker inspect --format '{{.Config.Image}}' "$id")" == "$image" ]]
+              timeout 10s docker rm --force "$id" >/dev/null
+              remaining=$(timeout 5s docker ps --all --no-trunc --filter "id=$id" --format '{{.ID}}')
+              [[ -z "$remaining" ]]
+            else
+              # A failed inspect alone does not prove absence (daemon errors too).
+              remaining=$(timeout 5s docker ps --all --no-trunc --filter "name=^/${name}$" --format '{{.ID}}')
+              [[ -z "$remaining" ]]
+            fi
+            exit "$result"
+          }
+          trap cleanup EXIT INT TERM
+          timeout --signal=TERM --kill-after=2s 120s docker pull "$image" >/dev/null
+          [[ -f scripts/native-confirm-smoke.cts && ! -L scripts/native-confirm-smoke.cts ]]
+          mkdir -p .native-confirm
+          timeout 10s docker create --name "$name" --label "org.gameyfin.native-confirm=$label" \
+            --network none --read-only --user 10042:10042 --cap-drop ALL \
+            --memory 768m --memory-swap 768m --cpus 1 --pids-limit 256 \
+            --tmpfs /tmp:rw,nosuid,nodev,size=128m,mode=1777 \
+            --mount "type=bind,src=${GITHUB_WORKSPACE}/scripts/native-confirm-smoke.cts,dst=/opt/native-confirm-smoke.cts,readonly" \
+            --env GAMEYFIN_NATIVE_CONFIRM_SMOKE=synthetic-blank-page-only \
+            --env XDG_CONFIG_HOME=/tmp/xdg-config --env XDG_CACHE_HOME=/tmp/xdg-cache \
+            --entrypoint node "$image" --experimental-strip-types /opt/native-confirm-smoke.cts >/dev/null
+          timeout --signal=TERM --kill-after=2s 45s docker start --attach "$name" > .native-confirm/result.json
+          [[ "$(timeout 5s docker inspect --format '{{.State.Status}}:{{.State.ExitCode}}' "$name")" == 'exited:0' ]]
+          timeout 5s node -e '
+            const assert = require("node:assert/strict");
+            const receipt = JSON.parse(require("node:fs").readFileSync(".native-confirm/result.json", "utf8"));
+            assert.equal(receipt.scope, "synthetic-blank-page-native-confirm-only");
+            assert.equal(receipt.stage, "complete");
+            for (const key of ["success", "nativeDialogSeen", "confirmationAccepted", "originalConfirmReturnedTrue", "cleanupConfirmed", "sandboxDisabledForSyntheticOnly"]) assert.equal(receipt[key], true);
+          '
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: native-confirm-sanitized-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .native-confirm/result.json
+          retention-days: 7
+          if-no-files-found: warn

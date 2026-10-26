@@ -5,6 +5,66 @@ const fs = require('node:fs'), path = require('node:path'), vm = require('node:v
 const {createRequire} = require('node:module');
 const ts = process.env.TEST_TYPESCRIPT_MODULE ? require(process.env.TEST_TYPESCRIPT_MODULE) : createRequire(path.resolve(__dirname,'../app/package.json'))('typescript');
 
+function comboFixture() {
+    const slots: any[] = []; let cursor=0, effects: (() => void)[]=[], nodes: any[]=[], writes=0;
+    let actor={id:7,username:'fixture'}, preference='download-method';
+    const lookups: {key:string; resolve:(value?:string)=>void}[]=[], saves: {key:string; value:string; resolve:()=>void}[]=[];
+    let options: Record<string,any>={direct:{label:'Direct',description:'',action:()=>{}}};
+    const react={
+        useState(initial:any) {const i=cursor++;if (!(i in slots)) slots[i]=initial;return [slots[i],(value:any)=>{writes++;slots[i]=typeof value==='function'?value(slots[i]):value;}];},
+        useRef(initial:any) {const i=cursor++;if (!(i in slots)) slots[i]={current:initial};return slots[i];},
+        useLayoutEffect(callback:()=>any,deps:any[]) {const i=cursor++,old=slots[i];if (!old || deps.some((value,index)=>!Object.is(value,old.deps[index]))) effects.push(()=>{old?.cleanup?.();slots[i]={deps,cleanup:callback()};});}
+    };
+    const source=fs.readFileSync(path.resolve(__dirname,'../app/src/main/frontend/components/general/input/ComboButton.tsx'),'utf8');
+    const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
+    const module={exports:{} as {default:(props:any)=>unknown}};
+    vm.runInNewContext(code,{module,exports:module.exports,AbortController,require(name:string) {
+        if (name==='react') return react;
+        if (name==='react/jsx-runtime') return {jsx:(type:any,props:any)=>{nodes.push({type,props});return {type,props};},jsxs:(type:any,props:any)=>{nodes.push({type,props});return {type,props};}};
+        if (name.endsWith('/auth')) return {useAuth:()=>({state:{user:actor,loading:false,initializing:false}})};
+        // Deliberately return a new service object each render, like production.
+        if (name.endsWith('/user-preference-service')) return {useUserPreferenceService:()=>({
+            get:(key:string)=>new Promise(resolve=>lookups.push({key,resolve})),
+            set:(key:string,value:string)=>new Promise<void>(resolve=>saves.push({key,value,resolve}))})};
+        return new Proxy({},{get:(_target,key)=>key});
+    }});
+    return {render(){cursor=0;effects=[];nodes=[];module.exports.default({options,preferredOptionKey:preference});effects.forEach(run=>run());},
+        choose(key:string){nodes.find(node=>node.type==='DropdownMenu').props.onSelectionChange({currentKey:key});},
+        selected(){return Array.from(nodes.find(node=>node.type==='DropdownMenu')?.props.selectedKeys ?? []);},
+        setOptions(value:typeof options){options=value;},setActor(value:typeof actor){actor=value;},setPreference(value:string){preference=value;},
+        unmount(){slots.forEach(slot=>slot?.cleanup?.());},lookups,saves,get writes(){return writes;}};
+}
+const flushPreferences=()=>new Promise(resolve=>setImmediate(resolve));
+const comboOptions={direct:{label:'Direct',description:'',action:()=>{}},owned:{label:'Private torrent',description:'',action:()=>{}}};
+
+test('ComboButton restores a late available saved option without blocking ordinary options or refetching',async()=>{
+    const f=comboFixture();f.render();await flushPreferences();f.render();assert.deepEqual(f.selected(),['direct']);
+    f.lookups[0].resolve('owned');await flushPreferences();f.render();assert.deepEqual(f.selected(),['direct']);
+    f.setOptions(comboOptions);f.render();assert.deepEqual(f.selected(),['owned']);f.render();assert.equal(f.lookups.length,1);
+});
+test('ComboButton explicit choice wins over pending preference and later optional arrival',async()=>{
+    const f=comboFixture();f.render();await flushPreferences();f.render();f.choose('direct');f.render();
+    f.lookups[0].resolve('owned');await flushPreferences();f.setOptions(comboOptions);f.render();assert.deepEqual(f.selected(),['direct']);
+});
+test('ComboButton pending writes never revert a newer explicit choice',async()=>{
+    const f=comboFixture();f.setOptions(comboOptions);f.render();await flushPreferences();f.render();
+    f.choose('owned');f.render();await flushPreferences();f.choose('direct');f.render();await flushPreferences();
+    f.saves[1].resolve();f.saves[0].resolve();await flushPreferences();f.render();assert.deepEqual(f.selected(),['direct']);
+});
+test('ComboButton old identity preference-key and unmounted lookups cannot update selection',async()=>{
+    const f=comboFixture();f.setOptions(comboOptions);f.render();await flushPreferences();
+    f.setActor({id:8,username:'replacement'});f.render();await flushPreferences();
+    f.setPreference('other-key');f.render();await flushPreferences();const writes=f.writes;
+    f.lookups[0].resolve('owned');f.lookups[1].resolve('owned');await flushPreferences();assert.equal(f.writes,writes);
+    f.render();assert.deepEqual(f.selected(),['direct']);f.unmount();const after=f.writes;
+    f.lookups[2].resolve('owned');await flushPreferences();assert.equal(f.writes,after);
+});
+test('ComboButton removed and empty options fall back without rendering an obsolete action',async()=>{
+    const f=comboFixture();f.setOptions(comboOptions);f.render();await flushPreferences();f.lookups[0].resolve('owned');await flushPreferences();f.render();
+    assert.deepEqual(f.selected(),['owned']);f.setOptions({direct:comboOptions.direct});f.render();assert.deepEqual(f.selected(),['direct']);
+    f.setOptions({});f.render();assert.deepEqual(f.selected(),[]);assert.equal(f.lookups.length,1);
+});
+
 function gameDownloadFixture(delayedProviders = false, providerRequest?: (init: {signal: AbortSignal}) => Promise<any[]>,
     ownedRequest?: (init: {signal: AbortSignal}) => Promise<boolean>) {
     const slots: any[] = []; let cursor = 0, effects: (() => void)[] = [];

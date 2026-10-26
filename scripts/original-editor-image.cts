@@ -17,7 +17,7 @@ const proof = {scope: 'published-2.4.6-synthetic-original-editor', stage: 'input
   authenticatedLandingObserved: false, profileTriggerObserved: false, profileDomIdentityMatched: false,
   editorPhase: 'not-started', gameRouteMatches: false, footerMatches: false, versionTriggerUnique: false,
   defaultVersionObserved: false, targetOptionObserved: false, targetVersionObserved: false,
-  editorDialogObserved: false, splitPreviewObserved: false,
+  editorDialogObserved: false, splitPreviewObserved: false, typeTriggerFound: false, typeOptionsSeen: false,
   sandboxDisabledForIsolatedSyntheticAppOnly: true};
 let browser: any;
 let zip = '';
@@ -185,12 +185,22 @@ async function run(): Promise<void> {
   await page.waitForFunction(() => [...document.querySelectorAll('input')].some(input => input.value === '/fixture/Normal 1.0/Base'), {timeout: 5000});
   proof.splitPreviewObserved = true; proof.editorPhase = 'base-classification';
   // Classify only the reviewed Base child; Patch remains optional/default-selected.
+  proof.editorPhase = 'type-trigger';
   const type = await page.evaluateHandle(() => {
     let node: Element | null = [...document.querySelectorAll('input')].find(input => input.value === '/fixture/Normal 1.0/Base') ?? null;
     while (node && ![...node.querySelectorAll('label')].some(label => label.textContent === 'Content type')) node = node.parentElement;
     return node?.querySelector('button[aria-haspopup="listbox"]');
   });
-  await type.asElement().click(); await type.dispose();
+  try {
+    const trigger = type.asElement();
+    if (!trigger) throw new Error('Content type trigger');
+    proof.typeTriggerFound = true;
+    await trigger.click();
+  } finally { await type.dispose(); }
+  proof.editorPhase = 'type-options';
+  await page.waitForFunction(() => [...document.querySelectorAll('[role="option"]')].some(option =>
+    option.textContent?.trim() === 'BASE' && option.getBoundingClientRect().width > 0), {timeout: 5000});
+  proof.typeOptionsSeen = true;
   await clickText(page, 'BASE');
   proof.editorPhase = 'draft';
   const edition = await page.evaluateHandle(() => {

@@ -193,11 +193,11 @@ class OriginalEditorImageFixtureTest {
                 "profileTriggerObserved", "profileDomIdentityMatched").associateWith { browserProof[it]?.booleanValue() == true }
             val editorPhase = browserProof["editorPhase"]?.asText()
             require(editorPhase in setOf("not-started", "opening-game", "game-ready", "version-trigger", "version-options", "selected-version",
-                "editor-open", "split-preview", "base-classification", "draft", "replace", "replacement-response", "canonical-check",
+                "editor-open", "split-preview", "base-classification", "type-trigger", "type-options", "draft", "replace", "replacement-response", "canonical-check",
                 "draft-preserved", "closing-editor", "cards", "complete"))
             proof["editorPhase"] = editorPhase
             proof["editorObservations"] = listOf("gameRouteMatches", "footerMatches", "versionTriggerUnique", "defaultVersionObserved",
-                "targetOptionObserved", "targetVersionObserved", "editorDialogObserved", "splitPreviewObserved")
+                "targetOptionObserved", "targetVersionObserved", "editorDialogObserved", "splitPreviewObserved", "typeTriggerFound", "typeOptionsSeen")
                 .associateWith { browserProof[it]?.booleanValue() == true }
             require(expectedFlags.all { browserProof[it]?.booleanValue() == true }) { "Original UI gate failed" }
             require(owned.docker("wait", chrome, seconds = 5) == "0")

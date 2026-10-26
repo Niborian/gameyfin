@@ -79,7 +79,8 @@ class SecurityConfig(
 
         http.authorizeHttpRequests { auth ->
             // Set default security policy that permits Hilla internal requests and denies all other
-            auth.requestMatchers(routeUtil::isRouteAllowed).permitAll()
+            auth.requestMatchers("/owned-torrent/**").authenticated()
+                .requestMatchers(routeUtil::isRouteAllowed).permitAll()
                 // Gameyfin static resources and public endpoints
                 .requestMatchers(
                     LOGIN_URL,

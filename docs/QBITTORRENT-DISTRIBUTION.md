@@ -1,7 +1,8 @@
 # Optional qBittorrent distribution
 
-Status: implementation draft for #112. Not enabled, not deployment instructions,
-and not replacement-parity evidence. Keep the original Torrent Download plugin.
+Status: optional implementation for #112, with isolated source/CI acceptance
+evidence described below. Default off; not deployment instructions or production
+activation approval. Keep the original Torrent Download plugin.
 This serves selected library content; it does not acquire games from indexers.
 
 ## Intended boundary
@@ -22,7 +23,7 @@ downloads must remain available.
 
 ### Shared selections, not duplicate copies
 
-The sharing draft gives identical authorized selections one owned immutable copy
+The shared implementation gives identical authorized selections one owned immutable copy
 and one torrent/swarm. Each browser request keeps its own durable reference and
 session-restricted metadata URL; users do not receive another user's request URL.
 Canonical resolved variant/content membership and immutable client configuration
@@ -38,11 +39,10 @@ Source verification still costs reads/hashing, but does not copy the files again
 
 Releasing one reference leaves the seed intact while other references remain.
 The last release fences new attachments before owned stop/removal/cache retirement.
-It does not revoke metadata or data already obtained by peers. These are required
-sharing semantics, not a claim that the shared implementation has passed its
-runtime acceptance yet.
+It does not revoke metadata or data already obtained by peers. These sharing
+semantics have isolated synthetic CI evidence, not production-network acceptance.
 
-The draft has two independent admission controls: saved administrator opt-in and
+The feature has two independent admission controls: saved administrator opt-in and
 the server's default-false `gameyfin.owned-torrent.core-parity-enabled` interlock.
 Neither a checked confirmation nor a saved configuration proves a safe deployment.
 Credentials are write-only through dedicated encrypted settings, not generic
@@ -102,18 +102,44 @@ invent its ownership from a UUID-shaped name. An operator exit receipt cannot
 reconstruct a missing directory identity. Do not promise automatic cleanup for
 every crash window or a global storage bound merely from per-operation quotas.
 
-## Release gates still outstanding
+## Acceptance evidence and remaining boundaries
 
-Administrator configuration/download wiring, descriptor-checked retention and
-restart/operator recovery, exact-head Linux checks, actual pinned seeder plus
-second-client transfer, unchanged source fingerprints and exact fixture cleanup
-must be evidenced. Sharing additionally requires two independent requests with
-one copy/create/add, identical metadata, continued transfer after the first release,
-and exactly one non-destructive removal after the last release. Distinct/changed
-selections and attach-versus-retire/revoked-authority cases need focused evidence.
-Mocked HTTP, Windows-skipped native checks or a creator-only metadata fixture are
-not feature parity. Production changes remain a separate reviewed cutover; never
-remove the original plugin merely because code merged.
+The shared implementation merged in PR167 (`3b671478`, tested implementation
+head `44830626`). Exact-head CI exercised six worker protocol cases and fifteen
+native Linux cases without skips, plus the actual pinned qBittorrent pair fixture.
+The pair uses real source descriptors, migrated H2 ownership/reference rows,
+the seeding client and a second transfer client. It proves two independent request
+references with one copy/create/add, identical metadata, continued transfer after
+the first release, and exactly one non-destructive removal after the last release.
+It also covers changed selections/source generations, restart with persisted
+ownership, revoked-attach rollback, unchanged source fingerprints/hardlinks and
+exact owned cleanup. Focused settings, facade, registry and lifecycle tests cover
+admission, captured-authority checkpoints and retained-operation recovery.
+
+PR169 head `629b430a`, CI run
+[40255048843](https://github.com/Niborian/gameyfin/actions/runs/40255048843),
+passed all four `OwnedTorrentHttpAcceptanceTest` cases and the real pair case.
+The opt-in HTTP fixture starts the actual embedded Vaadin servlet lifecycle on
+isolated loopback ports, then uses MockMvc with the real security filter chain,
+Hilla dispatcher, native login, session registry, account policy, facade and H2.
+It verifies owning-session READY status and exact no-store metadata retrieval,
+unrelated/anonymous/expired/logged-out denial, administrator-only settings access,
+and CSRF plus invalid-selection refusal without queue side effects. Its prepared
+READY rows are synthetic read fixtures; they do not claim worker or qB execution.
+The authenticated `/owned-torrent/**` route retains the facade's exact requesting-
+session and current-membership checks; it is not a public-mode route.
+
+This is compositional evidence: real native/qB transfer and sharing are tested
+separately from the actual web/session boundary. A single positive HTTP
+`create -> queue -> worker -> READY` journey, a real browser torrent-button click,
+and deployment-specific OIDC/tracker/peer-network behavior have not been exercised
+by these fixtures. MockMvc is not a socket-client test, and Windows-skipped native
+checks are not Linux evidence. No claim of exhaustive crash recovery is made.
+
+Neither source completion nor these isolated fixtures enables the feature on a
+running instance. Production configuration, peer-network validation, original-
+plugin removal and any `latest` promotion require separate reviewed authority and
+cutover evidence. Retain the original plugin until that cutover is approved.
 
 Protocol references: [BitTorrent metainfo and peer protocol](https://www.bittorrent.org/beps/bep_0003.html),
 [private torrents and their limits](https://www.bittorrent.org/beps/bep_0027.html),

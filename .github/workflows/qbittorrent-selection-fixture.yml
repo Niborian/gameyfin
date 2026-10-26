@@ -41,6 +41,21 @@ jobs:
           name: qb-creator-test-results
           path: app/build/test-results/test/TEST-*QbCreatorFixtureTest.xml
           retention-days: 7
+      - name: Verify owning-session HTTP metadata and Hilla admission boundaries
+        env:
+          GAMEYFIN_OWNED_TORRENT_HTTP_FIXTURE: 'synthetic-only'
+        run: |
+          # Disposable encryption key for synthetic settings rows only. Never persist it.
+          fixture_key="$(openssl rand -base64 32)"
+          printf '::add-mask::%s\n' "$fixture_key"
+          APP_KEY="$fixture_key" ./gradlew :app:test --tests '*OwnedTorrentHttpAcceptanceTest' -x :app:vaadinPrepareFrontend -x :app:vaadinBuildFrontend --no-daemon --console=plain --max-workers=2
+          unset fixture_key
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: owned-torrent-http-test-results
+          path: app/build/test-results/test/TEST-*OwnedTorrentHttpAcceptanceTest.xml
+          retention-days: 7
       - name: Verify owned exact-selection transfer and cleanup with a second client
         env:
           GAMEYFIN_QB_DISTRIBUTION_PAIR_FIXTURE: 'true'

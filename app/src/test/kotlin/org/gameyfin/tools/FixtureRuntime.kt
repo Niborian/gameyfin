@@ -255,7 +255,8 @@ internal class FixtureContainers(val root: Path, private val prefix: List<String
         require(row["Internal"].booleanValue() && row["Labels"]["gameyfin.fixture.owner"].asText() == owner)
     }
     fun create(role: String, image: String, args: List<String>, command: List<String> = emptyList(), browserTmpfs: Boolean = false): String {
-        require(role.matches(Regex("[a-z]+")) && image.matches(Regex("[a-z0-9./-]+@sha256:[a-f0-9]{64}")))
+        require(role.matches(Regex("[a-z]+")))
+        requireFixtureImage(image)
         val name = "gameyfin-fixture-$owner-$role"; require(!intents.containsKey(name)); intents[name] = image
         if (browserTmpfs) { require(role == "browser"); browserTmpfsIntents.add(name) }
         val temporary = if (browserTmpfs) listOf("--tmpfs", "/tmp:rw,nosuid,nodev,size=128m,mode=1777") else emptyList()
@@ -266,6 +267,7 @@ internal class FixtureContainers(val root: Path, private val prefix: List<String
     private fun verified(name: String, image: String, id: String) {
         val row = FixtureRuntime.tree(docker("inspect", id))[0]
         require(row["Id"].asText() == id && row["Name"].asText() == "/$name" && row["Config"]["Image"].asText() == image && row["Config"]["Labels"]["gameyfin.fixture.owner"].asText() == owner)
+        if (image.startsWith("sha256:")) require(row["Image"].asText() == image)
         require(row["HostConfig"]["NetworkMode"].asText() == network && row["HostConfig"]["PortBindings"].let { it.isNull || it.isObject && it.isEmpty })
         verifyFixtureMountPolicy(row, root, name in browserTmpfsIntents)
     }
@@ -309,6 +311,11 @@ internal class FixtureContainers(val root: Path, private val prefix: List<String
         closeResources()
         FixtureRuntime.deleteOwned(root)
     }
+}
+
+/** Only immutable image identities; never a mutable tag or abbreviated ID. */
+internal fun requireFixtureImage(image: String) {
+    require(image.matches(Regex("(?:[a-z0-9./-]+@)?sha256:[a-f0-9]{64}")))
 }
 
 /** Default remains bind-only; the one explicit browser intent retains this policy

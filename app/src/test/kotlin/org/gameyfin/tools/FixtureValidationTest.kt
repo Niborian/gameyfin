@@ -9,6 +9,13 @@ import kotlin.test.*
 
 /** Daemon-free rejection contracts; these never stand in for real provider/proxy acceptance. */
 class FixtureValidationTest {
+    @Test fun `images require exact config IDs or digest references never mutable tags`() {
+        val hash = "a".repeat(64)
+        requireFixtureImage("sha256:$hash")
+        requireFixtureImage("ghcr.io/niborian/gameyfin@sha256:$hash")
+        for (image in listOf("gameyfin:latest", "gameyfin:2.4.7", "sha256:abc", "sha256:${"A".repeat(64)}",
+            "@sha256:$hash", "sha256:$hash --privileged", "sha256:$hash\n")) assertFails { requireFixtureImage(image) }
+    }
     @Test fun `tmpfs is admitted only for exact explicit bounded nonroot readonly browser intent`() {
         val root = Path.of("/owned/fixture").toAbsolutePath().normalize()
         fun sample(options: String = "rw,nosuid,nodev,size=128m,mode=1777", user: String = "10042:10042", readonly: Boolean = true,

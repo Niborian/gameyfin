@@ -201,11 +201,15 @@ class OriginalEditorImageFixtureTest {
             val browserProof = privateResult["proof"]
             val expectedFlags = listOf("success", "loginWithin15Seconds", "nonDefaultPreserved", "unrelatedDraftPreserved", "expectedNativeConfirmAccepted",
                 "immediateCanonicalCards", "clickedExactDownload", "ordinaryUserEditorAbsent", "adminProfileIdentityVerified", "ordinaryProfileIdentityVerified",
-                "keepEditingPreserved", "escapePreserved", "escapeFocusRestored", "keepEditingFocusRestored", "controlledDiscardAccepted", "cleanupConfirmed")
+                "keepEditingPreserved", "escapePreserved", "escapeFocusRestored", "keepEditingFocusRestored", "controlledDiscardAccepted",
+                "viewerLogoutObserved", "loggedOutLoginFormObserved", "repeatedViewerIdentityVerified", "cleanupConfirmed")
             proof["browser"] = expectedFlags.associateWith { browserProof[it]?.booleanValue() == true }
             val browserStage = browserProof["stage"]?.asText()
-            require(browserStage in setOf("input", "launch", "normal-login", "editor", "immediate-download", "ordinary-user", "complete"))
+            require(browserStage in setOf("input", "launch", "normal-login", "editor", "immediate-download", "ordinary-user", "repeat-login", "complete"))
             proof["browserStage"] = browserStage
+            val repeatPhase = browserProof["repeatPhase"]?.asText()
+            require(repeatPhase in setOf("not-started", "profile-menu", "sign-out", "logged-out-form", "normal-form", "complete"))
+            proof["repeatPhase"] = repeatPhase
             val loginPhase = browserProof["loginPhase"]?.asText()
             require(loginPhase in setOf("not-started", "opening-login", "form-ready", "submitted", "profile-response", "authenticated-landing", "profile-menu", "complete"))
             proof["loginPhase"] = loginPhase
@@ -308,7 +312,8 @@ internal fun validateEditorGameDiagnostics(node: tools.jackson.databind.JsonNode
     flags.forEach { require(node[it].isBoolean) }
     val families = node["families"]
     require(families.isObject && families.properties().map { it.key }.toSet() == setOf("game", "library", "user"))
-    val observations = setOf("finished", "failed", "canceled", "bodyPending", "bodyClassified", "bodyUnavailable",
+    val observations = setOf("finished", "failed", "canceled", "continueAttempted", "continueFulfilled", "continueRejected",
+        "bodyPending", "bodyClassified", "bodyUnavailable",
         "authNull", "authMatch", "arrayResponse", "targetPresent")
     families.properties().forEach { (_, row) ->
         require(row.isObject && row.properties().map { it.key }.toSet() == observations + setOf("count", "status"))

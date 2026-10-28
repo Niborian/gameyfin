@@ -11,7 +11,8 @@ interface SavedGame { id: number; variants: SavedVariant[]; }
 const gameDiagnostic = () => ({phase: 'not-started', truncated: false, pageerrorSeen: false,
   domObserved: false, profilePresent: false, signInPresent: false, loginFormPresent: false, errorHeadingPresent: false,
   families: Object.fromEntries(['game', 'library', 'user'].map(key => [key, {count: 0, status: null as number | null,
-    finished: false, failed: false, canceled: false, bodyPending: false, bodyClassified: false,
+    finished: false, failed: false, canceled: false, continueAttempted: false, continueFulfilled: false, continueRejected: false,
+    bodyPending: false, bodyClassified: false,
     bodyUnavailable: false, authNull: false, authMatch: false, arrayResponse: false, targetPresent: false}]))});
 const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', success: false,
   loginWithin15Seconds: false, nonDefaultPreserved: false, unrelatedDraftPreserved: false,
@@ -32,6 +33,8 @@ const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', s
     postExists: false, postEnabled: false, postInViewport: false, postCenterOwn: false, postCenterToast: false,
     trustedCloseClick: false, trustedOtherClick: false},
   gameDiagnostics: gameDiagnostic(),
+  repeatPhase: 'not-started', viewerLogoutObserved: false, loggedOutLoginFormObserved: false,
+  repeatedViewerIdentityVerified: false,
   sandboxDisabledForIsolatedSyntheticAppOnly: true};
 let browser: any;
 let zip = '';
@@ -91,13 +94,19 @@ function observeGameNavigation(page: any, input: FixtureInput) {
     });
   };
   const finished = (request: any) => {const row = current(request); if (row) row.finished = true;};
+  const continuation = (request: any, phase: 'attempted' | 'fulfilled' | 'rejected') => {
+    const row = current(request); if (!row) return;
+    if (phase === 'attempted') row.continueAttempted = true;
+    else if (phase === 'fulfilled') row.continueFulfilled = true;
+    else row.continueRejected = true;
+  };
   const requestFailed = (request: any) => {const row = current(request); if (row) {row.failed = true; row.canceled = request.failure()?.errorText === 'net::ERR_ABORTED';}};
   const pageerror = () => {if (active) diagnostic.pageerrorSeen = true;};
-  page.on('request', requested); page.on('response', responded); page.on('requestfinished', finished);
+  page.on('response', responded); page.on('requestfinished', finished);
   page.on('requestfailed', requestFailed); page.on('pageerror', pageerror);
-  return {diagnostic, stop() {
+  return {diagnostic, requested, continuation, stop() {
     active = false; diagnostic.phase = 'complete'; timers.forEach(clearTimeout); timers.clear(); latest.clear();
-    page.off('request', requested); page.off('response', responded); page.off('requestfinished', finished);
+    page.off('response', responded); page.off('requestfinished', finished);
     page.off('requestfailed', requestFailed); page.off('pageerror', pageerror);
   }};
 }
@@ -125,11 +134,11 @@ async function clickText(page: any, text: string, scope = 'body'): Promise<void>
   }, text, scope);
   try { await handle.asElement().asLocator().setTimeout(5000).click(); } finally { await handle.dispose(); }
 }
-async function login(page: any, input: FixtureInput, username: string, password: string): Promise<void> {
+async function login(page: any, input: FixtureInput, username: string, password: string, alreadyOnForm = false): Promise<void> {
   proof.loginPhase = 'opening-login';
   proof.profileResponseObserved = false; proof.profileIdentityMatched = false;
   proof.authenticatedLandingObserved = false; proof.profileTriggerObserved = false; proof.profileDomIdentityMatched = false;
-  await page.goto(input.origin + '/login', {waitUntil: 'domcontentloaded', timeout: 15000});
+  if (!alreadyOnForm) await page.goto(input.origin + '/login', {waitUntil: 'domcontentloaded', timeout: 15000});
   await page.waitForSelector('input[name="username"]', {timeout: 15000});
   proof.loginPhase = 'form-ready';
   await page.type('input[name="username"]', username);
@@ -188,11 +197,18 @@ async function run(): Promise<void> {
   await mkdir('/tmp/editor-downloads', {mode: 0o700});
   const context = await browser.createBrowserContext({downloadBehavior: {policy: 'allowAndName', downloadPath: '/tmp/editor-downloads'}});
   const page = await context.newPage();
+  let continuationObserver: ReturnType<typeof observeGameNavigation> | undefined;
   await page.setRequestInterception(true);
   page.on('request', (request: any) => {
     const url = new URL(request.url());
     const allowed = url.origin === input.origin || url.protocol === 'data:' || url.protocol === 'blob:' && url.origin === input.origin;
-    void (allowed ? request.continue() : request.abort()).catch(() => { failed = true; });
+    const resolution = allowed ? request.continue() : request.abort();
+    // The original decision/command runs first, without waiting for observation.
+    const observer = continuationObserver;
+    observer?.requested(request); observer?.continuation(request, 'attempted');
+    void resolution.then(() => {observer?.continuation(request, 'fulfilled');}, () => {
+      failed = true; observer?.continuation(request, 'rejected');
+    });
   });
   let expectedDialog: string | undefined;
   const REPLACE = 'Replace the original broad BASE selection with these reviewed items? Only catalogue metadata changes; no files will be moved or deleted.';
@@ -212,6 +228,7 @@ async function run(): Promise<void> {
   const gameReadyDeadline = performance.now() + 15000;
   const gameReadyRemaining = () => { const value = Math.floor(gameReadyDeadline - performance.now()); if (value < 1) throw new Error('Game-ready deadline'); return value; };
   const navigationObservation = observeGameNavigation(page, input);
+  continuationObserver = navigationObservation;
   proof.gameDiagnostics = navigationObservation.diagnostic;
   // MainLayout's footer is not evidence that asynchronous catalogue data has
   // rendered GameView. Require the actual route, original Version control and
@@ -224,6 +241,7 @@ async function run(): Promise<void> {
       [...document.querySelectorAll('button[aria-haspopup="listbox"]')].filter(node => node.parentElement?.textContent?.includes('Version')).length === 1,
     {timeout: gameReadyRemaining()}, input.expectedVersion);
   } finally {
+    continuationObserver = undefined;
     navigationObservation.stop();
     // Diagnostic only: independently sample each predicate even when the combined
     // gate fails. Never replace that failure, retry navigation, or retain DOM text.
@@ -498,6 +516,39 @@ async function run(): Promise<void> {
   await viewerPage.waitForFunction(() => document.body.textContent?.includes('Downloading: Normal 0.9'), {timeout: 10000});
   proof.ordinaryUserEditorAbsent = await viewerPage.evaluate(() => ![...document.querySelectorAll('button')].some(button => button.textContent?.trim() === 'Versions & content'));
   if (!proof.ordinaryUserEditorAbsent || failed || expectedDialog) throw new Error('UI gate');
+  proof.stage = 'repeat-login'; proof.repeatPhase = 'profile-menu';
+  const viewerProfile = await viewerPage.evaluateHandle(() => {
+    const buttons = [...document.querySelectorAll('nav div[data-slot="trigger"][aria-haspopup="true"] button')];
+    if (buttons.length !== 1) throw new Error('Unique viewer profile'); return buttons[0];
+  });
+  try { await viewerProfile.asElement().click(); } finally { await viewerProfile.dispose(); }
+  await viewerPage.waitForFunction(() => [...document.querySelectorAll('[role="menuitem"]')].some(item => item.textContent?.trim() === 'Sign Out'), {timeout: 5000});
+  const loggedOut = viewerPage.waitForResponse((response: any) => {
+    const url = new URL(response.url());
+    // Native no-options Hilla logout submits a document form. With OIDC disabled,
+    // Vaadin's default logout success handler redirects (not the OIDC-only200 branch).
+    return url.origin === input.origin && url.pathname === '/logout' && response.request().method() === 'POST' &&
+      response.request().isNavigationRequest() && response.status() === 302;
+  }, {timeout: 10000});
+  void loggedOut.catch(() => {});
+  proof.repeatPhase = 'sign-out';
+  const signOut = await viewerPage.evaluateHandle(() => {
+    const items = [...document.querySelectorAll('[role="menuitem"]')].filter(item => item.textContent?.trim() === 'Sign Out');
+    if (items.length !== 1) throw new Error('Unique Sign Out'); return items[0];
+  });
+  try { await signOut.asElement().click(); } finally { await signOut.dispose(); }
+  await loggedOut; proof.viewerLogoutObserved = true;
+  // Public browsing is disabled in this synthetic fixture. Logout's root redirect
+  // must automatically reach the private login form, outside MainLayout/navbar.
+  // This does not test the separate public-mode navbar Sign In action.
+  proof.repeatPhase = 'logged-out-form';
+  await viewerPage.waitForFunction(() => location.pathname === '/login' &&
+    !!document.querySelector('input[name="username"]') && !!document.querySelector('input[name="password"]') &&
+    document.querySelectorAll('nav div[data-slot="trigger"][aria-haspopup="true"] button').length === 0, {timeout: 10000});
+  proof.loggedOutLoginFormObserved = true; proof.repeatPhase = 'normal-form';
+  await login(viewerPage, input, 'fixture-user', input.viewerPassword, true);
+  proof.repeatedViewerIdentityVerified = true; proof.repeatPhase = 'complete';
+  if (failed) throw new Error('Repeat UI gate');
   proof.success = true;
 }
 async function main(): Promise<void> {

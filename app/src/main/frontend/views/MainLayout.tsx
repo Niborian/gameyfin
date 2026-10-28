@@ -150,17 +150,23 @@ export default function MainLayout() {
 
             <Divider className="mt-8"/>
             <div className="flex flex-col w-full 2xl:px-[12.5%]">
-                <footer className="flex flex-row items-center justify-between py-4">
+                <footer className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between py-4">
                     <p>Unofficial Gameyfin {PackageJson.version}</p>
-                    <p className="flex flex-row gap-1 items-baseline">
-                        Made with
-                        <HeartIcon size={16} weight="fill" className="text-primary" onClick={easterEgg}/>
-                        by
-                        <Link href="https://github.com/grimsi" target="_blank">grimsi</Link> and
-                        <Link href="https://github.com/gameyfin/gameyfin/graphs/contributors" target="_blank">
-                            contributors
-                        </Link>
-                    </p>
+                    <div className="flex flex-col gap-1 sm:items-end">
+                        <p className="flex flex-wrap gap-1 items-baseline text-sm">
+                            Fork maintained by
+                            <Link href="https://github.com/Niborian/gameyfin" target="_blank" rel="noopener noreferrer">Niborian</Link>
+                            <span aria-hidden="true">·</span>
+                            <Link href="https://github.com/Niborian/gameyfin/issues" target="_blank" rel="noopener noreferrer">Report fork issues</Link>
+                        </p>
+                        <p className="flex flex-wrap gap-1 items-center text-xs text-foreground-500">
+                            Based on
+                            <Link href="https://github.com/gameyfin/gameyfin" target="_blank" rel="noopener noreferrer">Gameyfin</Link>
+                            by <Link href="https://github.com/grimsi" target="_blank" rel="noopener noreferrer">grimsi</Link> and
+                            <Link href="https://github.com/gameyfin/gameyfin/graphs/contributors" target="_blank" rel="noopener noreferrer">contributors</Link>
+                            <HeartIcon size={14} weight="fill" className="text-primary" onClick={easterEgg}/>
+                        </p>
+                    </div>
                 </footer>
             </div>
         </div>

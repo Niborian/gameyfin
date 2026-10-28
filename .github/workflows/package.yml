@@ -110,6 +110,7 @@ jobs:
         run: |
           npm ci --prefix app --ignore-scripts --no-audit --no-fund
           node --test scripts/test-auth-startup.cts
+          node --test scripts/test-endpoint-failures.cts
           node --test scripts/test-login-redirect-owner.cts
           node --test scripts/test-variant-editor-selection.cts
           node --test scripts/test-owned-torrent-download.cts

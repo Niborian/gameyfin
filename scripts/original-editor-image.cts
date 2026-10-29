@@ -317,9 +317,19 @@ async function run(): Promise<void> {
     const label = [...document.querySelectorAll('label')].find(node => node.textContent === 'Edition');
     return label?.htmlFor ? document.getElementById(label.htmlFor) : null;
   });
-  // The field may already contain a saved edition. Replace it through the normal
-  // input locator rather than appending and then mistaking that value for loss.
-  await edition.asElement().asLocator().setTimeout(5000).fill('Unrelated draft retained'); await edition.dispose();
+  // Replace the prefilled controlled input using real keyboard events, so React
+  // observes the same selection/deletion/typing sequence as a user.
+  try {
+    await edition.asElement().click();
+    await page.waitForFunction(() => {
+      const label = [...document.querySelectorAll('label')].find(node => node.textContent === 'Edition');
+      return label?.htmlFor && document.activeElement === document.getElementById(label.htmlFor);
+    }, {timeout: 5000});
+    await page.keyboard.down('Control');
+    try { await page.keyboard.press('KeyA'); } finally { await page.keyboard.up('Control'); }
+    await page.keyboard.press('Backspace');
+    await page.keyboard.type('Unrelated draft retained');
+  } finally { await edition.dispose(); }
   await page.waitForFunction(() => {
     const label = [...document.querySelectorAll('label')].find(node => node.textContent === 'Edition');
     return label?.htmlFor && (document.getElementById(label.htmlFor) as HTMLInputElement)?.value === 'Unrelated draft retained';

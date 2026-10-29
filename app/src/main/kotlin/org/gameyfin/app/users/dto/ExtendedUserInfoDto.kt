@@ -11,5 +11,6 @@ data class ExtendedUserInfoDto(
     val enabled: Boolean,
     val hasAvatar: Boolean,
     val avatarId: Long? = null,
-    var roles: List<Role>
+    var roles: List<Role>,
+    val avatarVersion: Long? = null
 )

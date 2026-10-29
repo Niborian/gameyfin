@@ -1,36 +1,13 @@
 import {useAuth} from "Frontend/util/auth";
-import {Avatar as NextUiAvatar} from "@heroui/react";
+import {Avatar as NextUiAvatar, type AvatarProps as NextUiAvatarProps} from "@heroui/react";
+import {avatarSource, type AvatarMetadata} from "Frontend/util/avatarMetadata";
+import {useAvatarMetadata} from "Frontend/components/AvatarMetadataProvider";
 
-// @ts-ignore
-const Avatar = ({...props}) => {
+type AvatarProps = Omit<NextUiAvatarProps, 'src'> & Omit<AvatarMetadata, 'id'>;
+
+export default function Avatar({username, hasAvatar, avatarVersion, avatarId, ...props}: AvatarProps) {
     const auth = useAuth();
-    const username = getUsername();
-
-    function getUsername() {
-        if (props.username === undefined || props.username === null || props.username == "") {
-            return auth.state.user?.username;
-        }
-
-        return props.username;
-    }
-
-    // TODO: Check if avatar can be loaded from SSO
-    if (auth.state.user?.hasAvatar) {
-        return (
-            <NextUiAvatar
-                showFallback
-                src={`/images/avatar?username=${username}`}
-                {...props}
-            />
-        );
-    } else {
-        return (
-            <NextUiAvatar
-                showFallback
-                {...props}
-            />
-        );
-    }
+    const metadata = useAvatarMetadata() ?? auth.state.user;
+    const src = avatarSource(metadata, {username, hasAvatar, avatarVersion, avatarId});
+    return <NextUiAvatar {...props} showFallback src={src}/>;
 }
-
-export default Avatar;

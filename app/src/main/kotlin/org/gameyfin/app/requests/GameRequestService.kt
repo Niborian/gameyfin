@@ -17,6 +17,8 @@ import org.gameyfin.app.requests.entities.GameRequest
 import org.gameyfin.app.requests.entities.GameRequestStatusChange
 import org.gameyfin.app.requests.extensions.toDto
 import org.gameyfin.app.requests.extensions.toDtos
+import org.gameyfin.app.requests.extensions.avatarUserIds
+import org.gameyfin.app.users.avatar.NativeAvatarState
 import org.gameyfin.app.requests.extensions.toDto as statusChangeToDto
 import org.gameyfin.app.requests.status.GameRequestStatus
 import org.gameyfin.app.users.UserService
@@ -41,6 +43,7 @@ class GameRequestService(
     private val gameRepository: GameRepository,
     private val statusChangeRepository: GameRequestStatusChangeRepository,
     private val acquisitionTransfers: AcquisitionTransferRepository? = null,
+    private val nativeAvatars: NativeAvatarState? = null,
 ) {
 
     companion object {
@@ -83,7 +86,7 @@ class GameRequestService(
 
     fun getAll(): List<GameRequestDto> {
         val entities = gameRequestRepository.findAll().toList()
-        return entities.toDtos()
+        return entities.toDtos(nativeAvatars?.metadata(entities.avatarUserIds()).orEmpty())
     }
 
     fun getStatusChanges(gameRequestId: Long) = statusChangeRepository
@@ -269,7 +272,8 @@ class GameRequestService(
                 request.status = GameRequestStatus.FULFILLED
                 request.linkedGameId = game.id
                 val persistedRequest = gameRequestRepository.save(request)
-                emit(GameRequestEvent.Updated(persistedRequest.toDto()))
+                emit(GameRequestEvent.Updated(persistedRequest.toDto(
+                    nativeAvatars?.metadata(listOf(persistedRequest).avatarUserIds()).orEmpty())))
                 log.info { "Marked game request '${request.title}' (${request.release?.atZone(ZoneId.systemDefault())?.year}) for ${request.platform} as FULFILLED because game is now available" }
             }
         }

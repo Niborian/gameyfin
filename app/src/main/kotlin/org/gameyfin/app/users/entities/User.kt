@@ -31,7 +31,9 @@ class User(
 
     var enabled: Boolean = false,
 
-    @OneToOne(cascade = [CascadeType.ALL])
+    // Avatar content is immutable/prepared independently; stale User merges must
+    // not merge/delete an Image that is retained by the versioned avatar state.
+    @OneToOne(cascade = [CascadeType.PERSIST])
     var avatar: Image? = null,
 
     @ElementCollection(targetClass = Role::class, fetch = FetchType.EAGER)

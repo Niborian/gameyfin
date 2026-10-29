@@ -4,6 +4,9 @@ import org.gameyfin.app.core.Role
 import org.gameyfin.app.requests.entities.GameRequest
 import org.gameyfin.app.requests.status.GameRequestStatus
 import org.gameyfin.app.users.entities.User
+import org.gameyfin.app.users.avatar.AvatarLedger
+import org.gameyfin.app.media.Image
+import org.gameyfin.app.media.ImageType
 import org.gameyfin.pluginapi.gamemetadata.Platform
 import org.junit.jupiter.api.Test
 import java.time.Instant
@@ -314,6 +317,23 @@ class GameRequestExtensionsTest {
 
         assertEquals(1, dto1.voters.size)
         assertEquals(4, dto2.voters.size)
+    }
+
+    @Test fun `request projections use current absence PNG legacy and deduplicate all participant IDs`() {
+        val requester = createTestUser(1, "requester").apply { avatar = Image(id = 11, type = ImageType.AVATAR) }
+        val png = createTestUser(2, "png").apply { avatar = Image(id = 22, type = ImageType.AVATAR) }
+        val legacy = createTestUser(3, "legacy").apply { avatar = Image(id = 33, type = ImageType.AVATAR) }
+        val request = createTestGameRequest(1, "Fixture", requester).apply { voters = mutableSetOf(requester, png, legacy) }
+        val states = mapOf(1L to AvatarLedger.Current(5, AvatarLedger.Kind.ABSENT, null, null),
+            2L to AvatarLedger.Current(6, AvatarLedger.Kind.PNG, "a".repeat(64), null),
+            3L to AvatarLedger.Current(7, AvatarLedger.Kind.LEGACY, null, 99))
+        assertEquals(setOf(1L, 2L, 3L), listOf(request, request).avatarUserIds())
+        val dto = listOf(request).toDtos(states).single()
+        assertEquals(false, dto.requester?.hasAvatar); assertNull(dto.requester?.avatarId); assertEquals(5L, dto.requester?.avatarVersion)
+        val voters = dto.voters.associateBy { it.id }
+        assertEquals(true, voters[2]?.hasAvatar); assertNull(voters[2]?.avatarId); assertEquals(6L, voters[2]?.avatarVersion)
+        assertEquals(99L, voters[3]?.avatarId); assertEquals(7L, voters[3]?.avatarVersion)
+        assertEquals(11L, request.toDto().requester?.avatarId) // Overlay-off fallback remains intact.
     }
 
     private fun createTestGameRequest(

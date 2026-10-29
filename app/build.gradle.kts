@@ -160,6 +160,7 @@ dependencies {
     developmentOnly("com.vaadin:vaadin-dev")
     annotationProcessor("org.springframework.boot:spring-boot-configuration-processor")
     runtimeOnly("com.h2database:h2")
+    compileOnly("com.h2database:h2") // Kotlin native identity fences; same managed runtime H2.
     runtimeOnly("io.micrometer:micrometer-registry-prometheus")
 
     // Testing

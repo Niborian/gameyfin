@@ -10,6 +10,7 @@ import org.gameyfin.app.core.annotations.DynamicPublicAccess
 import org.gameyfin.app.core.plugins.PluginService
 import org.gameyfin.app.core.security.getCurrentAuth
 import org.gameyfin.app.users.UserService
+import org.gameyfin.app.users.avatar.AvatarLedger
 import org.springframework.core.io.ByteArrayResource
 import org.springframework.core.io.FileSystemResource
 import org.springframework.core.io.Resource
@@ -52,9 +53,29 @@ class ImageEndpoint(
 
     @GetMapping("/avatar")
     fun getAvatarByUsername(@RequestParam username: String, request: HttpServletRequest): ResponseEntity<Resource>? {
+        userService.getAvatarContent(username)?.let { content ->
+            return when (content.current.kind) {
+                AvatarLedger.Kind.ABSENT -> ResponseEntity.notFound().cacheControl(CacheControl.noStore()).build()
+                AvatarLedger.Kind.LEGACY -> getImageContent(requireNotNull(content.current.legacyImageId), request,
+                    CacheControl.noCache().cachePrivate())
+                AvatarLedger.Kind.PNG -> {
+                    val png = requireNotNull(content.png)
+                    val bytes = png.copyBytes()
+                    // Version counters can repeat after restore/account recreation.
+                    // Validator is the actual representation hash, never the counter.
+                    val etag = "\"avatar-sha256-${png.sha256}\""
+                    if (request.getHeader(HttpHeaders.IF_NONE_MATCH) in listOf(etag, "W/$etag")) {
+                        ResponseEntity.status(HttpStatus.NOT_MODIFIED).eTag(etag)
+                            .cacheControl(CacheControl.noCache().cachePrivate()).build()
+                    } else ResponseEntity.ok().eTag(etag).cacheControl(CacheControl.noCache().cachePrivate())
+                        .contentType(MediaType.IMAGE_PNG).contentLength(bytes.size.toLong())
+                        .body(ByteArrayResource(bytes))
+                }
+            }
+        }
         val avatar = userService.getAvatar(username) ?: return ResponseEntity.notFound().build()
         if (avatar.id == null) return ResponseEntity.notFound().build()
-        return getImageContent(avatar.id!!, request)
+        return getImageContent(avatar.id!!, request, CacheControl.noCache().cachePrivate())
     }
 
     @PermitAll
@@ -62,12 +83,9 @@ class ImageEndpoint(
     fun uploadAvatar(@RequestParam("file") file: MultipartFile) {
         val auth = getCurrentAuth() ?: error("No authentication found")
 
-        val image: Image = if (!userService.hasAvatar(auth.name)) {
-            imageService.createFromInputStream(ImageType.AVATAR, file.inputStream, file.contentType!!)
-        } else {
-            val existingAvatar = userService.getAvatar(auth.name)!!
-            imageService.updateFileContent(existingAvatar, file.inputStream, file.contentType!!)
-        }
+        // Prepare fresh content first. Never delete old bytes before the pointer commits.
+        val image = imageService.createFromInputStream(ImageType.AVATAR, file.inputStream,
+            requireNotNull(file.contentType))
 
         userService.updateAvatar(auth.name, image)
     }
@@ -85,7 +103,8 @@ class ImageEndpoint(
         userService.deleteAvatar(name)
     }
 
-    private fun getImageContent(id: Long, request: HttpServletRequest): ResponseEntity<Resource> {
+    private fun getImageContent(id: Long, request: HttpServletRequest,
+                                cacheControl: CacheControl = CacheControl.maxAge(7, TimeUnit.DAYS)): ResponseEntity<Resource> {
         val image = imageService.getImage(id) ?: return ResponseEntity.notFound().build()
 
         // Use contentId as ETag — it changes whenever the file content changes
@@ -97,7 +116,7 @@ class ImageEndpoint(
             if (ifNoneMatch != null && (ifNoneMatch == etag || ifNoneMatch == "W/$etag")) {
                 return ResponseEntity.status(HttpStatus.NOT_MODIFIED)
                     .eTag(etag)
-                    .cacheControl(CacheControl.maxAge(7, TimeUnit.DAYS))
+                    .cacheControl(cacheControl)
                     .build()
             }
         }
@@ -110,7 +129,7 @@ class ImageEndpoint(
         val headers = HttpHeaders()
         image.contentLength?.let { headers.contentLength = it }
         image.mimeType?.let { headers.contentType = MediaType.parseMediaType(it) }
-        headers.cacheControl = CacheControl.maxAge(7, TimeUnit.DAYS).headerValue
+        headers.cacheControl = cacheControl.headerValue
         etag?.let { headers.eTag = it }
 
         // Add Last-Modified from the file's modification time

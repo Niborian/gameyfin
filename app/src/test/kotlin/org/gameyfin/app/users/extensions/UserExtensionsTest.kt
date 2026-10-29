@@ -6,6 +6,7 @@ import org.gameyfin.app.media.ImageType
 import org.gameyfin.app.users.dto.ExtendedUserInfoDto
 import org.gameyfin.app.users.dto.UserInfoDto
 import org.gameyfin.app.users.entities.User
+import org.gameyfin.app.users.avatar.AvatarLedger
 import org.junit.jupiter.api.Test
 import org.springframework.security.core.authority.SimpleGrantedAuthority
 import kotlin.test.assertEquals
@@ -78,6 +79,42 @@ class UserExtensionsTest {
         user.avatar = Image(id = 99L, type = ImageType.AVATAR)
         val dto = user.toExtendedUserInfoDto()
         assertEquals(99L, dto.avatarId)
+        assertEquals(null, dto.avatarVersion)
+        assertEquals(null, user.toUserInfoDto().avatarVersion)
+    }
+
+    @Test
+    fun `authoritative absent snapshot hides stale legacy pointer in both projections`() {
+        val user = User(id = 15L, username = "snapshot", email = "snapshot@example.com",
+            avatar = Image(id = 99L, type = ImageType.AVATAR))
+        val state = AvatarLedger.Current(4, AvatarLedger.Kind.ABSENT, null, null)
+        val normal = user.toUserInfoDto(state); val extended = user.toExtendedUserInfoDto(state)
+        assertFalse(normal.hasAvatar); assertFalse(extended.hasAvatar)
+        assertEquals(null, normal.avatarId); assertEquals(null, extended.avatarId)
+        assertEquals(4L, normal.avatarVersion); assertEquals(4L, extended.avatarVersion)
+        assertEquals(99L, user.avatar?.id) // Projection does not mutate legacy custody.
+    }
+
+    @Test
+    fun `canonical PNG snapshot has avatar without fabricating legacy image id`() {
+        val user = User(id = 16L, username = "snapshot", email = "snapshot@example.com",
+            avatar = Image(id = 99L, type = ImageType.AVATAR))
+        val state = AvatarLedger.Current(5, AvatarLedger.Kind.PNG, "a".repeat(64), null)
+        val normal = user.toUserInfoDto(state); val extended = user.toExtendedUserInfoDto(state)
+        assertTrue(normal.hasAvatar); assertTrue(extended.hasAvatar)
+        assertEquals(null, normal.avatarId); assertEquals(null, extended.avatarId)
+        assertEquals(5L, normal.avatarVersion); assertEquals(5L, extended.avatarVersion)
+    }
+
+    @Test
+    fun `legacy snapshot uses authoritative image id rather than stale User pointer`() {
+        val user = User(id = 17L, username = "snapshot", email = "snapshot@example.com",
+            avatar = Image(id = 99L, type = ImageType.AVATAR))
+        val state = AvatarLedger.Current(6, AvatarLedger.Kind.LEGACY, null, 123)
+        val normal = user.toUserInfoDto(state); val extended = user.toExtendedUserInfoDto(state)
+        assertTrue(normal.hasAvatar); assertTrue(extended.hasAvatar)
+        assertEquals(123L, normal.avatarId); assertEquals(123L, extended.avatarId)
+        assertEquals(6L, normal.avatarVersion); assertEquals(6L, extended.avatarVersion)
     }
 
     @Test

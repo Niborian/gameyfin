@@ -5,4 +5,5 @@ data class UserInfoDto(
     val username: String,
     val hasAvatar: Boolean,
     val avatarId: Long? = null,
+    val avatarVersion: Long? = null,
 )

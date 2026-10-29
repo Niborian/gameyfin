@@ -4,6 +4,14 @@ import io.mockk.every
 import io.mockk.mockkObject
 import io.mockk.unmockkAll
 import org.apache.catalina.startup.Tomcat
+import org.apache.tomcat.util.descriptor.web.FilterDef
+import org.apache.tomcat.util.descriptor.web.FilterMap
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+import org.springframework.security.config.annotation.web.builders.HttpSecurity
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity
+import org.springframework.security.web.FilterChainProxy
+import org.springframework.web.context.support.AnnotationConfigWebApplicationContext
 import org.flywaydb.core.Flyway
 import org.gameyfin.app.core.security.EncryptionUtils
 import org.junit.jupiter.api.Test
@@ -24,7 +32,7 @@ import java.util.UUID
 import javax.sql.DataSource
 import kotlin.test.*
 
-/** One bounded actual HTTP/native SQL run. Not browser OIDC, private-file admission,
+/** One bounded actual Spring-security/HTTP/native SQL run. Not browser OIDC, private-file admission,
  * production connector configuration, Main custody or independent restore acceptance. */
 class AvatarMachineLoopbackTest {
     @Test fun `real loopback preserves native identity CAS original receipt and independent users`(@TempDir directory: Path) {
@@ -33,6 +41,7 @@ class AvatarMachineLoopbackTest {
         val url = "jdbc:h2:mem:avatar-http-${UUID.randomUUID()}"
         val keeper = DriverManager.getConnection(url, "sa", "")
         val tomcat = Tomcat()
+        val security = AnnotationConfigWebApplicationContext()
         try {
             Flyway.configure().dataSource(url, "sa", "").locations("classpath:db/migration").load().migrate()
             keeper.createStatement().use { it.executeUpdate("INSERT INTO users(id,username,email,email_confirmed,enabled,oidc_provider_id) " +
@@ -75,6 +84,20 @@ class AvatarMachineLoopbackTest {
                 "disableUploadTimeout" to "false", "connectionUploadTimeout" to "2000")) check(connector.setProperty(key, value))
             val context = tomcat.addContext("", Files.createDirectory(directory.resolve("web")).toString())
             context.parentClassLoader = javaClass.classLoader
+            security.servletContext = context.servletContext
+            security.register(SecurityHarness::class.java)
+            security.refresh()
+            val filter = FilterDef().apply {
+                filterName = "nativeMachineSecurity"
+                setFilter(security.getBean(FilterChainProxy::class.java))
+                setAsyncSupported("true")
+            }
+            context.addFilterDef(filter)
+            context.addFilterMap(FilterMap().apply {
+                filterName = "nativeMachineSecurity"
+                addURLPattern("/*")
+                setDispatcher("REQUEST"); setDispatcher("ASYNC")
+            })
             Tomcat.addServlet(context, "avatar", AvatarMachineServlet(operations)).isAsyncSupported = true
             context.addServletMappingDecoded("/internal/avatar/v1/*", "avatar")
             tomcat.start()
@@ -85,7 +108,8 @@ class AvatarMachineLoopbackTest {
                 "bindingGeneration" to s.bindingGeneration, "userId" to s.userId)
             fun intentMap(i: AvatarLedger.Intent) = mapOf("scope" to scopeMap(i.scope), "operation" to i.operation.toString(),
                 "expectedVersion" to i.expectedVersion, "expectedHash" to i.expectedHash, "sourceGeneration" to i.sourceGeneration, "desiredHash" to i.desiredHash)
-            fun call(method: String, path: String, pin: Any, body: ByteArray = byteArrayOf(), bearer: String? = secret): Pair<Int, String> =
+            fun call(method: String, path: String, pin: Any, body: ByteArray = byteArrayOf(),
+                     bearer: String? = secret, browserOrigin: Boolean = false): Pair<Int, String> =
                 Socket(InetAddress.getByName("127.0.0.1"), port).use { socket ->
                     socket.soTimeout = 4000
                     val headers = buildString {
@@ -93,6 +117,7 @@ class AvatarMachineLoopbackTest {
                         append("Content-Length: ${body.size}\r\nContent-Type: image/png\r\n")
                         append("${AvatarMachineProtocol.HEADER}: ${String(AvatarMachineProtocol.json(pin), Charsets.UTF_8)}\r\n")
                         if (bearer != null) append("Authorization: Bearer $bearer\r\n") else append("Cookie: JSESSIONID=synthetic\r\n")
+                        if (browserOrigin) append("Origin: https://synthetic.invalid\r\n")
                         append("\r\n")
                     }
                     socket.getOutputStream().apply { write(headers.toByteArray(Charsets.US_ASCII)); write(body); flush() }
@@ -105,6 +130,14 @@ class AvatarMachineLoopbackTest {
             assertEquals(200, call("GET", "current", mapOf("scope" to scopeMap(scopes[0]))).first)
             val bytes = png(); val hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes))
             val first = AvatarLedger.Intent(scopes[0], UUID.randomUUID(), AvatarLedger.Action.REPLACE, 0, null, 1, hash)
+            // Prove the installed real filter actually matches this Tomcat mapping:
+            // same valid bearer/pins/body with browser origin must not mutate.
+            assertEquals(403, call("PUT", "avatar", intentMap(first), bytes, browserOrigin = true).first)
+            val deniedState = owner.current(secret, scopes[0])
+            assertEquals(0L, deniedState.version); assertNull(deniedState.hash)
+            dataSource.connection.use { connection ->
+                assertNull(AvatarLedger().receipt(connection, installation, first.operation))
+            }
             val written = call("PUT", "avatar", intentMap(first), bytes)
             assertEquals(200, written.first); assertTrue(written.second.contains(first.digest()))
             assertEquals(written, call("PUT", "avatar", intentMap(first), bytes))
@@ -131,8 +164,14 @@ class AvatarMachineLoopbackTest {
             assertEquals(200, recovered.first); assertTrue(recovered.second.contains("COMMITTED")); assertTrue(recovered.second.contains(first.digest()))
             assertEquals(403, call("GET", "current", mapOf("scope" to scopeMap(scopes[0])), bearer = recoverySecret).first)
         } finally {
-            try { tomcat.stop() } finally { try { tomcat.destroy() } finally { keeper.close(); unmockkAll() } }
+            try { tomcat.stop() } finally { try { tomcat.destroy() } finally {
+                try { security.close() } finally { keeper.close(); unmockkAll() }
+            } }
         }
+    }
+    @Configuration(proxyBeanMethods = false) @EnableWebSecurity
+    class SecurityHarness {
+        @Bean fun nativeSecurity(http: HttpSecurity) = AvatarMachineHttpConfiguration().avatarMachineSecurity(http)
     }
     private fun png(): ByteArray {
         val image = BufferedImage(4, 4, BufferedImage.TYPE_INT_ARGB)

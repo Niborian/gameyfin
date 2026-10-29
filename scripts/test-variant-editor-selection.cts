@@ -5,6 +5,22 @@ const fs = require('node:fs'), path = require('node:path'), vm = require('node:v
 const {createRequire} = require('node:module');
 const ts = process.env.TEST_TYPESCRIPT_MODULE ? require(process.env.TEST_TYPESCRIPT_MODULE) : createRequire(path.resolve(__dirname,'../app/package.json'))('typescript');
 
+function displayHelpers() {
+    const source=fs.readFileSync(path.resolve(__dirname,'../app/src/main/frontend/util/variantDisplay.ts'),'utf8');
+    const module={exports:{} as any};
+    vm.runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{module,exports:module.exports});
+    return module.exports;
+}
+test('player version labels prefer saved metadata without dummy Normal 0 or lost custom identity',()=>{
+    const label=displayHelpers().variantDisplayLabel;
+    const normal={name:'Normal',version:'0',latestForVariant:true};
+    assert.equal(label(normal,{variantId:1,libraryVersion:'1.5.0'}),'v1.5.0 · Latest');
+    assert.equal(label(normal),'Latest');
+    assert.equal(label({...normal,latestForVariant:false}),'Version not specified');
+    assert.equal(label({...normal,version:'1.4.0'}),'v1.4.0 · Latest');
+    assert.equal(label({...normal,name:'Linux'},{variantId:1,libraryVersion:'v1.5.0'}),'Linux · v1.5.0 · Latest');
+});
+
 function comboFixture() {
     const slots: any[] = []; let cursor=0, effects: (() => void)[]=[], nodes: any[]=[], writes=0;
     let actor={id:7,username:'fixture'}, preference='download-method';
@@ -66,7 +82,7 @@ test('ComboButton removed and empty options fall back without rendering an obsol
 });
 
 function gameDownloadFixture(delayedProviders = false, providerRequest?: (init: {signal: AbortSignal}) => Promise<any[]>,
-    ownedRequest?: (init: {signal: AbortSignal}) => Promise<boolean>) {
+    ownedRequest?: (init: {signal: AbortSignal}) => Promise<boolean>, displayRequest?: (gameId:number, init:{signal:AbortSignal})=>Promise<any[]>) {
     const slots: any[] = []; let cursor = 0, effects: (() => void)[] = [];
     let nodes: {type: string; props: any}[] = [], providerCalls = 0;
     const downloads: any[][] = []; let stateWrites=0, ownedCalls=0;
@@ -99,7 +115,8 @@ function gameDownloadFixture(delayedProviders = false, providerRequest?: (init: 
         if (name.endsWith('/CollectionState')) return {collectionState:{state:{}}};
         if (name.endsWith('/auth')) return {useAuth:() => ({state:{user:actor,loading:false,initializing:false}})};
         if (name.endsWith('/utils')) return {isAdmin:() => false,humanFileSize:String,starRatingAsString:() => ''};
-        if (name === 'Frontend/generated/endpoints') return {DownloadProviderEndpoint:{getProviders:(init: {signal: AbortSignal}) => {providerCalls++;return providerRequest ? providerRequest(init) : providerPromise;}},OwnedTorrentEndpoint:{available:(init: {signal: AbortSignal}) => {ownedCalls++;return ownedRequest ? ownedRequest(init) : Promise.resolve(false);}},GameEndpoint:{}};
+        if (name === 'Frontend/generated/endpoints') return {VariantDisplayEndpoint:{getForGame:(id:number,init:any)=>displayRequest?displayRequest(id,init):Promise.resolve([])},DownloadProviderEndpoint:{getProviders:(init: {signal: AbortSignal}) => {providerCalls++;return providerRequest ? providerRequest(init) : providerPromise;}},OwnedTorrentEndpoint:{available:(init: {signal: AbortSignal}) => {ownedCalls++;return ownedRequest ? ownedRequest(init) : Promise.resolve(false);}},GameEndpoint:{}};
+        if (name === 'Frontend/util/variantDisplay') return displayHelpers();
         if (name === 'Frontend/endpoints/endpoints') return {DownloadEndpoint:{downloadGame:(...args: any[]) => downloads.push(args)}};
         if (name === '@heroui/react') return new Proxy({useDisclosure:() => ({isOpen:false})} as any,{get:(value,key) => value[key] ?? key});
         if (name.endsWith('/VariantContentType')) return {default:Object.fromEntries(['BASE','DLC','PATCH','MOD','EXTRA','DEDICATED_SERVER'].map(value => [value,value]))};
@@ -119,6 +136,26 @@ function gameDownloadFixture(delayedProviders = false, providerRequest?: (init: 
         get stateWrites() {return stateWrites;}, get ownedCalls() {return ownedCalls;}
     };
 }
+
+test('saved version and long edition reach actual player view without changing exact download IDs',async()=>{
+    const edition='Survivors of the Void + Seekers of the Storm + Alloyed Collective + Hallowed Concepts';
+    const f=gameDownloadFixture(false,undefined,undefined,async()=>[{variantId:1,libraryVersion:'1.5.0',edition}]);
+    f.setVariants([{...downloadVariant(1,[baseContent(101,'Base')]),latestForVariant:true}]);f.render();
+    await new Promise(done=>setImmediate(done));f.render();
+    assert.ok(f.nodes.some(node=>node.type==='SelectItem'&&node.props.children==='v1.5.0 · Latest'));
+    assert.ok(f.nodes.some(node=>node.type==='p'&&node.props.children?.includes?.(edition)));
+    f.download();assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[101]);
+});
+test('display metadata late response is discarded across identity changes and unmount',async()=>{
+    const pending:any[]=[];
+    const f=gameDownloadFixture(false,undefined,undefined,(_id,init)=>new Promise(resolve=>pending.push({resolve,signal:init.signal})));
+    f.setVariants([downloadVariant(1,[baseContent(101,'Base')])]);f.render();
+    f.setActor({id:8,username:'other'});f.render();assert.equal(pending[0].signal.aborted,true);
+    pending[0].resolve([{variantId:1,libraryVersion:'secret-old-label'}]);await new Promise(done=>setImmediate(done));f.render();
+    assert.ok(!f.nodes.some(node=>node.props.children==='secret-old-label · Latest'));
+    f.unmount();const writes=f.stateWrites;pending[1].resolve([{variantId:1,libraryVersion:'1.5.0'}]);
+    await new Promise(done=>setImmediate(done));assert.equal(f.stateWrites,writes);
+});
 
 test('pending optional capability cannot block exact ordinary downloads; late true appends without refetching', async () => {
     let resolve!: (value: boolean) => void;

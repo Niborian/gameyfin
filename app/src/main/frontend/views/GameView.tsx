@@ -1,5 +1,5 @@
 import React, {lazy, Suspense, useEffect, useLayoutEffect, useRef, useState} from "react";
-import {DownloadProviderEndpoint, GameEndpoint, OwnedTorrentEndpoint} from "Frontend/generated/endpoints";
+import {DownloadProviderEndpoint, GameEndpoint, OwnedTorrentEndpoint, VariantDisplayEndpoint} from "Frontend/generated/endpoints";
 import {useNavigate, useParams} from "react-router";
 import {GameCover} from "Frontend/components/general/covers/GameCover";
 import ComboButton, {ComboButtonOption} from "Frontend/components/general/input/ComboButton";
@@ -43,6 +43,7 @@ import GameVariantDto from "Frontend/generated/org/gameyfin/app/games/dto/GameVa
 import VariantContentDto from "Frontend/generated/org/gameyfin/app/games/dto/VariantContentDto";
 import VariantLinkStatus from "Frontend/generated/org/gameyfin/app/games/entities/VariantLinkStatus";
 import VariantContentType from "Frontend/generated/org/gameyfin/app/games/entities/VariantContentType";
+import {variantDisplayLabel, VariantDisplay} from "Frontend/util/variantDisplay";
 
 const VariantManagerModal = lazy(() => import("Frontend/components/general/modals/VariantManagerModal"));
 type ProviderOwner = {key: string; controller: AbortController};
@@ -77,6 +78,20 @@ export default function GameView() {
     const initializedGame = useRef<number | undefined>(undefined);
 
     const variants = (game?.variants ?? []) as GameVariantDto[];
+    const [displayRevision, setDisplayRevision] = useState(0);
+    const displayOwnerKey = JSON.stringify([gameId, auth.state.user?.id, auth.state.user?.username,
+        auth.state.user?.roles, auth.state.loading, auth.state.initializing, displayRevision]);
+    const [displayLoad, setDisplayLoad] = useState<{owner: string; rows: VariantDisplay[]}>();
+    const displayRows = displayLoad?.owner === displayOwnerKey ? displayLoad.rows : [];
+    useEffect(() => {
+        if (!game || auth.state.loading || auth.state.initializing) return;
+        let current = true;
+        const controller = new AbortController();
+        VariantDisplayEndpoint.getForGame(game.id, {signal: controller.signal}).then(rows => {
+            if (current) setDisplayLoad({owner: displayOwnerKey, rows});
+        }).catch(() => { /* Legacy labels remain usable if display metadata is unavailable. */ });
+        return () => { current = false; controller.abort(); };
+    }, [game?.id, displayOwnerKey]);
     const effectiveDefaultVariant = preferredVariant(variants);
     const selectedVariant = variants.find((variant) => variant.id === selectedVariantId)
         ?? effectiveDefaultVariant
@@ -456,7 +471,7 @@ export default function GameView() {
                         >
                             {variants.map((variant) => (
                                 <SelectItem key={variant.id}>
-                                    {`${variant.name} ${variant.version}${variant.latestForVariant ? " (latest)" : ""}`}
+                                    {variantDisplayLabel(variant, displayRows.find(row => row.variantId === variant.id))}
                                 </SelectItem>
                             ))}
                         </Select>
@@ -467,9 +482,11 @@ export default function GameView() {
                             <p className="text-default-500 text-sm">
                                 Estimated download: {humanFileSize(estimatedDownloadSize)}
                             </p>
-                            <p className="text-default-500 text-sm">
-                                Downloading: {selectedVariant.name} {selectedVariant.version}
+                            <Tooltip content="Latest means newest available for this variant in your library, not the publisher's latest release.">
+                            <p className="text-default-500 text-sm" tabIndex={0}>
+                                Downloading: {variantDisplayLabel(selectedVariant, displayRows.find(row => row.variantId === selectedVariant.id))}
                             </p>
+                            </Tooltip>
                             <div className="flex flex-row gap-1">
                                 {selectedVariant.tags.map((tag) =>
                                     <Chip key={tag} size="sm" variant="flat">{tag}</Chip>
@@ -484,6 +501,11 @@ export default function GameView() {
                             </div>
                         </div>
                     </div>
+                    {displayRows.find(row => row.variantId === selectedVariant.id)?.edition?.trim() &&
+                        <p className="text-sm text-default-600 leading-relaxed break-words max-w-3xl">
+                            <span className="text-default-400">Edition: </span>
+                            {displayRows.find(row => row.variantId === selectedVariant.id)!.edition}
+                        </p>}
                     {contentGroups.length > 0 &&
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
                             {[0, 1].map((column) => (
@@ -661,6 +683,7 @@ export default function GameView() {
                     suggestions={[]}
                     isOpen={variantManagerModal.isOpen}
                     onOpenChange={variantManagerModal.onOpenChange}
+                    onChanged={() => setDisplayRevision(value => value + 1)}
                 /></Suspense>}
                 <EditGameMetadataModal game={game}
                                        isOpen={editGameModal.isOpen}

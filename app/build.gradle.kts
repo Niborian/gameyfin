@@ -85,6 +85,30 @@ tasks.register("verifyFilesystemEvidence") {
     }
 }
 
+tasks.register("verifyAvatarOperatorEvidence") {
+    group = "verification"
+    val report = layout.buildDirectory.file("test-results/test/TEST-org.gameyfin.app.users.avatar.AvatarOperatorControlTest.xml")
+    doLast {
+        val factory = javax.xml.parsers.DocumentBuilderFactory.newInstance().apply {
+            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            setFeature("http://xml.org/sax/features/external-general-entities", false)
+            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+            setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "")
+            setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_SCHEMA, "")
+            isXIncludeAware = false
+            isExpandEntityReferences = false
+        }
+        val file = report.get().asFile
+        require(file.isFile) { "Missing native operator test report" }
+        val cases = factory.newDocumentBuilder().parse(file).getElementsByTagName("testcase")
+        val actual = (0 until cases.length).map { cases.item(it) as org.w3c.dom.Element }
+            .single { it.getAttribute("name").startsWith("real private peer control dispatches") }
+        require(listOf("skipped", "failure", "error").all { actual.getElementsByTagName(it).length == 0 }) {
+            "Actual Linux peer/control/cleanup evidence must pass, not skip"
+        }
+    }
+}
+
 springBoot {
     buildInfo()
 }

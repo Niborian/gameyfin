@@ -10,7 +10,7 @@ export async function uploadAvatar(avatar: any) {
     const result = await response.text();
 
     if (response.ok) {
-        window.location.reload();
+        window.dispatchEvent(new Event('gameyfin:avatar-changed'));
     } else {
         addToast({
             title: "Error uploading avatar",
@@ -26,7 +26,7 @@ export async function removeAvatar() {
     const result = await response.text();
 
     if (response.ok) {
-        window.location.reload();
+        window.dispatchEvent(new Event('gameyfin:avatar-changed'));
     } else {
         addToast({
             title: "Error removing avatar",
@@ -42,7 +42,7 @@ export async function removeAvatarByName(name: string) {
     const result = await response.text();
 
     if (response.ok) {
-        window.location.reload();
+        window.dispatchEvent(new Event('gameyfin:avatar-changed'));
     } else {
         addToast({
             title: "Error removing avatar",

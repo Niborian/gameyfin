@@ -21,6 +21,7 @@ import {initializeDownloadSessionState} from "Frontend/state/DownloadSessionStat
 import {initializeUserState} from "Frontend/state/UserState";
 import {initializeCollectionState} from "Frontend/state/CollectionState";
 import {isAuthOnlyRoute} from "Frontend/util/startupLifecycle";
+import AvatarMetadataProvider from "Frontend/components/AvatarMetadataProvider";
 
 export default function App() {
     client.middlewares = [ErrorHandlingMiddleware];
@@ -78,6 +79,8 @@ function ViewWithAuth() {
 
     return <>
         <IconContext.Provider value={{size: 20}}>
+            <AvatarMetadataProvider user={auth.state.user} admin={admin}
+                                    active={!authOnly && !auth.state.initializing && !auth.state.loading}>
             <Outlet/>
             <ToastProvider
                 toastProps={{
@@ -93,6 +96,7 @@ function ViewWithAuth() {
                 }}
                 toastOffset={64}
             />
+            </AvatarMetadataProvider>
         </IconContext.Provider>
     </>;
 }

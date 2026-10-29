@@ -105,6 +105,7 @@ jobs:
           --tests org.gameyfin.app.libraries.OfflineBackupRehearsalTest
           --tests org.gameyfin.tools.FixtureValidationTest
           --tests org.gameyfin.tools.ImageScanContractsTest
+          --tests 'org.gameyfin.app.users.avatar.*'
 
       - name: Verify frontend startup lifecycle
         run: |
@@ -114,12 +115,16 @@ jobs:
           node --test scripts/test-login-redirect-owner.cts
           node --test scripts/test-variant-editor-selection.cts
           node --test scripts/test-owned-torrent-download.cts
+          node --experimental-strip-types --test app/src/test/typescript/avatarMetadata.test.ts
 
       - name: Verify read-only test report policy
         run: node --test scripts/test-junit-report-policy.cts
 
       - name: Require Linux hardlink and variant scan fixture evidence
         run: ./gradlew :app:verifyFilesystemEvidence --no-daemon --console=plain
+
+      - name: Require actual Linux avatar operator peer and cleanup evidence
+        run: ./gradlew :app:verifyAvatarOperatorEvidence --no-daemon --console=plain
 
       - name: Publish test report
         if: always()
@@ -129,6 +134,17 @@ jobs:
           # Fork PR tokens are read-only: annotations and the job summary need no check creation.
           annotate_only: true
           job_summary: true
+
+      - name: Retain focused avatar and browse acceptance receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: avatar-and-browse-test-results
+          path: |
+            app/build/test-results/test/TEST-org.gameyfin.app.users.avatar.*.xml
+            app/build/test-results/test/TEST-org.gameyfin.app.games.GameBrowseBatchTest.xml
+          retention-days: 7
+          if-no-files-found: warn
 
   package:
     name: Publish AMD64 candidate

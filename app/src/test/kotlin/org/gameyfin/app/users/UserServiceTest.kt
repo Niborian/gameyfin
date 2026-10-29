@@ -1040,6 +1040,7 @@ class UserServiceTest {
         )
 
         every { userRepository.findByUsername("testuser") } returns user
+        every { userRepository.findLockedById(1L) } returns user
         every { userRepository.delete(user) } just Runs
 
         userService.deleteUser("testuser")

@@ -131,6 +131,9 @@ export function UserManagementCard({user}: { user: ExtendedUserInfoDto }) {
                 </div>
                 <div className="flex flex-row items-center gap-4">
                     <Avatar username={user.username}
+                            hasAvatar={user.hasAvatar}
+                            avatarVersion={user.avatarVersion}
+                            avatarId={user.avatarId}
                             name={user.username?.charAt(0)}
                             classNames={{
                                 base: "gradient-primary size-20",

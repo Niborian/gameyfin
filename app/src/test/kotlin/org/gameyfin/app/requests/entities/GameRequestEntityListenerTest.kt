@@ -6,6 +6,9 @@ import org.gameyfin.app.requests.GameRequestService
 import org.gameyfin.app.requests.dto.GameRequestEvent
 import org.gameyfin.app.requests.status.GameRequestStatus
 import org.gameyfin.app.users.entities.User
+import org.gameyfin.app.users.avatar.NativeAvatarState
+import org.gameyfin.app.users.avatar.AvatarLedger
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.gameyfin.pluginapi.gamemetadata.Platform
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -198,6 +201,43 @@ class GameRequestEntityListenerTest {
         assertEquals(GameRequestEvent.Created::class, capturedEvents[0]::class)
         assertEquals(GameRequestEvent.Updated::class, capturedEvents[1]::class)
         assertEquals(GameRequestEvent.Deleted::class, capturedEvents[2]::class)
+    }
+
+    @Test fun `native event metadata is deferred until commit and rollback emits nothing`() {
+        val native = mockk<NativeAvatarState>()
+        every { native.metadata(setOf(1L)) } returns mapOf(1L to AvatarLedger.Current(4, AvatarLedger.Kind.ABSENT, null, null))
+        val projected = GameRequestEntityListener(native)
+        val events = mutableListOf<GameRequestEvent>()
+        every { GameRequestService.emit(capture(events)) } just Runs
+        val request = createTestGameRequest(1, "Fixture", createTestUser(1, "fixture"))
+        TransactionSynchronizationManager.initSynchronization()
+        try {
+            projected.created(request)
+            verify(exactly = 0) { native.metadata(any<Collection<Long>>()) }
+            assertEquals(0, events.size)
+            TransactionSynchronizationManager.getSynchronizations().forEach { it.afterCommit() }
+            assertEquals(4L, (events.single() as GameRequestEvent.Created).gameRequest.requester?.avatarVersion)
+            verify(exactly = 1) { native.metadata(setOf(1L)) }
+        } finally { TransactionSynchronizationManager.clearSynchronization() }
+        events.clear()
+        TransactionSynchronizationManager.initSynchronization()
+        try {
+            projected.updated(request)
+            TransactionSynchronizationManager.getSynchronizations().forEach { it.afterCompletion(1) }
+            assertEquals(0, events.size)
+        } finally { TransactionSynchronizationManager.clearSynchronization() }
+    }
+
+    @Test fun `post-commit metadata failure does not report committed request as failed`() {
+        val native = mockk<NativeAvatarState>()
+        every { native.metadata(any<Collection<Long>>()) } throws IllegalStateException("Synthetic unavailable metadata")
+        val projected = GameRequestEntityListener(native)
+        TransactionSynchronizationManager.initSynchronization()
+        try {
+            projected.created(createTestGameRequest(1, "Fixture", createTestUser(1, "fixture")))
+            TransactionSynchronizationManager.getSynchronizations().forEach { it.afterCommit() }
+            verify(exactly = 0) { GameRequestService.emit(any()) }
+        } finally { TransactionSynchronizationManager.clearSynchronization() }
     }
 
     private fun createTestGameRequest(

@@ -12,6 +12,7 @@ import org.gameyfin.app.core.events.UserUpdatedEvent
 import org.gameyfin.app.games.repositories.GameRepository
 import org.gameyfin.app.games.repositories.ImageRepository
 import org.gameyfin.app.users.persistence.UserRepository
+import org.gameyfin.app.users.avatar.NativeAvatarState
 import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.event.EventListener
 import org.springframework.dao.DataIntegrityViolationException
@@ -36,7 +37,8 @@ class ImageService(
     private val fileStorageService: FileStorageService,
     private val gameRepository: GameRepository,
     private val userRepository: UserRepository,
-    private val imageCache: Cache<Long, Image>
+    private val imageCache: Cache<Long, Image>,
+    private val nativeAvatars: NativeAvatarState? = null
 ) {
     companion object {
         private val log = KotlinLogging.logger { }
@@ -115,7 +117,7 @@ class ImageService(
 
     @TransactionalEventListener(
         classes = [UserDeletedEvent::class],
-        phase = TransactionPhase.AFTER_COMPLETION
+        phase = TransactionPhase.AFTER_COMMIT
     )
     fun onAccountDeleted(event: UserDeletedEvent) {
         event.user.avatar?.let { deleteImageIfUnused(it) }
@@ -123,7 +125,7 @@ class ImageService(
 
     @TransactionalEventListener(
         classes = [UserUpdatedEvent::class],
-        phase = TransactionPhase.AFTER_COMPLETION
+        phase = TransactionPhase.AFTER_COMMIT
     )
     fun onUserUpdated(event: UserUpdatedEvent) {
         event.previousState.avatar?.let { previousAvatar ->
@@ -209,6 +211,9 @@ class ImageService(
     }
 
     fun deleteImageIfUnused(image: Image) {
+        // Initial overlay rollout retains every legacy/prepared avatar. Do not
+        // retire originals or failed-upload artifacts until reference-safe GC is reviewed.
+        if (nativeAvatars != null && image.type == ImageType.AVATAR) return
         val imageId = image.id ?: return
 
         val isImageStillInUse = gameRepository.existsByImage(imageId) || userRepository.existsByAvatar(imageId)
@@ -221,6 +226,9 @@ class ImageService(
     }
 
     fun updateFileContent(image: Image, content: InputStream, mimeType: String? = null): Image {
+        check(nativeAvatars == null || image.type != ImageType.AVATAR) {
+            "Versioned avatars require a fresh prepared image"
+        }
         mimeType?.let { image.mimeType = it }
 
         // Delete old file if it exists

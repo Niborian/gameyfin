@@ -20,6 +20,9 @@ import org.gameyfin.app.users.enums.RoleAssignmentResult
 import org.gameyfin.app.users.extensions.toAuthorities
 import org.gameyfin.app.users.extensions.toExtendedUserInfoDto
 import org.gameyfin.app.users.persistence.UserRepository
+import org.gameyfin.app.users.avatar.NativeAvatarState
+import org.gameyfin.app.users.avatar.AvatarLedger
+import org.springframework.transaction.annotation.Transactional
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.security.core.userdetails.User
 import org.springframework.security.core.userdetails.UserDetails
@@ -39,7 +42,8 @@ class UserService(
     private val sessionService: SessionService,
     private val emailConfirmationService: EmailConfirmationService,
     private val config: ConfigService,
-    private val eventPublisher: ApplicationEventPublisher
+    private val eventPublisher: ApplicationEventPublisher,
+    private val nativeAvatars: NativeAvatarState? = null
 ) : UserDetailsService {
 
     companion object {
@@ -87,14 +91,16 @@ class UserService(
     fun getUserById(id: Long): ExtendedUserInfoDto? {
         val user = userRepository.findById(id)
         return if (user.isPresent) {
-            user.get().toExtendedUserInfoDto()
+            user.get().let { it.toExtendedUserInfoDto(nativeAvatars?.metadata(requireNotNull(it.id))) }
         } else {
             null
         }
     }
 
     fun getAllUsers(): List<ExtendedUserInfoDto> {
-        return userRepository.findAll().map { it.toExtendedUserInfoDto() }
+        val users = userRepository.findAll().toList()
+        val avatars = nativeAvatars?.metadata(users.map { requireNotNull(it.id) }).orEmpty()
+        return users.map { it.toExtendedUserInfoDto(avatars[it.id]) }
     }
 
     fun getByEmail(email: String): org.gameyfin.app.users.entities.User? {
@@ -117,29 +123,45 @@ class UserService(
             val oidcUser = org.gameyfin.app.users.entities.User(principal)
             val user = userRepository.findByOidcProviderId(oidcUser.oidcProviderId!!)
                 ?: throw UsernameNotFoundException("Unknown OIDC user with provider ID '${oidcUser.oidcProviderId}'")
-            val userInfoDto = user.toExtendedUserInfoDto()
+            val userInfoDto = user.toExtendedUserInfoDto(nativeAvatars?.metadata(requireNotNull(user.id)))
             userInfoDto.roles = roleService.extractGrantedAuthorities(principal.authorities)
                 .mapNotNull { Role.safeValueOf(it.authority) }
             return userInfoDto
         }
 
         val user = getByUsernameNonNull(auth.name)
-        return user.toExtendedUserInfoDto()
+        return user.toExtendedUserInfoDto(nativeAvatars?.metadata(requireNotNull(user.id)))
     }
 
     fun getAvatar(username: String): Image? {
         val user = getByUsernameNonNull(username)
+        nativeAvatars?.metadata(requireNotNull(user.id))?.let { state ->
+            return if (state.kind == AvatarLedger.Kind.LEGACY) state.legacyImageId?.let(imageService::getImage) else null
+        }
         return user.avatar
+    }
+
+    fun getAvatarContent(username: String): NativeAvatarState.Content? {
+        val store = nativeAvatars ?: return null
+        return store.content(requireNotNull(getByUsernameNonNull(username).id))
     }
 
     fun updateAvatar(username: String, newAvatar: Image) {
         val user = getByUsernameNonNull(username)
+        nativeAvatars?.let {
+            it.setPrepared(requireNotNull(user.id), newAvatar)
+            return
+        }
         user.avatar = newAvatar
         userRepository.save(user)
     }
 
     fun deleteAvatar(username: String) {
         val user = getByUsernameNonNull(username)
+        nativeAvatars?.let {
+            it.setPrepared(requireNotNull(user.id), null)
+            return
+        }
 
         if (user.avatar == null) return
         imageService.deleteImageIfUnused(user.avatar!!)
@@ -150,6 +172,7 @@ class UserService(
 
     fun hasAvatar(username: String): Boolean {
         val user = getByUsernameNonNull(username)
+        nativeAvatars?.metadata(requireNotNull(user.id))?.let { return it.kind != AvatarLedger.Kind.ABSENT }
         return user.avatar != null && user.avatar!!.id != null
     }
 
@@ -292,8 +315,10 @@ class UserService(
         eventPublisher.publishEvent(AccountStatusChangedEvent(this, user, Utils.getBaseUrl()))
     }
 
+    @Transactional
     fun deleteUser(username: String) {
         val user = getByUsernameNonNull(username)
-        userRepository.delete(user)
+        val locked = userRepository.findLockedById(requireNotNull(user.id)) ?: return
+        userRepository.delete(locked)
     }
 }

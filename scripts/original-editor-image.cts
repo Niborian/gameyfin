@@ -317,7 +317,13 @@ async function run(): Promise<void> {
     const label = [...document.querySelectorAll('label')].find(node => node.textContent === 'Edition');
     return label?.htmlFor ? document.getElementById(label.htmlFor) : null;
   });
-  await edition.asElement().type('Unrelated draft retained'); await edition.dispose();
+  // The field may already contain a saved edition. Replace it through the normal
+  // input locator rather than appending and then mistaking that value for loss.
+  await edition.asElement().asLocator().setTimeout(5000).fill('Unrelated draft retained'); await edition.dispose();
+  await page.waitForFunction(() => {
+    const label = [...document.querySelectorAll('label')].find(node => node.textContent === 'Edition');
+    return label?.htmlFor && (document.getElementById(label.htmlFor) as HTMLInputElement)?.value === 'Unrelated draft retained';
+  }, {timeout: 5000});
   proof.editorPhase = 'replace';
   expectedDialog = REPLACE;
   const savedResponse = page.waitForResponse((response: any) => new URL(response.url()).pathname === '/connect/GameEndpoint/attachVariantContent' && response.status() === 200, {timeout: 10000});

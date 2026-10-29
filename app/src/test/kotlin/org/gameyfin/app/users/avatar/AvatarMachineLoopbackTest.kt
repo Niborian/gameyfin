@@ -20,12 +20,19 @@ import tools.jackson.databind.ObjectMapper
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.lang.reflect.Proxy
+import java.lang.reflect.InvocationTargetException
 import java.net.InetAddress
 import java.net.Socket
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
 import java.sql.DriverManager
+import java.sql.Connection
+import java.sql.PreparedStatement
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import java.util.Base64
 import java.util.HexFormat
 import java.util.UUID
@@ -38,7 +45,7 @@ class AvatarMachineLoopbackTest {
     @Test fun `real loopback preserves native identity CAS original receipt and independent users`(@TempDir directory: Path) {
         mockkObject(EncryptionUtils)
         every { EncryptionUtils.getAppKey() } returns Base64.getEncoder().encodeToString(ByteArray(16) { (it + 1).toByte() })
-        val url = "jdbc:h2:mem:avatar-http-${UUID.randomUUID()}"
+        val url = "jdbc:h2:mem:avatar-http-${UUID.randomUUID()};LOCK_TIMEOUT=5000"
         val keeper = DriverManager.getConnection(url, "sa", "")
         val tomcat = Tomcat()
         val security = AnnotationConfigWebApplicationContext()
@@ -64,8 +71,25 @@ class AvatarMachineLoopbackTest {
             val recoverySecret = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32) { 29 })
             val authority = AvatarAuthority().apply { install(AvatarAuthority.TrustedConfiguration(scopes.zip(bindings).map { (scope, binding) ->
                 AvatarAuthority.CurrentGrant(scope, binding, AvatarAuthority.Verifier.fromSecret(secret)) }, emptyList())) }
+            val nativeLockAttempts = AtomicReference<CountDownLatch?>(null)
             val dataSource = Proxy.newProxyInstance(DataSource::class.java.classLoader, arrayOf(DataSource::class.java)) { _, method, _ ->
-                check(method.name == "getConnection"); DriverManager.getConnection(url, "sa", "") } as DataSource
+                check(method.name == "getConnection")
+                val real = DriverManager.getConnection(url, "sa", "")
+                Proxy.newProxyInstance(Connection::class.java.classLoader, arrayOf(Connection::class.java)) { _, call, args ->
+                    try {
+                        val result = call.invoke(real, *(args ?: emptyArray()))
+                        if (call.name == "prepareStatement" && (args?.firstOrNull() as? String)
+                                ?.contains("FROM users WHERE id=? FOR UPDATE") == true) {
+                            Proxy.newProxyInstance(PreparedStatement::class.java.classLoader,
+                                arrayOf(PreparedStatement::class.java)) { _, query, parameters ->
+                                if (query.name == "executeQuery") nativeLockAttempts.get()?.countDown()
+                                try { query.invoke(result, *(parameters ?: emptyArray())) }
+                                catch (failure: InvocationTargetException) { throw failure.targetException }
+                            }
+                        } else result
+                    } catch (failure: InvocationTargetException) { throw failure.targetException }
+                }
+            } as DataSource
             val reader = NativeAvatarAccountReader(proofs)
             val owner = AvatarTransactions(dataSource, authority, AvatarLedger(), nativeAccount = reader::read)
             val operations = object : AvatarMachineOperations {
@@ -145,10 +169,45 @@ class AvatarMachineLoopbackTest {
             assertEquals(403, call("GET", "current", mapOf("scope" to scopeMap(scopes[1].copy(bindingDigest = scopes[0].bindingDigest)))).first)
             val second = first.copy(scope = scopes[1], operation = UUID.randomUUID())
             assertEquals(200, call("PUT", "avatar", intentMap(second), bytes).first)
-            NativeAvatarState(dataSource).setPrepared(1, null)
+            // Both actual persistence paths must reach the native user lock while
+            // a third connection holds it. This is contention, not merely launching
+            // two tasks that might finish sequentially before touching the DB.
+            val contenders = Executors.newFixedThreadPool(2)
+            val race = first.copy(operation = UUID.randomUUID(), expectedVersion = 1,
+                expectedHash = hash, sourceGeneration = 2)
+            val expectedCurrentVersion: Long
+            keeper.autoCommit = false
+            try {
+                keeper.createStatement().use { sql ->
+                    sql.executeQuery("SELECT id FROM users WHERE id=1 FOR UPDATE").use { rows -> check(rows.next()) }
+                }
+                val attempts = CountDownLatch(2)
+                nativeLockAttempts.set(attempts)
+                val ordinary = contenders.submit<AvatarLedger.Current> { NativeAvatarState(dataSource).setPrepared(1, null) }
+                val machine = contenders.submit<Pair<Int, String>> { call("PUT", "avatar", intentMap(race), bytes) }
+                assertTrue(attempts.await(2, TimeUnit.SECONDS), "Both native writers must contend on the held user lock")
+                keeper.commit(); keeper.autoCommit = true
+                ordinary.get(6, TimeUnit.SECONDS)
+                val outcome = machine.get(6, TimeUnit.SECONDS)
+                assertTrue(outcome.first in setOf(200, 409))
+                expectedCurrentVersion = if (outcome.first == 200) 3 else 2
+                dataSource.connection.use { connection ->
+                    val receipt = AvatarLedger().receipt(connection, installation, race.operation)
+                    if (outcome.first == 200) {
+                        assertEquals(2L, assertNotNull(receipt).resultingVersion)
+                        assertEquals(hash, receipt.resultingHash)
+                    } else assertNull(receipt)
+                }
+            } finally {
+                nativeLockAttempts.set(null)
+                if (!keeper.autoCommit) { keeper.rollback(); keeper.autoCommit = true }
+                contenders.shutdownNow()
+                assertTrue(contenders.awaitTermination(6, TimeUnit.SECONDS))
+            }
             assertEquals(written, call("PUT", "avatar", intentMap(first), bytes)) // Original, not current.
             val current = call("GET", "current", mapOf("scope" to scopeMap(scopes[0])))
-            assertEquals(200, current.first); assertTrue(current.second.contains("\"kind\":\"ABSENT\"")); assertTrue(current.second.contains("\"version\":2"))
+            assertEquals(200, current.first); assertTrue(current.second.contains("\"kind\":\"ABSENT\""))
+            assertTrue(current.second.contains("\"version\":$expectedCurrentVersion"))
             assertEquals(hash, owner.current(secret, scopes[1]).hash) // Independent second user's content survives.
             val remove = AvatarLedger.Intent(scopes[1], UUID.randomUUID(), AvatarLedger.Action.REMOVE, 1, hash, 2, null)
             assertEquals(200, call("DELETE", "avatar", intentMap(remove)).first)

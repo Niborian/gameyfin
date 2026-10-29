@@ -538,6 +538,8 @@ async function run(): Promise<void> {
     if (controls.length !== 1) throw new Error('Unique viewer version'); return controls[0];
   });
   try { await viewerVersion.asElement().asLocator().setTimeout(5000).click(); } finally { await viewerVersion.dispose(); }
+  await viewerPage.waitForFunction(() => [...document.querySelectorAll('[role="option"]')].some(option =>
+    option.textContent?.trim() === 'v1.5.0 · Latest' && option.getBoundingClientRect().width > 0), {timeout: 5000});
   await clickText(viewerPage, 'v1.5.0 · Latest');
   await viewerPage.waitForFunction(() => document.body.textContent?.includes('Downloading: v1.5.0') &&
     [...document.querySelectorAll('p')].some(node => node.textContent === 'Edition: Survivors of the Void + Seekers of the Storm + Alloyed Collective + Hallowed Concepts'), {timeout: 5000});

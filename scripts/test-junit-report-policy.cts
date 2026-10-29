@@ -15,7 +15,8 @@ function before(text: string, delimiter: string): string {return text.split(deli
 
 test('JUnit report uses supported annotation-only inputs',()=>{
     const text=workflowText();
-    const report=before(after(text,'      - name: Publish test report\n'),'\n  package:');
+    // Scope inputs to this action step, not subsequently added artifact steps.
+    const report=before(before(after(text,'      - name: Publish test report\n'),'\n      - '),'\n  package:');
     assert.ok(report.includes('        if: always()'));
     assert.ok(report.includes('        uses: mikepenz/action-junit-report@v6'));
     const inputs: Record<string,string>={};

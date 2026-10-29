@@ -5,6 +5,24 @@ import io.mockk.mockkObject
 import io.mockk.unmockkObject
 import io.mockk.Runs
 import io.mockk.just
+import io.mockk.mockk
+import org.gameyfin.app.config.ConfigProperties
+import org.gameyfin.app.config.ConfigService
+import org.gameyfin.app.core.security.SsoAuthenticationSuccessHandler
+import org.gameyfin.app.users.RoleService
+import org.gameyfin.app.users.UserService
+import org.gameyfin.app.users.persistence.UserRepository
+import org.gameyfin.app.util.EntityManagerHolder
+import org.gameyfin.app.util.EventPublisherHolder
+import org.springframework.web.context.request.RequestContextHolder
+import org.springframework.web.context.request.ServletRequestAttributes
+import org.springframework.mock.web.MockHttpServletRequest
+import org.springframework.mock.web.MockHttpServletResponse
+import org.springframework.security.access.hierarchicalroles.RoleHierarchy
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
+import org.springframework.security.core.context.SecurityContextHolder
+import org.springframework.security.oauth2.core.oidc.OidcIdToken
+import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser
 import org.gameyfin.app.requests.GameRequestService
 import org.gameyfin.app.requests.dto.GameRequestEvent
 import org.gameyfin.app.requests.entities.GameRequest
@@ -39,11 +57,11 @@ import kotlin.test.*
  * native binding/provider grant, listener-cleanup or process-crash acceptance. */
 @DataJpaTest(properties = ["spring.jpa.show-sql=false", "spring.jpa.hibernate.ddl-auto=validate", "spring.flyway.enabled=true",
     "gameyfin.avatar.overlay.enabled=true"])
-@Import(NativeAvatarState::class, GameRequestEntityListener::class)
+@Import(NativeAvatarState::class, GameRequestEntityListener::class, EntityManagerHolder::class, EventPublisherHolder::class)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class AvatarJpaCompatibilityTest @Autowired constructor(
     private val em: EntityManager, private val transactions: PlatformTransactionManager,
-    private val dataSource: DataSource
+    private val dataSource: DataSource, private val users: UserRepository
 ) {
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -165,6 +183,80 @@ class AvatarJpaCompatibilityTest @Autowired constructor(
             tx.execute { status -> persist("Rolled back avatar request"); status.setRollbackOnly() }
             assertEquals(count, events.size)
         } finally { unmockkObject(EncryptionUtils, GameRequestService.Companion) }
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    fun `actual OIDC success handler and native account deletion preserve avatar receipt and original Image`() {
+        mockkObject(EncryptionUtils)
+        every { EncryptionUtils.encrypt(any()) } answers { firstArg() }
+        every { EncryptionUtils.decrypt(any()) } answers { firstArg() }
+        try {
+            val tx = TransactionTemplate(transactions)
+            val ids = tx.execute {
+                val original = Image(type = ImageType.AVATAR, contentId = UUID.randomUUID().toString())
+                em.persist(original)
+                val user = User(username = "oidc-native-avatar", email = "old-oidc-avatar@example.invalid",
+                    oidcProviderId = "verified-native-subject", enabled = true, avatar = original, roles = listOf(Role.USER))
+                em.persist(user); em.flush()
+                Pair(requireNotNull(user.id), requireNotNull(original.id))
+            }!!
+            val state = NativeAvatarState(dataSource)
+            state.setPrepared(ids.first, null)
+            val canonical = png()
+            val ledger = AvatarLedger()
+            val scope = AvatarLedger.Scope(UUID.randomUUID(), UUID.randomUUID(), 1,
+                "sha256:" + "a".repeat(64), "b".repeat(64), UUID.randomUUID(), 1,
+                "c".repeat(64), 1, ids.first)
+            val intent = AvatarLedger.Intent(scope, UUID.randomUUID(), AvatarLedger.Action.REPLACE,
+                1, null, 1, canonical.sha256)
+            val receipt = dataSource.connection.use { connection ->
+                connection.autoCommit = false
+                val result = ledger.apply(connection, intent, canonical) {}
+                connection.commit(); result
+            }
+            val config = mockk<ConfigService>()
+            every { config.get(ConfigProperties.SSO.OIDC.UsernameClaim) } returns "preferred_username"
+            val roles = mockk<RoleService>()
+            every { roles.extractGrantedAuthorities(any()) } returns emptyList()
+            every { roles.authoritiesToRoles(any()) } returns listOf(Role.USER)
+            val hierarchy = RoleHierarchy { authorities -> authorities }
+            val nativeUsers = UserService(users, mockk(), mockk(), roles, mockk(), mockk(), config, mockk(), state)
+            val handler = SsoAuthenticationSuccessHandler(nativeUsers, roles, config, hierarchy)
+            val now = Instant.now()
+            val principal = DefaultOidcUser(emptyList(), OidcIdToken("synthetic-id-token", now, now.plusSeconds(60),
+                mapOf("sub" to "verified-native-subject", "preferred_username" to "oidc-native-avatar",
+                    "email" to "new-oidc-avatar@example.invalid")), "preferred_username")
+            val response = MockHttpServletResponse()
+            // The actual success handler has no surrounding transaction: repository
+            // reads return detached users and save owns its merge transaction.
+            handler.onAuthenticationSuccess(MockHttpServletRequest(), response,
+                UsernamePasswordAuthenticationToken(principal, "synthetic-only", emptyList()))
+            assertEquals("/", response.redirectedUrl)
+            tx.execute {
+                val current = users.findById(ids.first).orElseThrow()
+                assertEquals("new-oidc-avatar@example.invalid", current.email)
+                assertEquals("verified-native-subject", current.oidcProviderId)
+                assertEquals(ids.second, current.avatar!!.id)
+            }
+            assertEquals(2L, state.metadata(ids.first)!!.version)
+            assertContentEquals(canonical.copyBytes(), state.content(ids.first)!!.png!!.copyBytes())
+            // Actual native service delete + repository locking and Hibernate commit.
+            RequestContextHolder.setRequestAttributes(ServletRequestAttributes(MockHttpServletRequest()))
+            tx.execute { nativeUsers.deleteUser("oidc-native-avatar") }
+            assertNull(state.metadata(ids.first))
+            tx.execute {
+                assertFalse(users.existsById(ids.first))
+                assertNotNull(em.find(Image::class.java, ids.second))
+            }
+            dataSource.connection.use { connection ->
+                assertEquals(receipt, ledger.receipt(connection, scope.installation, intent.operation))
+            }
+        } finally {
+            SecurityContextHolder.clearContext()
+            RequestContextHolder.resetRequestAttributes()
+            unmockkObject(EncryptionUtils)
+        }
     }
 
     private fun png(): CanonicalAvatarPng {

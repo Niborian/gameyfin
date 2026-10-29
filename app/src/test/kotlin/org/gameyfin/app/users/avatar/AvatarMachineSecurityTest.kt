@@ -28,6 +28,9 @@ import org.springframework.test.context.web.WebAppConfiguration
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
+import org.springframework.security.web.csrf.CsrfFilter
 import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.bind.annotation.RequestMapping
@@ -83,6 +86,32 @@ class AvatarMachineSecurityTest {
         assertEquals(403, mvc.perform(get("/internal/avatar/v10/current")).andReturn().response.status)
         assertEquals(403, mvc.perform(post("/ordinary").with(user("synthetic").roles("ADMIN"))).andReturn().response.status)
         assertEquals(200, mvc.perform(post("/ordinary").with(user("synthetic").roles("ADMIN")).with(csrf())).andReturn().response.status)
+    }
+    @Test fun `CSRF filter remains and exception admits only exact nonbrowser bearer mutations`() {
+        assertTrue(requireNotNull(context.getBean(FilterChainProxy::class.java)
+            .getFilters("/internal/avatar/v1/avatar")).any { it is CsrfFilter })
+        for (mutation in listOf(put("/internal/avatar/v1/avatar"), delete("/internal/avatar/v1/avatar"))) {
+            val refused = mvc.perform(mutation).andReturn()
+            assertEquals(403, refused.response.status)
+            assertNull(refused.request.getSession(false)); assertNull(refused.response.getHeader("Set-Cookie"))
+        }
+        val bearer = "Bearer " + "a".repeat(43)
+        for ((header, value) in listOf("Origin" to "https://synthetic.invalid", "Sec-Fetch-Site" to "same-origin",
+            "Cookie" to "synthetic-only=value")) {
+            val refused = mvc.perform(put("/internal/avatar/v1/avatar").header("Authorization", bearer)
+                .header(header, value)).andReturn()
+            assertEquals(403, refused.response.status)
+            assertNull(refused.request.getSession(false)); assertNull(refused.response.getHeader("Set-Cookie"))
+        }
+        assertEquals(403, mvc.perform(post("/internal/avatar/v1/avatar").header("Authorization", bearer))
+            .andReturn().response.status)
+        assertEquals(403, mvc.perform(put("/internal/avatar/v1/current").header("Authorization", bearer))
+            .andReturn().response.status)
+        // Exemption is NOT authorization: malformed native pins still refuse.
+        assertEquals(400, mvc.perform(delete("/internal/avatar/v1/avatar").header("Authorization", bearer)
+            .header(AvatarMachineProtocol.HEADER, "{\"scope\":{}}")
+            .with { it.setAsyncSupported(true); it.setContent(byteArrayOf()); it })
+            .andReturn().response.status)
     }
     @Configuration @EnableWebSecurity @EnableWebMvc
     class Harness {

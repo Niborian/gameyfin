@@ -135,6 +135,17 @@ jobs:
           annotate_only: true
           job_summary: true
 
+      - name: Retain focused avatar and browse acceptance receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: avatar-and-browse-test-results
+          path: |
+            app/build/test-results/test/TEST-org.gameyfin.app.users.avatar.*.xml
+            app/build/test-results/test/TEST-org.gameyfin.app.games.GameBrowseBatchTest.xml
+          retention-days: 7
+          if-no-files-found: warn
+
   package:
     name: Publish AMD64 candidate
     needs: verify

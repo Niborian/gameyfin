@@ -41,6 +41,7 @@ import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.test.annotation.DirtiesContext
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.annotation.EnableTransactionManagement
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.aop.support.AopUtils
 import java.net.URI
@@ -200,6 +201,7 @@ class GameBrowseBatchStatementInspector : org.hibernate.resource.jdbc.spi.Statem
 }
 
 @TestConfiguration
+@EnableTransactionManagement(proxyTargetClass = true)
 class GameBrowseBatchCollaborators {
     @Bean fun browsePluginManager():GameyfinPluginManager=mockk()
     @Bean fun browsePluginService():PluginService=mockk()

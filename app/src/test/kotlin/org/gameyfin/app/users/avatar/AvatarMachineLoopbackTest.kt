@@ -92,10 +92,16 @@ class AvatarMachineLoopbackTest {
             } as DataSource
             val reader = NativeAvatarAccountReader(proofs)
             val owner = AvatarTransactions(dataSource, authority, AvatarLedger(), nativeAccount = reader::read)
+            val machineApplyReady = AtomicReference<CountDownLatch?>(null)
+            val machineApplyProceed = AtomicReference<CountDownLatch?>(null)
             val operations = object : AvatarMachineOperations {
                 override fun preflight(secret: String, scope: AvatarLedger.Scope, requestFence: () -> Unit) = owner.preflight(secret, scope, requestFence)
                 override fun current(secret: String, scope: AvatarLedger.Scope, requestFence: () -> Unit) = owner.current(secret, scope, requestFence)
-                override fun apply(secret: String, intent: AvatarLedger.Intent, png: CanonicalAvatarPng?, requestFence: () -> Unit) = owner.apply(secret, intent, png, requestFence)
+                override fun apply(secret: String, intent: AvatarLedger.Intent, png: CanonicalAvatarPng?, requestFence: () -> Unit): AvatarLedger.Receipt {
+                    machineApplyReady.get()?.countDown()
+                    machineApplyProceed.get()?.let { check(it.await(3, TimeUnit.SECONDS)) }
+                    return owner.apply(secret, intent, png, requestFence)
+                }
                 override fun originalReceipt(secret: String, installation: UUID, operation: UUID, intentDigest: String, restore: UUID, requestFence: () -> Unit) =
                     owner.originalReceipt(secret, installation, operation, intentDigest, restore, requestFence)
             }
@@ -177,14 +183,21 @@ class AvatarMachineLoopbackTest {
                 expectedHash = hash, sourceGeneration = 2)
             val expectedCurrentVersion: Long
             keeper.autoCommit = false
+            val ready = CountDownLatch(1)
+            val proceed = CountDownLatch(1)
             try {
+                machineApplyReady.set(ready); machineApplyProceed.set(proceed)
+                val machine = contenders.submit<Pair<Int, String>> { call("PUT", "avatar", intentMap(race), bytes) }
+                // The servlet has completed its separate admission transaction and
+                // body parsing before entering apply. Do not count preflight locks.
+                assertTrue(ready.await(2, TimeUnit.SECONDS), "Machine must finish preflight before holding the row")
                 keeper.createStatement().use { sql ->
                     sql.executeQuery("SELECT id FROM users WHERE id=1 FOR UPDATE").use { rows -> check(rows.next()) }
                 }
                 val attempts = CountDownLatch(2)
                 nativeLockAttempts.set(attempts)
                 val ordinary = contenders.submit<AvatarLedger.Current> { NativeAvatarState(dataSource).setPrepared(1, null) }
-                val machine = contenders.submit<Pair<Int, String>> { call("PUT", "avatar", intentMap(race), bytes) }
+                proceed.countDown()
                 assertTrue(attempts.await(2, TimeUnit.SECONDS), "Both native writers must contend on the held user lock")
                 keeper.commit(); keeper.autoCommit = true
                 ordinary.get(6, TimeUnit.SECONDS)
@@ -199,6 +212,8 @@ class AvatarMachineLoopbackTest {
                     } else assertNull(receipt)
                 }
             } finally {
+                proceed.countDown()
+                machineApplyReady.set(null); machineApplyProceed.set(null)
                 nativeLockAttempts.set(null)
                 if (!keeper.autoCommit) { keeper.rollback(); keeper.autoCommit = true }
                 contenders.shutdownNow()

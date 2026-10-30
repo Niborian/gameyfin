@@ -1,3 +1,5 @@
+import type {ActionOnLostSubscription} from '@vaadin/hilla-frontend';
+
 /** Auth forms must not start unrelated catalog requests or subscriptions. */
 export function isAuthOnlyRoute(pathname: string): boolean {
     return ['/login', '/setup', '/reset-password', '/accept-invitation', '/confirm-email']
@@ -43,7 +45,23 @@ export function runStartupState(state: object, signal: AbortSignal | undefined, 
     let operation: Promise<void>;
     try { operation = run(task.current); } catch (error) { operation = Promise.reject(error); }
     operation.then(() => {
-        if (task.current() && !(state as {isLoaded?: boolean}).isLoaded) task.dispose();
+        if (!task.current()) return;
+        if (!(state as {isLoaded?: boolean}).isLoaded) { task.dispose(); return; }
+        const subscribed = state as {subscription?: {onSubscriptionLost?(callback: () => ActionOnLostSubscription): unknown}};
+        const subscription = subscribed.subscription;
+        // Hilla otherwise removes a lost subscription on reopen while our cache
+        // still appears loaded. Rebuild its snapshot and stream once, rather than
+        // resubscribing only to live deltas and missing changes during the outage.
+        subscription?.onSubscriptionLost?.(() => {
+            if (task.current() && subscribed.subscription === subscription) {
+                task.dispose();
+                void runStartupState(state, signal, clear, run).catch(() => {
+                    // No background retry loop or private error payload logging.
+                    console.warn('Live state refresh failed after connection loss; reload to retry.');
+                });
+            }
+            return 'remove' as ActionOnLostSubscription;
+        });
     }, error => {
         if (task.current()) task.dispose();
         throw error;

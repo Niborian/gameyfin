@@ -146,6 +146,15 @@ sealed class ConfigProperties<T : Serializable>(
 
     /** Requests */
     sealed class Requests {
+        sealed class SteamUpdates {
+            data object Enabled : ConfigProperties<Boolean>(
+                Boolean::class,
+                "requests.steam-updates.enabled",
+                "Check Steam for possible game updates",
+                "Check administrator-verified Steam app IDs in small hourly batches, at most once per app daily. Notices appear below for review; news is not proof of a newer installed version and never starts a download.",
+                false
+            )
+        }
         sealed class Acquisition {
             data object ApprovedIndexerIds : ConfigProperties<Array<String>>(
                 Array<String>::class,

@@ -1,6 +1,6 @@
 import {useLayoutEffect, useRef, useState} from "react";
 import {Button, Checkbox, Chip, Input, Select, SelectItem} from "@heroui/react";
-import {VariantDetailsEndpoint} from "Frontend/generated/endpoints";
+import {GameEndpoint, VariantDetailsEndpoint} from "Frontend/generated/endpoints";
 import GameVariantDto from "Frontend/generated/org/gameyfin/app/games/dto/GameVariantDto";
 import VariantDetailsDto from "Frontend/generated/org/gameyfin/app/games/dto/VariantDetailsDto";
 import VariantDetailsPreviewDto from "Frontend/generated/org/gameyfin/app/games/dto/VariantDetailsPreviewDto";
@@ -34,7 +34,7 @@ export default function VariantDetailsEditor({gameId, variant, onChanged, onDirt
     const [loadError, setLoadError] = useState(false);
     const [reload, setReload] = useState(0);
     const [preview, setPreview] = useState<VariantDetailsPreviewDto>();
-    const [busy, setBusy] = useState<"preview" | "save" | "apply">();
+    const [busy, setBusy] = useState<"preview" | "save" | "apply" | "track">();
     const [message, setMessage] = useState("");
     const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
     const update = (change: Partial<Fields>) => setDraft(current => ({...current, ...change, manualOverride: change.manualOverride ?? true}));
@@ -73,6 +73,15 @@ export default function VariantDetailsEditor({gameId, variant, onChanged, onDirt
         if (dirty && !window.confirm("Discard your unsaved variant details and reload the saved values?")) return;
         owner.current.epoch++; owner.current.request++;
         setReload(value => value + 1);
+    }
+    async function watchSteamUpdates(enabled: boolean) {
+        if (!permitted || busy || dirty || loadedEpoch !== owner.current.epoch || (enabled && saved.store !== VariantStore.STEAM)) return;
+        const current = begin(); setBusy("track"); setMessage("");
+        try {
+            await GameEndpoint.setVariantSteamAppId(gameId, variant.id, {steamAppId: enabled ? saved.storeProductId : undefined});
+            if (current()) {setMessage(enabled ? "Steam app mapping verified for update notices. Enable monitoring under Administration → Game Requests. No download was started." : "Steam update tracking stopped for this variant. Local details and files are unchanged."); onChanged?.();}
+        } catch {if (current()) setMessage("Could not verify the Steam mapping. Check the saved numeric product ID and try again.");}
+        finally {if (current()) setBusy(undefined);}
     }
     async function detect() {
         if (!permitted || busy || dirty || loadedEpoch !== owner.current.epoch) return;
@@ -126,6 +135,12 @@ export default function VariantDetailsEditor({gameId, variant, onChanged, onDirt
             <Input size="sm" label="Edition" placeholder="Unknown / e.g. Deluxe" maxLength={128} value={draft.edition} isDisabled={!!busy} onValueChange={edition => update({edition})}/>
             <Input size="sm" label="Library version" placeholder="Unknown" maxLength={128} value={draft.libraryVersion} isDisabled={!!busy} onValueChange={libraryVersion => update({libraryVersion})}/>
             <Input size="sm" label="Library build ID" placeholder="Unknown" maxLength={128} value={draft.buildId} isDisabled={!!busy} onValueChange={buildId => update({buildId})}/>
+        </div>
+        <div className="flex flex-wrap gap-2">
+            {saved.store === VariantStore.STEAM && <Button type="button" size="sm" variant="flat" isLoading={busy === "track"}
+                isDisabled={!!busy || dirty || !/^[1-9][0-9]{0,19}$/.test(saved.storeProductId)} onPress={() => watchSteamUpdates(true)}>Watch Steam updates</Button>}
+            {variant.steamAppId && <Button type="button" size="sm" variant="light" isDisabled={!!busy || dirty}
+                onPress={() => watchSteamUpdates(false)}>Stop watching Steam app {variant.steamAppId}</Button>}
         </div>
         {draft.store === VariantStore.UNKNOWN && draft.storeProductId.trim() && <p className="text-xs text-warning">Choose a store for this product ID, or clear the ID explicitly. It will not be cleared automatically.</p>}
         <Checkbox isSelected={draft.manualOverride} isDisabled={!!busy} onValueChange={manualOverride => update({manualOverride})}>Protect manual details from detected suggestions</Checkbox>

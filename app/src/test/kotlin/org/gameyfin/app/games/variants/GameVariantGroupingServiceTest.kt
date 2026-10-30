@@ -615,6 +615,29 @@ class GameVariantGroupingServiceTest {
     }
 
     @Test
+    fun `stopping Steam news monitoring preserves migrated store identity and scan ownership`() {
+        val target = createGame(1L, createLibrary(), "/fixtures/game.rar", PluginManagementEntry("steam"), "244850")
+        val variant = createBaseVariant(target, 10L, "/fixtures/game.rar").apply {
+            steamAppId = "244850"
+            steamAppIdVerifiedAt = Instant.parse("2026-10-30T12:00:00Z")
+            steamAppIdManualOverride = false
+            localBuildVersion = "1.5.0"
+        }
+        target.variants.add(variant)
+        every { gameRepository.findById(1L) } returns Optional.of(target)
+        every { gameRepository.save(target) } returns target
+        service.setVariantSteamNewsWatch(1L, 10L, false, null)
+        assertFalse(variant.steamNewsWatchEnabled)
+        assertEquals("244850", variant.steamAppId)
+        assertEquals(Instant.parse("2026-10-30T12:00:00Z"), variant.steamAppIdVerifiedAt)
+        assertFalse(variant.steamAppIdManualOverride)
+        assertEquals("1.5.0", variant.localBuildVersion)
+        service.setVariantSteamNewsWatch(1L, 10L, true, "244850")
+        assertTrue(variant.steamNewsWatchEnabled)
+        assertEquals("244850", variant.steamAppId)
+    }
+
+    @Test
     fun `setVariantSteamAppId rejects non-positive or non-decimal values`() {
         val library = createLibrary()
         val target = createGame(1L, library, "/mnt/Games/Craftopia.rar", PluginManagementEntry("igdb"), "123")

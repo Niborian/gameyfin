@@ -41,7 +41,8 @@ class NativeAvatarAccountReaderTest {
             config("sso.oidc.enabled", true)
             config("sso.oidc.issuer-url", binding.issuer)
             config("sso.oidc.client-id", binding.clientId)
-            val upgrade = Flyway.configure().dataSource(url, "sa", "").locations("classpath:db/migration").load().migrate()
+            val upgrade = Flyway.configure().dataSource(url, "sa", "").locations("classpath:db/migration")
+                .target("2.4.8.2").load().migrate()
             assertEquals(1, upgrade.migrationsExecuted)
         }
         fun sql(value: String) = keeper.createStatement().use { it.execute(value) }

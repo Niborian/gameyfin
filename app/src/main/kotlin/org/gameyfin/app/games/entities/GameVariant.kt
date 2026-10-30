@@ -34,6 +34,10 @@ class GameVariant(
     @Column(nullable = false)
     var steamAppIdManualOverride: Boolean = false,
 
+    /** Monitoring preference is independent of the store/product identity. */
+    @Column(nullable = false)
+    var steamNewsWatchEnabled: Boolean = true,
+
     var localBuildVersion: String? = null,
 
     var localBuildObservedAt: Instant? = null,

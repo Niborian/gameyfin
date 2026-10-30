@@ -5,6 +5,7 @@ import ConfigFormField from "Frontend/components/administration/ConfigFormField"
 import Section from "Frontend/components/general/Section";
 import {Button} from "@heroui/react";
 import {useNavigate} from "react-router";
+import SteamUpdateInbox from "Frontend/components/administration/SteamUpdateInbox";
 
 function GameRequestManagementLayout({getConfig, formik}: any) {
     const navigate = useNavigate();
@@ -28,8 +29,11 @@ function GameRequestManagementLayout({getConfig, formik}: any) {
                         Manage game requests
                     </Button>
                     <Section title="Authorized acquisition scope"/>
-                    <p className="text-default-500 text-sm mb-3">External acquisition is unavailable. These approved IDs are reserved for a reviewed provider integration; no indexers are active.</p>
+                    <p className="text-default-500 text-sm mb-3">Prowlarr/qBittorrent acquisition requires a separately configured isolated provider. These IDs allow indexers; saving them does not enable downloads. Review active provider status in Manage game requests.</p>
                     <ConfigFormField configElement={getConfig("requests.acquisition.approved-indexer-ids")}/>
+                    <Section title="Game update notices"/>
+                    <ConfigFormField configElement={getConfig("requests.steam-updates.enabled")}/>
+                    <SteamUpdateInbox/>
                 </div>
             </div>
         </div>

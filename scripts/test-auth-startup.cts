@@ -33,6 +33,52 @@ function load<T extends object = VmExports>(file: string, mocks: ModuleMocks = {
 const lifecycle = load('util/startupLifecycle.ts');
 function deferred<T = unknown>(): Deferred<T> { let resolve!: (value: T) => void; const promise = new Promise<T>(r => {resolve = r;}); return {promise, resolve}; }
 const cases: StateName[] = ['Library', 'Collection', 'Platform', 'GameRequest', 'Plugin', 'Game', 'DownloadSession', 'User'];
+test('scan startup waits for library readiness before consuming the one-time scan snapshot', async () => {
+    const ready = deferred(); let attached = 0, cancelled = 0, requests = 0;
+    const progress = {scanId: 'active', libraryId: 52, status: 'IN_PROGRESS'};
+    const endpoint = {
+        getAll: () => {requests++; return ready.promise;},
+        subscribeToLibraryEvents: () => ({onNext() {return {cancel() {}};}}),
+        subscribeToScanProgressEvents: () => ({onNext(fn) {
+            attached++; fn([progress]); return {cancel() {cancelled++;}};
+        }})
+    };
+    const libraries = load('state/LibraryState.ts', {'Frontend/generated/endpoints': {LibraryEndpoint: endpoint}});
+    const mod = load('state/ScanState.ts', {
+        'Frontend/state/LibraryState': libraries,
+        'Frontend/generated/org/gameyfin/app/libraries/dto/LibraryScanStatus': {default: {IN_PROGRESS: 'IN_PROGRESS'}},
+        'Frontend/generated/endpoints': {LibraryEndpoint: endpoint}
+    });
+    const controller = new AbortController();
+    const libraryLoad = libraries.initializeLibraryState(controller.signal);
+    const first = mod.initializeScanState(controller.signal);
+    const duplicate = mod.initializeScanState(controller.signal);
+    assert.equal(attached, 0, 'Replay must not be discarded against an empty pending library cache');
+    assert.equal(requests, 1, 'Scan initialization must share the original library RPC');
+    ready.resolve([{id: 52}]);
+    await libraryLoad; await first; await duplicate;
+    assert.equal(attached, 1); assert.equal(mod.scanState.state.active, progress);
+    controller.abort(); assert.equal(cancelled, 1); assert.equal(Object.keys(mod.scanState.state).length, 0);
+});
+test('scan startup cannot attach after cancellation or accept a replaced owner callback', async () => {
+    const ready = deferred(); const callbacks: EventCallback[] = []; let cancelled = 0;
+    const libraries = {state: {52: {id: 52}}, isLoaded: true};
+    const mod = load('state/ScanState.ts', {
+        'Frontend/state/LibraryState': {libraryState: libraries, initializeLibraryState: () => ready.promise},
+        'Frontend/generated/endpoints': {LibraryEndpoint: {subscribeToScanProgressEvents: () => ({onNext(fn) {
+            callbacks.push(fn); return {cancel() {cancelled++;}};
+        }})}}
+    });
+    const aborted = new AbortController(); const pending = mod.initializeScanState(aborted.signal); aborted.abort();
+    ready.resolve(); await pending; assert.equal(callbacks.length, 0);
+    const old = new AbortController(), current = new AbortController();
+    await mod.initializeScanState(old.signal); await mod.initializeScanState(current.signal);
+    assert.equal(callbacks.length, 2); assert.equal(cancelled, 1);
+    callbacks[0]({forEach() {throw new Error('Replaced scan generation processed payload');}});
+    old.abort(); assert.equal(cancelled, 1);
+    callbacks[1]([{scanId: 'new', libraryId: 52}]); assert.equal(Object.keys(mod.scanState.state).join(','), 'new');
+    current.abort(); assert.equal(cancelled, 2);
+});
 for (const name of cases) {
     test(`${name}: failed current fetch clears ownership and same owner can retry`, async () => {
         let requests = 0, attached = 0, cancelled = 0;

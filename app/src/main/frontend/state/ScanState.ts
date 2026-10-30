@@ -1,13 +1,14 @@
 import {proxy} from 'valtio';
-import {startupIsCurrent, ownStartupState} from "Frontend/util/startupLifecycle";
+import {runStartupState} from "Frontend/util/startupLifecycle";
 import type LibraryScanProgress from "Frontend/generated/org/gameyfin/app/libraries/dto/LibraryScanProgress";
 import {LibraryEndpoint} from "Frontend/generated/endpoints";
 import {Subscription} from "@vaadin/hilla-frontend";
 import LibraryScanStatus from "Frontend/generated/org/gameyfin/app/libraries/dto/LibraryScanStatus";
-import {libraryState} from "Frontend/state/LibraryState";
+import {initializeLibraryState, libraryState} from "Frontend/state/LibraryState";
 
 type ScanState = {
     subscription?: Subscription<LibraryScanProgress[]>;
+    isLoaded: boolean;
     state: Record<string, LibraryScanProgress>;
     hasContent: boolean,
     isScanning: boolean,
@@ -15,6 +16,9 @@ type ScanState = {
 };
 
 export const scanState = proxy<ScanState>({
+    get isLoaded(): boolean {
+        return this.subscription != null;
+    },
     state: {},
     get hasContent(): boolean {
         return Object.values(this.state).length > 0;
@@ -31,19 +35,20 @@ export const scanState = proxy<ScanState>({
 });
 
 /** Subscribe to and process state updates from backend **/
-export function initializeScanState(signal?: AbortSignal) {
-    if (!startupIsCurrent(signal) || scanState.subscription) return;
-    ownStartupState(scanState, signal, () => { scanState.state = {}; });
-
-    // Subscribe to real-time updates
-    scanState.subscription = LibraryEndpoint.subscribeToScanProgressEvents().onNext((scanProgresses: LibraryScanProgress[]) => {
-        if (!startupIsCurrent(signal)) return;
-        scanProgresses.forEach((scanProgress: LibraryScanProgress) => {
-            // Filter out scans for libraries that are not in the current state
-            if (!libraryState.state[scanProgress.libraryId]) return;
-
-            scanState.state[scanProgress.scanId] = scanProgress;
-        })
+export function initializeScanState(signal?: AbortSignal): Promise<void> {
+    return runStartupState(scanState, signal, () => { scanState.state = {}; }, async current => {
+        // The stream replays each scan only once. Join the existing library load
+        // before subscribing so its snapshot is not filtered against an empty cache.
+        await initializeLibraryState(signal);
+        if (!current() || !libraryState.isLoaded) return;
+        scanState.subscription = LibraryEndpoint.subscribeToScanProgressEvents().onNext((scanProgresses: LibraryScanProgress[]) => {
+            if (!current()) return;
+            scanProgresses.forEach((scanProgress: LibraryScanProgress) => {
+                // Preserve filtering for deleted/unknown libraries.
+                if (!libraryState.state[scanProgress.libraryId]) return;
+                scanState.state[scanProgress.scanId] = scanProgress;
+            });
+        });
     });
 }
 

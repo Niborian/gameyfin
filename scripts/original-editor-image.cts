@@ -24,6 +24,8 @@ const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', s
   expectedNativeConfirmAccepted: false, immediateCanonicalCards: false, clickedExactDownload: false,
   ordinaryUserEditorAbsent: false, cleanupConfirmed: false,
   ordinarySavedDetailsVisible: false,
+  ordinaryAvatarChooserUsed: false, ordinaryAvatarUploadRendered: false,
+  ordinaryAvatarRemoveRendered: false, ordinaryAvatarNoReload: false,
   loginPhase: 'not-started', profileResponseObserved: false, profileIdentityMatched: false,
   authenticatedLandingObserved: false, profileTriggerObserved: false, profileDomIdentityMatched: false,
   editorPhase: 'not-started', gameRouteMatches: false, footerMatches: false, versionTriggerUnique: false,
@@ -622,6 +624,68 @@ async function run(): Promise<void> {
   await viewerPage.waitForFunction(() => document.body.textContent?.includes('Downloading: v1.5.0') &&
     [...document.querySelectorAll('p')].some(node => node.textContent === 'Edition: Survivors of the Void + Seekers of the Storm + Alloyed Collective + Hallowed Concepts'), {timeout: 5000});
   proof.ordinarySavedDetailsVisible = true;
+  proof.stage = 'ordinary-avatar';
+  // Actual local-profile controls only. No managedBySso bypass, RPC mutation,
+  // reload, injected app state, Main grant or machine/operator activation.
+  const openProfile = await viewerPage.evaluateHandle(() => {
+    const controls = [...document.querySelectorAll('nav div[data-slot="trigger"][aria-haspopup="true"] button')];
+    if (controls.length !== 1) throw new Error('Unique own profile trigger'); return controls[0];
+  });
+  try { await openProfile.asElement().click(); } finally { await openProfile.dispose(); }
+  await viewerPage.waitForFunction(() => [...document.querySelectorAll('[role="menuitem"]')].some(item => item.textContent?.trim() === 'My Profile'), {timeout: 5000});
+  const profileOption = await viewerPage.evaluateHandle(() => {
+    const items = [...document.querySelectorAll('[role="menuitem"]')].filter(item => item.textContent?.trim() === 'My Profile');
+    if (items.length !== 1) throw new Error('Unique My Profile option'); return items[0];
+  });
+  try { await profileOption.asElement().click(); } finally { await profileOption.dispose(); }
+  await viewerPage.waitForFunction(() => location.pathname === '/settings/profile' &&
+    document.querySelectorAll('input[type="file"]:not(:disabled)').length === 1 &&
+    [...document.querySelectorAll('h2')].some(node => node.textContent?.trim() === 'My Profile') &&
+    !document.body.textContent?.includes('Your account is managed externally.'), {timeout: 5000});
+  let avatarNavigations = 0;
+  const avatarNavigation = (frame: any) => { if (frame === viewerPage.mainFrame()) avatarNavigations++; };
+  viewerPage.on('framenavigated', avatarNavigation);
+  try {
+    const chooserReady = viewerPage.waitForFileChooser({timeout: 5000});
+    void chooserReady.catch(() => {});
+    await viewerPage.click('input[type="file"]:not(:disabled)');
+    const chooser = await chooserReady;
+    await chooser.accept(['/opt/synthetic-avatar.png']);
+    proof.ordinaryAvatarChooserUsed = true;
+    const uploaded = viewerPage.waitForResponse((response: any) => {
+      const url = new URL(response.url()); return url.origin === input.origin && url.pathname === '/images/avatar/upload' && response.request().method() === 'POST';
+    }, {timeout: 5000});
+    void uploaded.catch(() => {});
+    await clickText(viewerPage, 'Upload');
+    if ((await uploaded).status() !== 200) throw new Error('Ordinary avatar upload refused');
+    await viewerPage.waitForFunction(() => {
+      const images = [...document.querySelectorAll('img')].filter(image => {
+        const url = new URL(image.src, location.href);
+        return url.pathname === '/images/avatar' && url.searchParams.get('username') === 'fixture-user' && url.searchParams.get('v') === '1' && image.complete && image.naturalWidth > 0;
+      });
+      return images.length === 2 && images.some(image => image.closest('nav')) && location.pathname === '/settings/profile';
+    }, {timeout: 5000});
+    proof.ordinaryAvatarUploadRendered = true;
+    const remove = await viewerPage.evaluateHandle(() => {
+      const upload = [...document.querySelectorAll('button')].filter(button => button.textContent?.trim() === 'Upload');
+      if (upload.length !== 1) throw new Error('Unique upload control');
+      const buttons = [...(upload[0].parentElement?.querySelectorAll('button') ?? [])].filter(button => button !== upload[0] && !button.disabled);
+      if (buttons.length !== 1) throw new Error('Unique adjacent remove control'); return buttons[0];
+    });
+    const removed = viewerPage.waitForResponse((response: any) => {
+      const url = new URL(response.url()); return url.origin === input.origin && url.pathname === '/images/avatar/delete' && response.request().method() === 'POST';
+    }, {timeout: 5000});
+    void removed.catch(() => {});
+    try { await remove.asElement().click(); } finally { await remove.dispose(); }
+    if ((await removed).status() !== 200) throw new Error('Ordinary avatar remove refused');
+    await viewerPage.waitForFunction(() => location.pathname === '/settings/profile' &&
+      ![...document.querySelectorAll('img')].some(image => {
+        const url = new URL(image.src, location.href); return url.pathname === '/images/avatar' && url.searchParams.get('username') === 'fixture-user';
+      }), {timeout: 5000});
+    proof.ordinaryAvatarRemoveRendered = true;
+    if (avatarNavigations !== 0) throw new Error('Avatar change navigated or reloaded document');
+    proof.ordinaryAvatarNoReload = true;
+  } finally { viewerPage.off('framenavigated', avatarNavigation); }
   proof.stage = 'repeat-login'; proof.repeatPhase = 'profile-menu';
   const viewerProfile = await viewerPage.evaluateHandle(() => {
     const buttons = [...document.querySelectorAll('nav div[data-slot="trigger"][aria-haspopup="true"] button')];

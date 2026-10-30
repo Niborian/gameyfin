@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import java.io.ByteArrayInputStream
+import java.awt.image.BufferedImage
+import javax.imageio.ImageIO
 import java.net.URLEncoder
 import java.nio.file.Files
 import java.nio.file.Path
@@ -81,7 +83,9 @@ class OriginalEditorImageFixtureTest {
             val mounts = state.flatMap { (name, path) -> listOf("--mount", "type=bind,src=$path,dst=/opt/gameyfin/$name") } +
                 listOf("--mount", "type=bind,src=$source,dst=/fixture,readonly")
             val app = owned.create("app", imageId, listOf("--cpus", "1", "--memory", "1536m", "--memory-swap", "1536m", "--pids-limit", "256",
-                "--restart", "no", "--env-file", env.toString()) + mounts)
+                "--restart", "no", "--env", "GAMEYFIN_AVATAR_OVERLAY_ENABLED=true",
+                "--env", "GAMEYFIN_AVATAR_MACHINE_ENABLED=false", "--env", "GAMEYFIN_AVATAR_OPERATOR_ENABLED=false",
+                "--env-file", env.toString()) + mounts)
             val appState = FixtureRuntime.tree(owned.docker("inspect", app))[0]
             require(appState["HostConfig"]["NanoCpus"].longValue() == 1_000_000_000L)
             require(appState["HostConfig"]["Memory"].longValue() == 1536L * 1024 * 1024)
@@ -192,9 +196,16 @@ class OriginalEditorImageFixtureTest {
             proof["stage"] = "original-browser"
             val script = root.resolve("original-editor-image.cts")
             Files.copy(repository.resolve("scripts/original-editor-image.cts"), script, StandardCopyOption.COPY_ATTRIBUTES)
+            val avatar = root.resolve("synthetic-avatar.png")
+            val pixels = BufferedImage(4, 4, BufferedImage.TYPE_INT_ARGB)
+            try {
+                pixels.setRGB(0, 0, 0xff2176a5.toInt())
+                require(ImageIO.write(pixels, "PNG", avatar.toFile()))
+            } finally { pixels.flush() }
             val chrome = owned.create("browser", BROWSER, listOf("--interactive", "--user", "10042:10042", "--cap-drop", "ALL", "--read-only",
                 "--cpus", "1", "--memory", "768m", "--memory-swap", "768m", "--pids-limit", "256",
                 "--mount", "type=bind,src=$script,dst=/opt/original-editor-image.cts,readonly",
+                "--mount", "type=bind,src=$avatar,dst=/opt/synthetic-avatar.png,readonly",
                 "--env", "GAMEYFIN_ORIGINAL_EDITOR=reviewed-pr-synthetic-only", "--env", "XDG_CONFIG_HOME=/tmp/config", "--env", "XDG_CACHE_HOME=/tmp/cache",
                 "--entrypoint", "node"), listOf("--experimental-strip-types", "/opt/original-editor-image.cts"), browserTmpfs = true)
             val input = FixtureRuntime.json.writeValueAsString(mapOf("origin" to "http://${owned.address(app)}:8080", "username" to "fixture-admin",
@@ -204,10 +215,11 @@ class OriginalEditorImageFixtureTest {
             val expectedFlags = listOf("success", "loginWithin15Seconds", "nonDefaultPreserved", "unrelatedDraftPreserved", "expectedNativeConfirmAccepted",
                 "immediateCanonicalCards", "clickedExactDownload", "ordinaryUserEditorAbsent", "ordinarySavedDetailsVisible", "adminProfileIdentityVerified", "ordinaryProfileIdentityVerified",
                 "keepEditingPreserved", "escapePreserved", "escapeFocusRestored", "keepEditingFocusRestored", "controlledDiscardAccepted",
-                "viewerLogoutObserved", "loggedOutLoginFormObserved", "repeatedViewerIdentityVerified", "cleanupConfirmed")
+                "viewerLogoutObserved", "loggedOutLoginFormObserved", "repeatedViewerIdentityVerified", "cleanupConfirmed",
+                "ordinaryAvatarChooserUsed", "ordinaryAvatarUploadRendered", "ordinaryAvatarRemoveRendered", "ordinaryAvatarNoReload")
             proof["browser"] = expectedFlags.associateWith { browserProof[it]?.booleanValue() == true }
             val browserStage = browserProof["stage"]?.asText()
-            require(browserStage in setOf("input", "launch", "normal-login", "editor", "immediate-download", "ordinary-user", "repeat-login", "complete"))
+            require(browserStage in setOf("input", "launch", "normal-login", "editor", "immediate-download", "ordinary-user", "ordinary-avatar", "repeat-login", "complete"))
             proof["browserStage"] = browserStage
             val probe = browserProof["currentSessionProbe"]
             require(probe.isObject && probe.properties().map { it.key }.toSet() ==

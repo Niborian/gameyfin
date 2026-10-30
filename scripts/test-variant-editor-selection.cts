@@ -21,6 +21,54 @@ test('player version labels prefer saved metadata without dummy Normal 0 or lost
     assert.equal(label({...normal,name:'Linux'},{variantId:1,libraryVersion:'v1.5.0'}),'Linux · v1.5.0 · Latest');
 });
 
+test('Steam watch and pause immediately apply returned canonical state and reject old actor completion',async()=>{
+    const slots:any[]=[]; let cursor=0, nodes:any[]=[], effects:(()=>void)[]=[];
+    let actor={id:7,username:'admin'};
+    const canonical={state:{1:{id:1,variants:[{id:10,steamAppId:undefined as string|undefined,steamNewsWatchEnabled:true}]}}};
+    const pending:((value:any)=>void)[]=[];
+    const auth={state:{initializing:false,loading:false,user:actor}};
+    const react={
+        useState(initial:any){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],(v:any)=>{slots[i]=typeof v==='function'?v(slots[i]):v;}];},
+        useRef(initial:any){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},
+        useLayoutEffect(callback:()=>any,deps:any[]){const i=cursor++,old=slots[i];if(!old||deps.some((v,j)=>!Object.is(v,old.deps[j])))effects.push(()=>{old?.cleanup?.();slots[i]={deps,cleanup:callback()};});}
+    };
+    function jsx(type:any,props:any){nodes.push({type,props});return{type,props};}
+    const module={exports:{} as any};
+    const source=fs.readFileSync(path.resolve(__dirname,'../app/src/main/frontend/components/administration/VariantDetailsEditor.tsx'),'utf8');
+    const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
+    vm.runInNewContext(code,{module,exports:module.exports,require(name:string){
+        if(name==='react')return react;
+        if(name==='react/jsx-runtime')return{jsx,jsxs:jsx};
+        if(name==='@heroui/react')return new Proxy({},{get:(_,key)=>key});
+        if(name==='Frontend/state/GameState')return{gameState:canonical};
+        if(name.endsWith('/auth'))return{useAuth:()=>auth};
+        if(name.endsWith('/utils'))return{isAdmin:()=>true};
+        if(name.endsWith('/VariantStore'))return{default:{UNKNOWN:'UNKNOWN',STEAM:'STEAM'}};
+        if(name==='Frontend/generated/endpoints')return{
+            VariantDetailsEndpoint:{getDetails:async()=>({store:'STEAM',storeProductId:'244850',detailsRevision:'1',detailsManualOverride:false})},
+            GameEndpoint:{setVariantSteamNewsWatch:()=>new Promise(resolve=>pending.push(resolve))}
+        };
+        return{default:name};
+    }});
+    const render=()=>{cursor=0;nodes=[];effects=[];module.exports.default({gameId:1,variant:canonical.state[1].variants[0]});effects.forEach(effect=>effect());};
+    const button=(label:string)=>nodes.find(n=>n.type==='Button'&&n.props.children===label);
+    render();await new Promise(done=>setImmediate(done));render();
+    const watch=button('Watch Steam updates').props.onPress();
+    pending.shift()!({id:1,variants:[{id:10,steamAppId:'244850',steamNewsWatchEnabled:true}]});await watch;render();
+    const stop=nodes.find(n=>n.type==='Button'&&Array.isArray(n.props.children)&&n.props.children[0]==='Stop watching Steam app ');
+    assert.ok(stop,'Stop must be available immediately, without a reload');
+    const pause=stop.props.onPress();
+    pending.shift()!({id:1,variants:[{id:10,steamAppId:'244850',steamNewsWatchEnabled:false}]});await pause;render();
+    assert.equal(canonical.state[1].variants[0].steamAppId,'244850');
+    assert.equal(canonical.state[1].variants[0].steamNewsWatchEnabled,false);
+    assert.ok(nodes.some(n=>n.props.children==='Steam update monitoring paused'));
+    const stale=button('Watch Steam updates').props.onPress();
+    auth.state.user={id:8,username:'other-admin'};render();
+    pending.shift()!({id:1,variants:[{id:10,steamAppId:'999',steamNewsWatchEnabled:true}]});await stale;
+    assert.equal(canonical.state[1].variants[0].steamAppId,'244850');
+    assert.equal(canonical.state[1].variants[0].steamNewsWatchEnabled,false);
+});
+
 function comboFixture() {
     const slots: any[] = []; let cursor=0, effects: (() => void)[]=[], nodes: any[]=[], writes=0;
     let actor={id:7,username:'fixture'}, preference='download-method';

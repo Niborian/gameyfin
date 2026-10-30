@@ -7,6 +7,7 @@ import VariantDetailsPreviewDto from "Frontend/generated/org/gameyfin/app/games/
 import VariantStore from "Frontend/generated/org/gameyfin/app/games/entities/VariantStore";
 import {useAuth} from "Frontend/util/auth";
 import {isAdmin} from "Frontend/util/utils";
+import {gameState} from "Frontend/state/GameState";
 
 type Fields = {store: VariantStore; storeProductId: string; edition: string; libraryVersion: string; buildId: string; manualOverride: boolean};
 function fields(value?: VariantDetailsDto): Fields {
@@ -78,8 +79,11 @@ export default function VariantDetailsEditor({gameId, variant, onChanged, onDirt
         if (!permitted || busy || dirty || loadedEpoch !== owner.current.epoch || (enabled && saved.store !== VariantStore.STEAM)) return;
         const current = begin(); setBusy("track"); setMessage("");
         try {
-            await GameEndpoint.setVariantSteamNewsWatch(gameId, variant.id, enabled, enabled ? saved.storeProductId : undefined);
-            if (current()) {setMessage(enabled ? "Steam app mapping verified for update notices. Enable monitoring under Administration → Game Requests. No download was started." : "Steam update tracking stopped for this variant. Local details and files are unchanged."); onChanged?.();}
+            const updated = await GameEndpoint.setVariantSteamNewsWatch(gameId, variant.id, enabled, enabled ? saved.storeProductId : undefined);
+            if (!current() || updated.id !== gameId) return;
+            gameState.state[updated.id] = updated;
+            setMessage(enabled ? "Steam app mapping verified for update notices. Enable monitoring under Administration → Game Requests. No download was started." : "Steam update tracking stopped for this variant. Local details and files are unchanged.");
+            onChanged?.();
         } catch {if (current()) setMessage("Could not verify the Steam mapping. Check the saved numeric product ID and try again.");}
         finally {if (current()) setBusy(undefined);}
     }

@@ -94,13 +94,26 @@ class AvatarMachineLoopbackTest {
             val owner = AvatarTransactions(dataSource, authority, AvatarLedger(), nativeAccount = reader::read)
             val machineApplyReady = AtomicReference<CountDownLatch?>(null)
             val machineApplyProceed = AtomicReference<CountDownLatch?>(null)
+            val replyCommitted = AtomicReference<CountDownLatch?>(null)
+            val replyProceed = AtomicReference<CountDownLatch?>(null)
+            val replyReleaseObserved = AtomicReference<Boolean?>(null)
+            val replyGateFinished = CountDownLatch(1)
             val operations = object : AvatarMachineOperations {
                 override fun preflight(secret: String, scope: AvatarLedger.Scope, requestFence: () -> Unit) = owner.preflight(secret, scope, requestFence)
                 override fun current(secret: String, scope: AvatarLedger.Scope, requestFence: () -> Unit) = owner.current(secret, scope, requestFence)
                 override fun apply(secret: String, intent: AvatarLedger.Intent, png: CanonicalAvatarPng?, requestFence: () -> Unit): AvatarLedger.Receipt {
                     machineApplyReady.get()?.countDown()
                     machineApplyProceed.get()?.let { check(it.await(3, TimeUnit.SECONDS)) }
-                    return owner.apply(secret, intent, png, requestFence)
+                    val receipt = owner.apply(secret, intent, png, requestFence)
+                    val committedGate = replyCommitted.get()
+                    val proceedGate = replyProceed.get()
+                    committedGate?.countDown()
+                    proceedGate?.let {
+                        val released = it.await(3, TimeUnit.SECONDS)
+                        replyReleaseObserved.set(released); replyGateFinished.countDown()
+                        check(released)
+                    }
+                    return receipt
                 }
                 override fun originalReceipt(secret: String, installation: UUID, operation: UUID, intentDigest: String, restore: UUID, requestFence: () -> Unit) =
                     owner.originalReceipt(secret, installation, operation, intentDigest, restore, requestFence)
@@ -168,6 +181,50 @@ class AvatarMachineLoopbackTest {
             dataSource.connection.use { connection ->
                 assertNull(AvatarLedger().receipt(connection, installation, first.operation))
             }
+            // Real native SQL commit, then reset the actual TCP client before the
+            // servlet can serialize its reply. No fabricated HTTP/JDBC outcome.
+            val committed = CountDownLatch(1)
+            val releaseReply = CountDownLatch(1)
+            replyCommitted.set(committed); replyProceed.set(releaseReply)
+            try {
+                Socket(InetAddress.getByName("127.0.0.1"), port).use { socket ->
+                    socket.soTimeout = 4000
+                    val headers = "PUT /internal/avatar/v1/avatar HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n" +
+                        "Content-Length: ${bytes.size}\r\nContent-Type: image/png\r\n" +
+                        "${AvatarMachineProtocol.HEADER}: ${String(AvatarMachineProtocol.json(intentMap(first)), Charsets.UTF_8)}\r\n" +
+                        "Authorization: Bearer $secret\r\n\r\n"
+                    socket.getOutputStream().apply { write(headers.toByteArray(Charsets.US_ASCII)); write(bytes); flush() }
+                    assertTrue(committed.await(3, TimeUnit.SECONDS), "Native commit must precede client reset")
+                    // Inspect through a separate connection while response return
+                    // is held: this must already be committed, not just staged.
+                    dataSource.connection.use { connection ->
+                        val receipt = assertNotNull(AvatarLedger().receipt(connection, installation, first.operation))
+                        assertEquals(first.digest(), receipt.intentDigest)
+                        assertEquals(1L, receipt.resultingVersion)
+                        assertEquals(hash, receipt.resultingHash)
+                    }
+                    assertEquals(0, socket.getInputStream().available(), "No HTTP response may precede client reset")
+                    socket.setSoLinger(true, 0)
+                }
+            } finally {
+                replyCommitted.set(null); replyProceed.set(null); releaseReply.countDown()
+                assertTrue(replyGateFinished.await(3, TimeUnit.SECONDS), "Response gate must finish after reset/release")
+                assertEquals(true, replyReleaseObserved.get(), "Response gate must not expire before client reset")
+            }
+            authority.install(AvatarAuthority.TrustedConfiguration(scopes.zip(bindings).map { (scope, binding) ->
+                AvatarAuthority.CurrentGrant(scope, binding, AvatarAuthority.Verifier.fromSecret(secret)) },
+                listOf(AvatarAuthority.HistoricalGrant(installation, first.operation, first.digest(), restore,
+                    AvatarAuthority.Verifier.fromSecret(recoverySecret)))))
+            val originalPin = mapOf("installation" to installation.toString(), "operation" to first.operation.toString(),
+                "intentDigest" to first.digest(), "restore" to restore.toString())
+            val lostReplyRecovery = call("GET", "receipt", originalPin, bearer = recoverySecret)
+            assertEquals(200, lostReplyRecovery.first)
+            assertTrue(lostReplyRecovery.second.contains("COMMITTED"))
+            assertTrue(lostReplyRecovery.second.contains(first.digest()))
+            assertEquals(1L, owner.current(secret, scopes[0]).version)
+            assertEquals(hash, owner.current(secret, scopes[0]).hash)
+            // Recovery above was receipt-only. This separate existing assertion
+            // checks native duplicate handling, not permission for Main to retry.
             val written = call("PUT", "avatar", intentMap(first), bytes)
             assertEquals(200, written.first); assertTrue(written.second.contains(first.digest()))
             assertEquals(written, call("PUT", "avatar", intentMap(first), bytes))

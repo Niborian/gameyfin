@@ -316,7 +316,8 @@ async function run(): Promise<void> {
     await page.goto(input.origin + '/game/34000', {waitUntil: 'domcontentloaded', timeout: gameReadyRemaining()});
     proof.editorPhase = 'game-ready';
     await page.waitForFunction((version: string) => location.pathname === '/game/34000' &&
-      document.body.textContent?.includes('Unofficial Gameyfin ' + version) && document.body.textContent?.includes('Downloading: v0.9') &&
+      document.body.textContent?.includes('Unofficial Gameyfin ' + version) &&
+      [...document.querySelectorAll('button[aria-haspopup="listbox"]')].some(node => node.parentElement?.textContent?.includes('Version') && node.textContent?.includes('v0.9')) &&
       [...document.querySelectorAll('button[aria-haspopup="listbox"]')].filter(node => node.parentElement?.textContent?.includes('Version')).length === 1,
     {timeout: gameReadyRemaining()}, input.expectedVersion);
     gameReadyPassed = true;
@@ -331,7 +332,7 @@ async function run(): Promise<void> {
         gameRouteMatches: location.pathname === '/game/34000',
         footerMatches: document.body.textContent?.includes('Unofficial Gameyfin ' + version) === true,
         versionTriggerUnique: [...document.querySelectorAll('button[aria-haspopup="listbox"]')].filter(node => node.parentElement?.textContent?.includes('Version')).length === 1,
-        defaultVersionObserved: document.body.textContent?.includes('Downloading: v0.9') === true,
+        defaultVersionObserved: [...document.querySelectorAll('button[aria-haspopup="listbox"]')].some(node => node.parentElement?.textContent?.includes('Version') && node.textContent?.includes('v0.9')),
         profilePresent: document.querySelectorAll('nav div[data-slot="trigger"][aria-haspopup="true"] button').length === 1,
         signInPresent: document.querySelectorAll('nav button.gradient-primary').length === 1 && !document.querySelector('nav button.size-8'),
         loginFormPresent: !!document.querySelector('input[name="username"]'),
@@ -358,10 +359,10 @@ async function run(): Promise<void> {
   // A raw handle click can hit an animating control before its final position.
   await version.asElement().asLocator().setTimeout(5000).click(); await version.dispose();
   proof.editorPhase = 'version-options';
-  await page.waitForFunction(() => [...document.querySelectorAll('[role="option"]')].some(option => option.textContent?.trim() === 'v1.5.0 · Latest'), {timeout: 5000});
+  await page.waitForFunction(() => [...document.querySelectorAll('[role="option"]')].some(option => option.textContent?.trim() === 'v1.5.0'), {timeout: 5000});
   proof.targetOptionObserved = true; proof.editorPhase = 'selected-version';
-  await clickText(page, 'v1.5.0 · Latest');
-  await page.waitForFunction(() => document.body.textContent?.includes('Downloading: v1.5.0'), {timeout: 5000});
+  await clickText(page, 'v1.5.0');
+  await page.waitForFunction(() => [...document.querySelectorAll('button[aria-haspopup="listbox"]')].some(node => node.parentElement?.textContent?.includes('Version') && node.textContent?.includes('v1.5.0')), {timeout: 5000});
   proof.targetVersionObserved = true; proof.editorPhase = 'editor-open';
   await clickText(page, 'Versions & content');
   await page.waitForSelector('[role="dialog"] input', {timeout: 5000});
@@ -540,13 +541,14 @@ async function run(): Promise<void> {
   }
   proof.editorPhase = 'cards';
   try {
-    await page.waitForFunction(() => !document.querySelector('[role="dialog"]') && document.body.textContent?.includes('Downloading: v1.5.0') &&
+    await page.waitForFunction(() => !document.querySelector('[role="dialog"]') &&
+      [...document.querySelectorAll('button[aria-haspopup="listbox"]')].some(node => node.parentElement?.textContent?.includes('Version') && node.textContent?.includes('v1.5.0')) &&
       document.body.textContent?.includes('Base') && document.body.textContent?.includes('patch.bin') && !document.body.textContent?.includes('Broad original'), {timeout: 5000});
   } finally {
     const cards = await page.evaluate(() => ({
       editorClosed: !document.querySelector('[role="dialog"]'),
       editorDialogStillPresent: [...document.querySelectorAll('[role="dialog"]')].some(dialog => dialog.textContent?.includes('Versions & content')),
-      savedVersionShown: document.body.textContent?.includes('Downloading: v1.5.0') === true,
+      savedVersionShown: [...document.querySelectorAll('button[aria-haspopup="listbox"]')].some(node => node.parentElement?.textContent?.includes('Version') && node.textContent?.includes('v1.5.0')),
       savedBaseShown: document.body.textContent?.includes('Base') === true,
       savedPatchShown: document.body.textContent?.includes('patch.bin') === true,
       broadOriginalAbsent: !document.body.textContent?.includes('Broad original')
@@ -610,7 +612,7 @@ async function run(): Promise<void> {
   await login(viewerPage, input, 'fixture-user', input.viewerPassword);
   proof.ordinaryProfileIdentityVerified = true;
   await viewerPage.goto(input.origin + '/game/34000', {waitUntil: 'domcontentloaded', timeout: 10000});
-  await viewerPage.waitForFunction(() => document.body.textContent?.includes('Downloading: v0.9'), {timeout: 10000});
+  await viewerPage.waitForFunction(() => [...document.querySelectorAll('button[aria-haspopup="listbox"]')].some(node => node.parentElement?.textContent?.includes('Version') && node.textContent?.includes('v0.9')), {timeout: 10000});
   proof.ordinaryUserEditorAbsent = await viewerPage.evaluate(() => ![...document.querySelectorAll('button')].some(button => button.textContent?.trim() === 'Versions & content'));
   if (!proof.ordinaryUserEditorAbsent || failed || expectedDialog) throw new Error('UI gate');
   const viewerVersion = await viewerPage.evaluateHandle(() => {
@@ -619,10 +621,11 @@ async function run(): Promise<void> {
   });
   try { await viewerVersion.asElement().asLocator().setTimeout(5000).click(); } finally { await viewerVersion.dispose(); }
   await viewerPage.waitForFunction(() => [...document.querySelectorAll('[role="option"]')].some(option =>
-    option.textContent?.trim() === 'v1.5.0 · Latest' && option.getBoundingClientRect().width > 0), {timeout: 5000});
-  await clickText(viewerPage, 'v1.5.0 · Latest');
-  await viewerPage.waitForFunction(() => document.body.textContent?.includes('Downloading: v1.5.0') &&
-    [...document.querySelectorAll('p')].some(node => node.textContent === 'Edition: Survivors of the Void + Seekers of the Storm + Alloyed Collective + Hallowed Concepts'), {timeout: 5000});
+    option.textContent?.trim() === 'v1.5.0' && option.getBoundingClientRect().width > 0), {timeout: 5000});
+  await clickText(viewerPage, 'v1.5.0');
+  await viewerPage.waitForFunction(() => [...document.querySelectorAll('button[aria-haspopup="listbox"]')].some(node => node.parentElement?.textContent?.includes('Version') && node.textContent?.includes('v1.5.0')) &&
+    ['Survivors of the Void','Seekers of the Storm','Alloyed Collective','Hallowed Concepts'].every(label =>
+      [...document.querySelectorAll('[aria-label="Edition details"] [data-slot="content"]')].some(node => node.textContent?.trim() === label)), {timeout: 5000});
   proof.ordinarySavedDetailsVisible = true;
   proof.stage = 'ordinary-avatar';
   // Actual local-profile controls only. No managedBySso bypass, RPC mutation,

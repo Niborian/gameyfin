@@ -3,11 +3,15 @@
 // DownloadBehavior policy=allowAndName (documented since25.12), native Dialog.accept.
 const {createRequire} = require('node:module');
 const {readFile, readdir, mkdir, stat} = require('node:fs/promises');
+const nativeHttp = require('node:http');
 const puppeteer = createRequire('/home/pptruser/package.json')('puppeteer');
 interface FixtureInput { origin: string; username: string; password: string; viewerPassword: string; providerName: string; providerKey: string; expectedVersion: string; }
 interface SavedContent { id: number; name: string; required: boolean; defaultSelected: boolean; type: string; memberNames: string[]; }
 interface SavedVariant { id: number; version: string; default: boolean; contents: SavedContent[]; }
 interface SavedGame { id: number; variants: SavedVariant[]; }
+type SessionProbe = {kind: 'not-run' | 'completed' | 'timeout' | 'error' | 'input-refused' | 'body-refused' | 'json-refused';
+  status: number | null; currentIdentityMatches: boolean; profileNull: boolean};
+const emptySessionProbe = (): SessionProbe => ({kind: 'not-run', status: null, currentIdentityMatches: false, profileNull: false});
 const gameDiagnostic = () => ({phase: 'not-started', truncated: false, pageerrorSeen: false,
   domObserved: false, profilePresent: false, signInPresent: false, loginFormPresent: false, errorHeadingPresent: false,
   families: Object.fromEntries(['game', 'library', 'user'].map(key => [key, {count: 0, status: null as number | null,
@@ -34,6 +38,7 @@ const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', s
     postExists: false, postEnabled: false, postInViewport: false, postCenterOwn: false, postCenterToast: false,
     trustedCloseClick: false, trustedOtherClick: false},
   gameDiagnostics: gameDiagnostic(),
+  currentSessionProbe: emptySessionProbe(),
   repeatPhase: 'not-started', viewerLogoutObserved: false, loggedOutLoginFormObserved: false,
   repeatedViewerIdentityVerified: false,
   sandboxDisabledForIsolatedSyntheticAppOnly: true};
@@ -135,6 +140,76 @@ async function clickText(page: any, text: string, scope = 'body'): Promise<void>
   }, text, scope);
   try { await handle.asElement().asLocator().setTimeout(5000).click(); } finally { await handle.dispose(); }
 }
+/** Failure-only discriminator, NOT retry/recovery/acceptance. Current cookie jar
+ * is not proof of the original pending request's send-time cookies/server receipt.
+ * Secrets/body remain transient in this process and never enter the proof envelope. */
+async function probeCurrentSession(page: any, input: FixtureInput): Promise<SessionProbe> {
+  const result = emptySessionProbe();
+  const deadline = performance.now() + 2000;
+  let request: any;
+  let agent: any;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let expired = false;
+  try {
+    const work = async (): Promise<SessionProbe> => {
+      const origin = new URL(input.origin);
+      const octets = origin.hostname.split('.');
+      if (origin.protocol !== 'http:' || origin.port !== '8080' || origin.href !== input.origin + '/' ||
+          octets.length !== 4 || octets.some(value => !/^[0-9]{1,3}$/.test(value) || Number(value) > 255) ||
+          Number(octets[0]) !== 172 || Number(octets[1]) < 16 || Number(octets[1]) > 31)
+        return {...result, kind: 'input-refused'};
+      const [cookies, csrf] = await Promise.all([page.cookies(input.origin), page.evaluate(() =>
+        document.querySelector('meta[name="_csrf"]')?.getAttribute('content'))]);
+      if (expired || performance.now() >= deadline) return {...result, kind: 'timeout'};
+      if (!Array.isArray(cookies) || cookies.length > 32 || typeof csrf !== 'string' ||
+          csrf.length < 1 || csrf.length > 1024 || !/^[A-Za-z0-9_.~+/%=-]+$/.test(csrf) ||
+          cookies.some(cookie => typeof cookie.name !== 'string' || !/^[A-Za-z0-9_.-]{1,128}$/.test(cookie.name) ||
+            typeof cookie.value !== 'string' || cookie.value.length > 4096 ||
+            !/^[\x21-\x7e]*$/.test(cookie.value) || /[;"\\]/.test(cookie.value)))
+        return {...result, kind: 'input-refused'};
+      const cookieHeader = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
+      if (cookieHeader.length > 8192) return {...result, kind: 'input-refused'};
+      return new Promise<SessionProbe>(resolve => {
+        // Dedicated direct transport: never inherit a global environment proxy.
+        agent = new nativeHttp.Agent({keepAlive: false, proxyEnv: {}});
+        request = nativeHttp.request({hostname: origin.hostname, port: 8080, method: 'POST',
+          path: '/connect/UserEndpoint/getUserInfo', agent,
+          headers: {'Content-Type': 'application/json', 'Content-Length': '2', 'X-CSRF-Token': csrf,
+            Cookie: cookieHeader, Accept: 'application/json', Connection: 'close'}}, (response: any) => {
+          const status = response.statusCode;
+          if (!Number.isInteger(status) || status < 100 || status > 599) {
+            response.destroy(); resolve({...result, kind: 'error'}); return;
+          }
+          result.status = status;
+          const chunks: any[] = []; let count = 0;
+          response.on('data', (chunk: any) => {
+            count += chunk.length;
+            if (count > 65536) { response.destroy(); resolve({...result, kind: 'body-refused'}); }
+            else chunks.push(chunk);
+          });
+          response.on('error', () => resolve({...result, kind: expired ? 'timeout' : 'error'}));
+          response.on('end', () => {
+            if (expired || performance.now() >= deadline) { resolve({...result, kind: 'timeout'}); return; }
+            // Native client never follows redirects or adopts Set-Cookie headers.
+            if (status !== 200) { resolve({...result, kind: 'completed'}); return; }
+            try {
+              const value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+              resolve({...result, kind: 'completed', profileNull: value === null,
+                currentIdentityMatches: value?.username === input.username && value?.enabled === true &&
+                  Number.isSafeInteger(value?.id) && value.id > 0});
+            } catch { resolve({...result, kind: 'json-refused'}); }
+          });
+        });
+        request.on('error', () => resolve({...result, kind: expired ? 'timeout' : 'error'}));
+        request.end('{}');
+      });
+    };
+    return await Promise.race([work(), new Promise<SessionProbe>(resolve => {
+      timer = setTimeout(() => { expired = true; request?.destroy(); resolve({...result, kind: 'timeout'}); }, 2000);
+    })]);
+  } catch { return {...result, kind: expired ? 'timeout' : 'error'}; }
+  finally { if (timer) clearTimeout(timer); request?.destroy(); agent?.destroy(); }
+}
 async function login(page: any, input: FixtureInput, username: string, password: string, alreadyOnForm = false): Promise<void> {
   proof.loginPhase = 'opening-login';
   proof.profileResponseObserved = false; proof.profileIdentityMatched = false;
@@ -234,6 +309,7 @@ async function run(): Promise<void> {
   // MainLayout's footer is not evidence that asynchronous catalogue data has
   // rendered GameView. Require the actual route, original Version control and
   // pinned selection together, within one navigation+readiness15s deadline.
+  let gameReadyPassed = false;
   try {
     await page.goto(input.origin + '/game/34000', {waitUntil: 'domcontentloaded', timeout: gameReadyRemaining()});
     proof.editorPhase = 'game-ready';
@@ -241,6 +317,7 @@ async function run(): Promise<void> {
       document.body.textContent?.includes('Unofficial Gameyfin ' + version) && document.body.textContent?.includes('Downloading: v0.9') &&
       [...document.querySelectorAll('button[aria-haspopup="listbox"]')].filter(node => node.parentElement?.textContent?.includes('Version')).length === 1,
     {timeout: gameReadyRemaining()}, input.expectedVersion);
+    gameReadyPassed = true;
   } finally {
     continuationObserver = undefined;
     navigationObservation.stop();
@@ -267,6 +344,7 @@ async function run(): Promise<void> {
         errorHeadingPresent: snapshot.errorHeadingPresent === true});
     } catch { /* Missing diagnostic evidence remains false; the original gate controls acceptance. */ }
     finally { if (snapshotTimer) clearTimeout(snapshotTimer); }
+    if (!gameReadyPassed) proof.currentSessionProbe = await probeCurrentSession(page, input);
   }
   // The original Version select, not a direct endpoint/state mutation.
   proof.editorPhase = 'version-trigger';

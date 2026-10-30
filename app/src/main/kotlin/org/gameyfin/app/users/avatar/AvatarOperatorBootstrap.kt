@@ -34,6 +34,6 @@ class AvatarOperatorBootstrap {
         val owner = root.fileSystem.userPrincipalLookupService.lookupPrincipalByName(
             environment.getRequiredProperty("gameyfin.avatar.operator.owner"))
         return AvatarOperatorControl(root, owner, runtime::operatorStatus,
-            runtime::revokeOperatorAuthority, runtime::reloadOperatorFiles)
+            runtime::revokeOperatorAuthority, runtime::reloadOperatorFiles, runtime::inspectNativeUser)
     }
 }

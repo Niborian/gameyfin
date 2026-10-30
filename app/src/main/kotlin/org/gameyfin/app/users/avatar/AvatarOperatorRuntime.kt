@@ -10,7 +10,7 @@ import javax.sql.DataSource
  * operator control must pause dispatch, revoke, deliver files, reload, then resume.
  */
 class AvatarOperatorRuntime(files: AvatarOperatorFiles, private val identity: AvatarOperatorLoader.RuntimeIdentity,
-                            dataSource: DataSource, storage: FileStorageService) : AvatarMachineOperations {
+                            private val dataSource: DataSource, storage: FileStorageService) : AvatarMachineOperations {
     private val authority = AvatarAuthority()
     private val accounts = AtomicReference<NativeAvatarAccountReader?>(null)
     private val loader = AvatarOperatorLoader(files, identity)
@@ -33,6 +33,30 @@ class AvatarOperatorRuntime(files: AvatarOperatorFiles, private val identity: Av
     @Synchronized internal fun operatorStatus(): String =
         "STATUS 1 ${identity.installation} ${identity.imageDigest} ${identity.buildChecksum} " +
             "${identity.bootNonce} ${if (enabled) "enabled" else "revoked"} ${revision ?: 0}\n"
+
+    /** Same-principal Unix operator only. Does not initialize avatar rows or
+     * install authority; Main must separately attest identity history/mode. */
+    internal fun inspectNativeUser(userId: Long): String = dataSource.connection.use { connection ->
+        check(connection.autoCommit)
+        connection.transactionIsolation = java.sql.Connection.TRANSACTION_READ_COMMITTED
+        connection.autoCommit = false
+        try {
+            val actual = NativeAvatarAccountReader(emptyList()).inspect(connection, userId)
+                ?: throw AvatarAuthority.Denied()
+            val result = tools.jackson.databind.ObjectMapper().writeValueAsString(mapOf(
+                "schema" to 1, "provenance" to "native-current-observation",
+                "userId" to actual.userId, "nativeEpoch" to actual.nativeEpoch.toString(),
+                "nativeRevision" to actual.nativeRevision, "oidcRevision" to actual.oidcRevision,
+                "issuer" to actual.issuer, "clientId" to actual.clientId, "subject" to actual.subject
+            )) + "\n"
+            require(result.toByteArray(Charsets.UTF_8).size <= 32768)
+            connection.commit()
+            result
+        } catch (failure: Exception) {
+            connection.rollback()
+            throw AvatarAuthority.Denied()
+        }
+    }
 
     override fun preflight(secret: String, scope: AvatarLedger.Scope, requestFence: () -> Unit) = transactions.preflight(secret, scope, requestFence)
     override fun current(secret: String, scope: AvatarLedger.Scope, requestFence: () -> Unit) = transactions.current(secret, scope, requestFence)

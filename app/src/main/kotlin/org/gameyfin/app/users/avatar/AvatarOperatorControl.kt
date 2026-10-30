@@ -26,7 +26,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 internal class AvatarOperatorControl(
     private val root: Path, private val owner: UserPrincipal,
-    private val status: () -> String, private val revoke: () -> Unit, private val reload: () -> Unit
+    private val status: () -> String, private val revoke: () -> Unit, private val reload: () -> Unit,
+    private val inspect: (Long) -> String = { "DENIED\n" }
 ) : AutoCloseable {
     private val running = AtomicBoolean(false)
     private var listener: ServerSocketChannel? = null
@@ -92,9 +93,9 @@ internal class AvatarOperatorControl(
                         val command = readCommand(client, deadline)
                         val response = synchronized(dispatch) {
                             require(running.get() && System.nanoTime() < deadline)
-                            command(command, status, revoke, reload)
+                            command(command, status, revoke, reload, inspect)
                         }
-                        write(client, response.toByteArray(Charsets.US_ASCII), deadline)
+                        write(client, response.toByteArray(Charsets.UTF_8), deadline)
                     } catch (_: Exception) {
                         // No path, peer, configuration or exception disclosure.
                     } finally { active = null }
@@ -109,7 +110,7 @@ internal class AvatarOperatorControl(
     }
 
     private fun readCommand(client: SocketChannel, deadline: Long): ByteArray {
-        val bytes = ByteBuffer.allocate(9) // longest valid command is REVOKE\n (7).
+        val bytes = ByteBuffer.allocate(32) // Includes INSPECT + one positive Long + newline.
         while (true) {
             val count = client.read(bytes)
             require(count >= 0)
@@ -121,7 +122,7 @@ internal class AvatarOperatorControl(
         }
     }
     private fun write(client: SocketChannel, bytes: ByteArray, deadline: Long) {
-        require(bytes.size <= 512)
+        require(bytes.size <= 32768)
         val buffer = ByteBuffer.wrap(bytes)
         while (buffer.hasRemaining()) {
             if (client.write(buffer) == 0) await(client, SelectionKey.OP_WRITE, deadline)
@@ -166,13 +167,20 @@ internal class AvatarOperatorControl(
     companion object {
         /** Exact ASCII grammar; no arbitrary path/config/secret accepted. */
         internal fun command(bytes: ByteArray, status: () -> String,
-                             revoke: () -> Unit, reload: () -> Unit): String = when {
+                             revoke: () -> Unit, reload: () -> Unit,
+                             inspect: (Long) -> String = { "DENIED\n" }): String = when {
             bytes.contentEquals("STATUS\n".toByteArray()) -> status()
             bytes.contentEquals("REVOKE\n".toByteArray()) -> { revoke(); "OK\n" }
             bytes.contentEquals("RELOAD\n".toByteArray()) -> {
                 try { reload(); "OK\n" } catch (_: Exception) { revoke(); "DENIED\n" }
             }
-            else -> "DENIED\n"
+            else -> {
+                val input = bytes.toString(Charsets.US_ASCII)
+                val id = Regex("INSPECT ([1-9][0-9]{0,18})\n").matchEntire(input)
+                    ?.groupValues?.get(1)?.toLongOrNull()
+                if (id == null) "DENIED\n"
+                else try { inspect(id) } catch (_: Exception) { "DENIED\n" }
+            }
         }
     }
 }

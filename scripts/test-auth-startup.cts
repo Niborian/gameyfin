@@ -33,6 +33,61 @@ function load<T extends object = VmExports>(file: string, mocks: ModuleMocks = {
 const lifecycle = load('util/startupLifecycle.ts');
 function deferred<T = unknown>(): Deferred<T> { let resolve!: (value: T) => void; const promise = new Promise<T>(r => {resolve = r;}); return {promise, resolve}; }
 const cases: StateName[] = ['Library', 'Collection', 'Platform', 'GameRequest', 'Plugin', 'Game', 'DownloadSession', 'User'];
+test('actual Hilla close and reopen refreshes the library snapshot instead of retaining a dead subscription', async () => {
+    let transport: any; const sent: any[] = [];
+    const fluxSource = fs.readFileSync(path.join(path.dirname(appRequire.resolve('@vaadin/hilla-frontend')), 'FluxConnection.js'), 'utf8');
+    const compiled = ts.transpileModule(fluxSource, {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}});
+    const fluxModule = {exports: {} as any};
+    vm.runInNewContext(compiled.outputText, {module: fluxModule, exports: fluxModule.exports, EventTarget, CustomEvent, console,
+        require(name: string) {
+            if (name === './utils.js') return {VAADIN_BROWSER_ENVIRONMENT: true};
+            if (name === './CsrfInfoSource.js') return {default: {get: async () => ({headerEntries: []})}};
+            if (name === './FluxMessages.js') return {isClientMessage: value => typeof value?.id === 'string' && value['@type'] === 'update'};
+            if (name === 'atmosphere.js') return {default: {subscribe: options => {transport = options; return {push: value => sent.push(JSON.parse(value))};}}};
+            throw new Error(`Unexpected Hilla test dependency: ${name}`);
+        }});
+    const connection = new fluxModule.exports.FluxConnection('/connect');
+    await connection.ready; transport.onOpen();
+    let requests = 0, rows = [{id: 1}];
+    const endpoint = {getAll: async () => {requests++; return rows;},
+        subscribeToLibraryEvents: () => connection.subscribe('LibraryEndpoint', 'subscribeToLibraryEvents', {})};
+    const mod = load('state/LibraryState.ts', {'Frontend/generated/endpoints': {LibraryEndpoint: endpoint}});
+    const controller = new AbortController();
+    await mod.initializeLibraryState(controller.signal);
+    const original = sent.find(message => message['@type'] === 'subscribe').id;
+    rows = [{id: 2}]; // Represents changes while this client was disconnected.
+    transport.onClose(); transport.onReopen();
+    assert.equal(requests, 2, 'Hilla reopen itself must start recovery without another page initializer');
+    await mod.initializeLibraryState(controller.signal);
+    assert.equal(requests, 2, 'A reopened transport must not leave a stale loaded cache');
+    assert.deepEqual(Object.keys(mod.libraryState.state), ['2']);
+    const subscriptions = sent.filter(message => message['@type'] === 'subscribe');
+    assert.equal(subscriptions.length, 2); assert.notEqual(subscriptions[1].id, original);
+    transport.onMessage({responseBody: JSON.stringify({'@type': 'update', id: subscriptions[1].id,
+        item: [{type: 'updated', library: {id: 2, refreshed: true}}]})});
+    assert.equal(mod.libraryState.state[2].refreshed, true);
+    controller.abort();
+});
+test('lost subscription refresh is owned, single-shot and cannot attach after auth cancellation', async () => {
+    const pending = deferred(); let requests = 0, cancelled = 0;
+    const callbacks: EventCallback[] = [], lost: Array<() => string> = [];
+    const endpoint = {
+        getAll: () => ++requests === 1 ? Promise.resolve([{id: 1}]) : pending.promise,
+        subscribeToLibraryEvents: () => ({onNext(fn) {
+            callbacks.push(fn);
+            return {cancel() {cancelled++;}, onSubscriptionLost(fn) {lost.push(fn);}};
+        }})
+    };
+    const mod = load('state/LibraryState.ts', {'Frontend/generated/endpoints': {LibraryEndpoint: endpoint}});
+    const controller = new AbortController(); await mod.initializeLibraryState(controller.signal);
+    assert.equal(lost[0](), 'remove'); assert.equal(requests, 2); assert.equal(cancelled, 1);
+    const refresh = mod.initializeLibraryState(controller.signal);
+    assert.equal(lost[0](), 'remove'); assert.equal(requests, 2);
+    callbacks[0]({forEach() {throw new Error('Retired subscription processed payload');}});
+    controller.abort(); pending.resolve([{id: 99}]); await refresh;
+    assert.equal(callbacks.length, 1); assert.equal(Object.keys(mod.libraryState.state).length, 0);
+    assert.equal(mod.libraryState.subscription, undefined);
+});
 test('scan startup waits for library readiness before consuming the one-time scan snapshot', async () => {
     const ready = deferred(); let attached = 0, cancelled = 0, requests = 0;
     const progress = {scanId: 'active', libraryId: 52, status: 'IN_PROGRESS'};

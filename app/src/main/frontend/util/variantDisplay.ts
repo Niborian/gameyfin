@@ -8,5 +8,11 @@ export function variantDisplayLabel(variant: VariantLabel, details?: VariantDisp
     const version = saved || (legacy && legacy !== "0" ? legacy : "");
     const meaningfulName = variant.name.trim().toLowerCase() !== "normal" ? variant.name.trim() : "";
     const label = version ? (/^\d/.test(version) ? `v${version}` : version) : "";
-    return [meaningfulName, label, variant.latestForVariant ? "Latest" : ""].filter(Boolean).join(" · ") || "Version not specified";
+    // latestForVariant only orders local copies; it is not evidence of publisher currency.
+    return [meaningfulName, label].filter(Boolean).join(" · ") || "Version not specified";
+}
+
+/** Split explicitly separated edition labels, without interpreting them as selected download content. */
+export function editionPillLabels(edition?: string): string[] {
+    return [...new Set((edition ?? "").split(/\s+\+\s+/).map(label => label.trim()).filter(Boolean))];
 }

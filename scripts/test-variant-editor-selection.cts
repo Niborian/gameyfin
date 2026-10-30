@@ -14,11 +14,11 @@ function displayHelpers() {
 test('player version labels prefer saved metadata without dummy Normal 0 or lost custom identity',()=>{
     const label=displayHelpers().variantDisplayLabel;
     const normal={name:'Normal',version:'0',latestForVariant:true};
-    assert.equal(label(normal,{variantId:1,libraryVersion:'1.5.0'}),'v1.5.0 · Latest');
-    assert.equal(label(normal),'Latest');
+    assert.equal(label(normal,{variantId:1,libraryVersion:'1.5.0'}),'v1.5.0');
+    assert.equal(label(normal),'Version not specified');
     assert.equal(label({...normal,latestForVariant:false}),'Version not specified');
-    assert.equal(label({...normal,version:'1.4.0'}),'v1.4.0 · Latest');
-    assert.equal(label({...normal,name:'Linux'},{variantId:1,libraryVersion:'v1.5.0'}),'Linux · v1.5.0 · Latest');
+    assert.equal(label({...normal,version:'1.4.0'}),'v1.4.0');
+    assert.equal(label({...normal,name:'Linux'},{variantId:1,libraryVersion:'v1.5.0'}),'Linux · v1.5.0');
 });
 
 test('Steam watch and pause immediately apply returned canonical state and reject old actor completion',async()=>{
@@ -190,8 +190,10 @@ test('saved version and long edition reach actual player view without changing e
     const f=gameDownloadFixture(false,undefined,undefined,async()=>[{variantId:1,libraryVersion:'1.5.0',edition}]);
     f.setVariants([{...downloadVariant(1,[baseContent(101,'Base')]),latestForVariant:true}]);f.render();
     await new Promise(done=>setImmediate(done));f.render();
-    assert.ok(f.nodes.some(node=>node.type==='SelectItem'&&node.props.children==='v1.5.0 · Latest'));
-    assert.ok(f.nodes.some(node=>node.type==='p'&&node.props.children?.includes?.(edition)));
+    assert.ok(f.nodes.some(node=>node.type==='SelectItem'&&node.props.children==='v1.5.0'));
+    for (const label of edition.split(' + ')) assert.ok(f.nodes.some(node=>node.type==='Chip'&&node.props.children===label));
+    assert.ok(f.nodes.some(node=>node.type==='Chip'&&node.props.children?.includes?.('Estimated download: ')));
+    assert.ok(!f.nodes.some(node=>node.props.children?.includes?.('Downloading: ')));
     f.download();assert.deepEqual(Array.from(f.downloads.at(-1)![3]),[101]);
 });
 test('display metadata late response is discarded across identity changes and unmount',async()=>{
@@ -200,7 +202,7 @@ test('display metadata late response is discarded across identity changes and un
     f.setVariants([downloadVariant(1,[baseContent(101,'Base')])]);f.render();
     f.setActor({id:8,username:'other'});f.render();assert.equal(pending[0].signal.aborted,true);
     pending[0].resolve([{variantId:1,libraryVersion:'secret-old-label'}]);await new Promise(done=>setImmediate(done));f.render();
-    assert.ok(!f.nodes.some(node=>node.props.children==='secret-old-label · Latest'));
+    assert.ok(!f.nodes.some(node=>node.props.children==='secret-old-label'));
     f.unmount();const writes=f.stateWrites;pending[1].resolve([{variantId:1,libraryVersion:'1.5.0'}]);
     await new Promise(done=>setImmediate(done));assert.equal(f.stateWrites,writes);
 });

@@ -674,7 +674,7 @@ export default function VariantManagerModal({
                                                                         {variant.defaultLocked ? "pinned default" : "default"}
                                                                     </Chip>
                                                                 }
-                                                                {variant.latestForVariant && <Chip size="sm" variant="flat">latest</Chip>}
+                                                                {variant.latestForVariant && <Chip size="sm" variant="flat">newest in library</Chip>}
                                                                 <Button size="sm" variant="light" onPress={() => {
                                                                     selectTarget(variant);
                                                                 }}>

@@ -175,6 +175,8 @@ class OriginalEditorImageFixtureTest {
                 INSERT INTO GAME_VARIANT(ID,FILE_SIZE,IS_DEFAULT,IS_LATEST_FOR_VARIANT,NAME,PATH,VERSION,GAME_ID,SCAN_MANAGED,DEFAULT_LOCKED,LINK_STATUS) VALUES
                 (134000,24,TRUE,FALSE,'Normal','/fixture/Normal 0.9','0.9',34000,FALSE,TRUE,'DIRECT'),
                 (134001,${a.size + b.size + patch.size},FALSE,TRUE,'Normal','/fixture/Normal 1.0','1.0',34000,FALSE,FALSE,'DIRECT');
+                INSERT INTO VARIANT_DETAILS(VARIANT_ID,GAME_ID,EDITION,LIBRARY_VERSION,MANUAL_OVERRIDE,REVISION)
+                VALUES(134001,34000,'Survivors of the Void + Seekers of the Storm + Alloyed Collective + Hallowed Concepts','1.5.0',TRUE,1);
                 INSERT INTO VARIANT_CONTENT(ID,DEFAULT_SELECTED,FILE_SIZE,NAME,PATH,REQUIRED,TYPE,VARIANT_ID) VALUES
                 (268000,TRUE,${a.size + b.size + patch.size},'Broad original','/fixture/Normal 1.0',TRUE,'BASE',134001),
                 (268001,TRUE,24,'Older base','/fixture/Normal 0.9/old.bin',TRUE,'BASE',134000);
@@ -200,7 +202,7 @@ class OriginalEditorImageFixtureTest {
             val privateResult = browserPipe(chrome, input)
             val browserProof = privateResult["proof"]
             val expectedFlags = listOf("success", "loginWithin15Seconds", "nonDefaultPreserved", "unrelatedDraftPreserved", "expectedNativeConfirmAccepted",
-                "immediateCanonicalCards", "clickedExactDownload", "ordinaryUserEditorAbsent", "adminProfileIdentityVerified", "ordinaryProfileIdentityVerified",
+                "immediateCanonicalCards", "clickedExactDownload", "ordinaryUserEditorAbsent", "ordinarySavedDetailsVisible", "adminProfileIdentityVerified", "ordinaryProfileIdentityVerified",
                 "keepEditingPreserved", "escapePreserved", "escapeFocusRestored", "keepEditingFocusRestored", "controlledDiscardAccepted",
                 "viewerLogoutObserved", "loggedOutLoginFormObserved", "repeatedViewerIdentityVerified", "cleanupConfirmed")
             proof["browser"] = expectedFlags.associateWith { browserProof[it]?.booleanValue() == true }

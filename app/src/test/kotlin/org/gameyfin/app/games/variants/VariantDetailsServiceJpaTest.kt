@@ -33,6 +33,7 @@ import kotlin.test.*
 class VariantDetailsServiceJpaTest @Autowired constructor(
     private val em: EntityManager, manager: PlatformTransactionManager,
     private val service: VariantDetailsService, private val detector: VariantLocalVersionDetector,
+    private val detailsRepository: org.gameyfin.app.games.repositories.VariantDetailsRepository,
 ) {
     @TestConfiguration(proxyBeanMethods = false)
     class DetectorConfig {
@@ -67,6 +68,24 @@ class VariantDetailsServiceJpaTest @Autowired constructor(
         }
     }
     @AfterEach fun cleanup() { SecurityContextHolder.clearContext() }
+
+    @Test fun `player projection exposes saved labels only and hides retired or mismatched variants`() {
+        val before = catalog()
+        val edition = "Survivors of the Void + Seekers of the Storm + Alloyed Collective + Hallowed Concepts"
+        service.update(gameId, variantId, manual().copy(libraryVersion = "1.5.0", edition = edition))
+        SecurityContextHolder.getContext().authentication = UsernamePasswordAuthenticationToken(
+            "synthetic-player", null, listOf(SimpleGrantedAuthority(Role.Names.USER)))
+        val endpoint = VariantDisplayEndpoint(detailsRepository)
+        assertEquals(listOf(VariantDisplayDto(variantId, "1.5.0", edition)), endpoint.getForGame(gameId))
+        assertTrue(endpoint.getForGame(gameId + 999).isEmpty())
+        assertEquals(setOf("variantId", "libraryVersion", "edition"), VariantDisplayDto::class.java.declaredFields.map { it.name }.toSet())
+        assertEquals(before, catalog())
+        tx.execute { em.createNativeQuery("UPDATE GAME_VARIANT SET RETIREMENT_STATE='ARCHIVED' WHERE ID=$variantId").executeUpdate() }
+        assertTrue(endpoint.getForGame(gameId).isEmpty())
+        tx.execute { em.createNativeQuery("UPDATE GAME_VARIANT SET RETIREMENT_STATE='ACTIVE' WHERE ID=$variantId").executeUpdate()
+            em.createNativeQuery("UPDATE VARIANT_DETAILS SET GAME_ID=${gameId + 999} WHERE VARIANT_ID=$variantId").executeUpdate() }
+        assertTrue(endpoint.getForGame(gameId).isEmpty())
+    }
     private fun manual(revision: String = "0", protect: Boolean = true) = UpdateVariantDetailsRequestDto(
         revision, VariantStore.STEAM, "42", "Deluxe", "1.2", "123", protect)
     private fun count(): Long = tx.execute {

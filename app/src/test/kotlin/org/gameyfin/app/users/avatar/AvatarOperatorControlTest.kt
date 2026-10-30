@@ -30,6 +30,19 @@ class AvatarOperatorControlTest {
         assertEquals("OK\n", run("REVOKE\n")); assertEquals(2, revoked)
     }
 
+    @Test
+    fun `inspection accepts only one bounded positive native ID and hides failures`() {
+        var inspected: Long? = null
+        fun run(input: String) = AvatarOperatorControl.command(input.toByteArray(), { fail("status") },
+            { fail("revoke") }, { fail("reload") }, { id -> inspected = id; if (id == 2L) error("private-identity-secret"); "INVENTORY fixture\n" })
+        assertEquals("INVENTORY fixture\n", run("INSPECT 1\n")); assertEquals(1L, inspected)
+        for (input in listOf("INSPECT 0\n", "INSPECT -1\n", "INSPECT 01\n", "INSPECT 9223372036854775808\n",
+            "INSPECT 1\r\n", "INSPECT 1\nSTATUS\n", "INSPECT 1 ", "INSPECT 1")) {
+            assertEquals("DENIED\n", run(input)); assertEquals(1L, inspected)
+        }
+        assertEquals("DENIED\n", run("INSPECT 2\n")); assertEquals(2L, inspected)
+    }
+
     @Test @EnabledOnOs(OS.WINDOWS)
     fun `unsupported Windows owner control refuses without deleting existing files`(@TempDir root: Path) {
         val retained = Files.createFile(root.resolve("retained-fixture"))
@@ -48,7 +61,7 @@ class AvatarOperatorControlTest {
         val retained = Files.writeString(root.resolve("retained-fixture"), "retained")
         val revoked = AtomicInteger(); val reloaded = AtomicInteger()
         val control = AvatarOperatorControl(root, Files.getOwner(root), { "STATUS fixture\n" },
-            { revoked.incrementAndGet() }, { reloaded.incrementAndGet() })
+            { revoked.incrementAndGet() }, { reloaded.incrementAndGet() }, { id -> "INVENTORY $id é\n" })
         fun exchange(command: String): String = SocketChannel.open(StandardProtocolFamily.UNIX).use { client ->
             client.connect(UnixDomainSocketAddress.of(root.resolve("avatar-control.sock")))
             client.configureBlocking(false)
@@ -61,11 +74,12 @@ class AvatarOperatorControlTest {
             while (response.position() == 0 || response.get(response.position() - 1) != 10.toByte()) {
                 check(client.read(response) >= 0 && System.nanoTime() < deadline); Thread.sleep(1)
             }
-            String(response.array(), 0, response.position(), Charsets.US_ASCII)
+            String(response.array(), 0, response.position(), Charsets.UTF_8)
         }
         try {
             control.start()
             assertEquals("STATUS fixture\n", exchange("STATUS\n"))
+            assertEquals("INVENTORY 9223372036854775807 é\n", exchange("INSPECT 9223372036854775807\n"))
             assertEquals("OK\n", exchange("RELOAD\n")); assertEquals(1, reloaded.get())
             assertEquals("DENIED\n", exchange("BAD\n"))
             assertEquals("OK\n", exchange("REVOKE\n"))

@@ -13,6 +13,12 @@ import java.sql.Connection
 import java.sql.DriverManager
 import java.util.Base64
 import java.util.UUID
+import java.nio.file.Files
+import java.nio.file.Path
+import java.lang.reflect.Proxy
+import javax.sql.DataSource
+import org.junit.jupiter.api.io.TempDir
+import org.gameyfin.app.media.FileStorageService
 import kotlin.test.*
 
 /** Actual migrations/native SQL/config encryption; explicit synthetic operator proofs.
@@ -61,6 +67,59 @@ class NativeAvatarAccountReaderTest {
         }
         fun read(reader: NativeAvatarAccountReader, user: Long = 1) = tx { reader.read(it, user) }
         override fun close() { keeper.close() }
+    }
+
+    @Test fun `private inventory reads actual fences without adopting users or creating avatar state`() {
+        Fixture().use { f ->
+            val reader = NativeAvatarAccountReader(emptyList())
+            val actual = assertNotNull(f.tx { reader.inspect(it, 1) })
+            val proof = f.proof()
+            assertEquals(1L, actual.userId)
+            assertEquals(proof.nativeEpoch, actual.nativeEpoch)
+            assertEquals(proof.nativeRevision, actual.nativeRevision)
+            assertEquals(proof.oidcRevision, actual.oidcRevision)
+            assertEquals(f.binding.issuer, actual.issuer); assertEquals(f.binding.clientId, actual.clientId)
+            assertEquals(f.binding.subject, actual.subject)
+            assertEquals("NativeAvatarInventory[redacted]", actual.toString())
+            assertNull(f.read(reader)) // Inspection is not a supplied proof/grant.
+            f.tx { connection ->
+                for (table in listOf("avatar_state", "avatar_receipt")) connection.createStatement().use { sql ->
+                    sql.executeQuery("SELECT COUNT(*) FROM $table").use { rows -> rows.next(); assertEquals(0L, rows.getLong(1)) }
+                }
+            }
+            f.sql("UPDATE users SET oidc_provider_id='new-subject' WHERE id=1")
+            f.config("sso.oidc.client-id", "new-client")
+            val changed = assertNotNull(f.tx { reader.inspect(it, 1) })
+            assertEquals("new-subject", changed.subject); assertEquals("new-client", changed.clientId)
+            assertTrue(changed.nativeRevision > actual.nativeRevision)
+            assertTrue(changed.oidcRevision > actual.oidcRevision)
+            f.sql("UPDATE users SET enabled=FALSE WHERE id=1")
+            assertNull(f.tx { reader.inspect(it, 1) }); assertNull(f.tx { reader.inspect(it, 999) })
+            f.config("sso.oidc.enabled", false)
+            assertNull(f.tx { reader.inspect(it, 2) })
+        }
+    }
+
+    @Test fun `runtime inventory serializes only observed identity fields while authority stays revoked`(@TempDir root: Path) {
+        Fixture().use { f ->
+            val source = Proxy.newProxyInstance(DataSource::class.java.classLoader, arrayOf(DataSource::class.java)) { _, method, _ ->
+                check(method.name == "getConnection")
+                DriverManager.getConnection(f.url, "sa", "")
+            } as DataSource
+            val runtime = AvatarOperatorRuntime(AvatarOperatorFiles(root, Files.getOwner(root)),
+                AvatarOperatorLoader.RuntimeIdentity.start(UUID.randomUUID(), "sha256:" + "a".repeat(64), "b".repeat(64)),
+                source, FileStorageService(root.resolve("storage").toString()))
+            val observed = ObjectMapper().readTree(runtime.inspectNativeUser(1))
+            assertEquals(setOf("schema", "provenance", "userId", "nativeEpoch", "nativeRevision", "oidcRevision", "issuer", "clientId", "subject"),
+                observed.properties().map { it.key }.toSet())
+            assertEquals(1L, observed["userId"].longValue())
+            assertEquals(f.proof().nativeEpoch.toString(), observed["nativeEpoch"].asText())
+            assertEquals(f.proof().nativeRevision, observed["nativeRevision"].longValue())
+            assertEquals(f.proof().oidcRevision, observed["oidcRevision"].longValue())
+            assertEquals("native-current-observation", observed["provenance"].asText())
+            assertTrue(runtime.operatorStatus().contains(" revoked "))
+            assertFailsWith<AvatarAuthority.Denied> { runtime.inspectNativeUser(999) }
+        }
     }
 
     @Test fun `actual subject changes invalidate proof even when visible identity and subject return`() {

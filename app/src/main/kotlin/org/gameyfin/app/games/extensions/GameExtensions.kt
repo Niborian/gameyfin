@@ -109,7 +109,8 @@ fun GameVariant.toDto(includeAdminFields: Boolean): GameVariantDto {
         isLatestForVariant = isLatestForVariant,
         linkStatus = linkStatus,
         linkFallbackReason = linkFallbackReason.takeIf { includeAdminFields },
-        contents = contents.map { it.toDto(includeAdminFields) }
+        contents = contents.map { it.toDto(includeAdminFields) },
+        steamNewsWatchEnabled = steamNewsWatchEnabled.takeIf { includeAdminFields }
     )
 }
 

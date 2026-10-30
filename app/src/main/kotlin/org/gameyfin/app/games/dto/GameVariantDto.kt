@@ -28,7 +28,8 @@ data class GameVariantDto(
     val isLatestForVariant: Boolean,
     val linkStatus: VariantLinkStatus,
     val linkFallbackReason: String?,
-    val contents: List<VariantContentDto>
+    val contents: List<VariantContentDto>,
+    val steamNewsWatchEnabled: Boolean? = null
 )
 
 @JsonInclude(JsonInclude.Include.NON_NULL)

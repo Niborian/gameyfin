@@ -37,6 +37,7 @@ class SteamNewsInboxStore(private val jdbc: JdbcTemplate) {
         SELECT V.STEAM_APP_ID AS APP_ID,MIN(C.ATTEMPTED_AT) AS LAST_ATTEMPT
         FROM GAME_VARIANT V LEFT JOIN STEAM_NEWS_CHECK C ON C.APP_ID=V.STEAM_APP_ID
         WHERE V.STEAM_APP_ID IS NOT NULL AND V.STEAM_APP_ID_VERIFIED_AT IS NOT NULL
+          AND V.STEAM_NEWS_WATCH_ENABLED=TRUE
           AND LENGTH(V.STEAM_APP_ID)<=20 AND REGEXP_LIKE(V.STEAM_APP_ID,'^[1-9][0-9]*$')
           AND (C.ATTEMPTED_AT IS NULL OR C.ATTEMPTED_AT<=?)
         GROUP BY V.STEAM_APP_ID)
@@ -80,7 +81,7 @@ class SteamNewsInboxStore(private val jdbc: JdbcTemplate) {
         val notices = jdbc.query("""
             SELECT N.*,G.ID AS GAME_ID,G.TITLE AS GAME_TITLE FROM STEAM_NEWS_NOTICE N
             JOIN GAME G ON EXISTS (SELECT 1 FROM GAME_VARIANT V WHERE V.GAME_ID=G.ID
-                AND V.STEAM_APP_ID=N.APP_ID AND V.STEAM_APP_ID_VERIFIED_AT IS NOT NULL)
+                AND V.STEAM_APP_ID=N.APP_ID AND V.STEAM_APP_ID_VERIFIED_AT IS NOT NULL AND V.STEAM_NEWS_WATCH_ENABLED=TRUE)
             WHERE N.IGNORED=FALSE AND (N.SNOOZED_UNTIL IS NULL OR N.SNOOZED_UNTIL<=?)
             ORDER BY N.PUBLISHED_AT DESC,N.APP_ID,N.EVENT_ID,G.ID FETCH FIRST 100 ROWS ONLY
         """.trimIndent(), { rs, _ -> SteamNewsNoticeDto(rs.getString("APP_ID"), rs.getString("EVENT_ID"),
@@ -90,7 +91,7 @@ class SteamNewsInboxStore(private val jdbc: JdbcTemplate) {
             rs.getString("FEED_LABEL"), rs.getString("TAGS")) }, Timestamp.from(now))
         val checks = jdbc.query("""
             SELECT C.* FROM STEAM_NEWS_CHECK C WHERE EXISTS (SELECT 1 FROM GAME_VARIANT V
-              WHERE V.STEAM_APP_ID=C.APP_ID AND V.STEAM_APP_ID_VERIFIED_AT IS NOT NULL)
+              WHERE V.STEAM_APP_ID=C.APP_ID AND V.STEAM_APP_ID_VERIFIED_AT IS NOT NULL AND V.STEAM_NEWS_WATCH_ENABLED=TRUE)
             ORDER BY C.ATTEMPTED_AT DESC FETCH FIRST 100 ROWS ONLY
         """.trimIndent()) { rs, _ -> SteamNewsCheckDto(rs.getString("APP_ID"), rs.getTimestamp("ATTEMPTED_AT").toInstant(),
             rs.getTimestamp("SUCCEEDED_AT")?.toInstant(), rs.getBoolean("FAILED")) }

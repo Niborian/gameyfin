@@ -138,6 +138,10 @@ class GameEndpoint(
     }
 
     @RolesAllowed(Role.Names.ADMIN)
+    fun setVariantSteamNewsWatch(targetGameId: Long, variantId: Long, enabled: Boolean, steamAppId: String?): GameAdminDto =
+        gameVariantGroupingService.setVariantSteamNewsWatch(targetGameId, variantId, enabled, steamAppId).toAdminDto()
+
+    @RolesAllowed(Role.Names.ADMIN)
     fun recordVariantSteamMetadata(
         targetGameId: Long,
         variantId: Long,

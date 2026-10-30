@@ -254,6 +254,22 @@ class GameVariantGroupingService(
         return gameRepository.save(target)
     }
 
+    @Transactional
+    fun setVariantSteamNewsWatch(targetGameId: Long, variantId: Long, enabled: Boolean, steamAppId: String?): Game {
+        val target = gameRepository.findByIdOrNull(targetGameId)
+            ?: throw IllegalArgumentException("Target game $targetGameId not found")
+        val variant = findVariant(target, variantId)
+        if (enabled) {
+            val appId = steamAppId?.trim()
+            require(appId != null && appId.matches(Regex("[1-9][0-9]{0,19}"))) { "A positive Steam app ID is required" }
+            variant.steamAppId = appId
+            variant.steamAppIdVerifiedAt = Instant.now()
+            variant.steamAppIdManualOverride = true
+        }
+        variant.steamNewsWatchEnabled = enabled
+        return gameRepository.save(target)
+    }
+
     /** Records owner-provided public metadata only; it deliberately does not contact Steam or a download provider. */
     @Transactional
     fun recordVariantSteamMetadata(

@@ -4,6 +4,9 @@ Enable **Administration → Game Requests → Check Steam for possible game upda
 For each game, open **Versions & content**, save the Steam store/product ID, and
 choose **Watch Steam updates** to confirm the mapping. Local version text and
 source files are unchanged. Only administrator-verified mappings are checked.
+**Stop watching** pauses that variant's monitoring independently of its Steam
+store identity, verification time and scan override. It does not clear metadata.
+An app is still checked if another verified variant continues to watch it.
 
 The first background check is after five minutes, then a serial batch of at most
 ten different app IDs hourly. Each app is attempted at most once per day, including

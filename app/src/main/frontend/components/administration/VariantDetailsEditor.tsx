@@ -78,7 +78,7 @@ export default function VariantDetailsEditor({gameId, variant, onChanged, onDirt
         if (!permitted || busy || dirty || loadedEpoch !== owner.current.epoch || (enabled && saved.store !== VariantStore.STEAM)) return;
         const current = begin(); setBusy("track"); setMessage("");
         try {
-            await GameEndpoint.setVariantSteamAppId(gameId, variant.id, {steamAppId: enabled ? saved.storeProductId : undefined});
+            await GameEndpoint.setVariantSteamNewsWatch(gameId, variant.id, enabled, enabled ? saved.storeProductId : undefined);
             if (current()) {setMessage(enabled ? "Steam app mapping verified for update notices. Enable monitoring under Administration → Game Requests. No download was started." : "Steam update tracking stopped for this variant. Local details and files are unchanged."); onChanged?.();}
         } catch {if (current()) setMessage("Could not verify the Steam mapping. Check the saved numeric product ID and try again.");}
         finally {if (current()) setBusy(undefined);}
@@ -139,8 +139,9 @@ export default function VariantDetailsEditor({gameId, variant, onChanged, onDirt
         <div className="flex flex-wrap gap-2">
             {saved.store === VariantStore.STEAM && <Button type="button" size="sm" variant="flat" isLoading={busy === "track"}
                 isDisabled={!!busy || dirty || !/^[1-9][0-9]{0,19}$/.test(saved.storeProductId)} onPress={() => watchSteamUpdates(true)}>Watch Steam updates</Button>}
-            {variant.steamAppId && <Button type="button" size="sm" variant="light" isDisabled={!!busy || dirty}
+            {variant.steamAppId && variant.steamNewsWatchEnabled !== false && <Button type="button" size="sm" variant="light" isDisabled={!!busy || dirty}
                 onPress={() => watchSteamUpdates(false)}>Stop watching Steam app {variant.steamAppId}</Button>}
+            {variant.steamNewsWatchEnabled === false && <span className="text-xs text-default-500 self-center">Steam update monitoring paused</span>}
         </div>
         {draft.store === VariantStore.UNKNOWN && draft.storeProductId.trim() && <p className="text-xs text-warning">Choose a store for this product ID, or clear the ID explicitly. It will not be cleared automatically.</p>}
         <Checkbox isSelected={draft.manualOverride} isDisabled={!!busy} onValueChange={manualOverride => update({manualOverride})}>Protect manual details from detected suggestions</Checkbox>

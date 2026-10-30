@@ -23,7 +23,7 @@ class SteamNewsInboxTest {
         val migration = requireNotNull(javaClass.getResource("/db/migration/V2.4.8.3__Add_steam_news_inbox.sql")).readText()
         migration.split(';').filter { it.isNotBlank() }.forEach(jdbc::execute)
         jdbc.update("INSERT INTO GAME VALUES(1,'Synthetic game')")
-        jdbc.update("INSERT INTO GAME_VARIANT VALUES(1,1,'244850',CURRENT_TIMESTAMP),(2,1,'244850',CURRENT_TIMESTAMP),(3,1,'999',NULL)")
+        jdbc.update("INSERT INTO GAME_VARIANT(ID,GAME_ID,STEAM_APP_ID,STEAM_APP_ID_VERIFIED_AT) VALUES(1,1,'244850',CURRENT_TIMESTAMP),(2,1,'244850',CURRENT_TIMESTAMP),(3,1,'999',NULL)")
         return jdbc
     }
     private fun event(id: String = "123", title: String = "Update 1.5") = SteamNewsEvent(id, title,
@@ -60,6 +60,20 @@ class SteamNewsInboxTest {
         assertTrue(store.due(now.plus(Duration.ofDays(8))).isEmpty())
     }
 
+    @Test fun `monitoring opt out hides evidence and stops polling without removing Steam identity`() {
+        val jdbc = database()
+        val store = SteamNewsInboxStore(jdbc)
+        store.record("244850", listOf(event()), now, classifier)
+        jdbc.update("UPDATE GAME_VARIANT SET STEAM_NEWS_WATCH_ENABLED=FALSE WHERE ID=1")
+        assertEquals(1, store.inbox(now).notices.size, "The other explicitly watched variant still needs this event")
+        jdbc.update("UPDATE GAME_VARIANT SET STEAM_NEWS_WATCH_ENABLED=FALSE WHERE ID=2")
+        assertTrue(store.inbox(now).notices.isEmpty())
+        assertTrue(store.due(now.plus(Duration.ofDays(2))).isEmpty())
+        assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM GAME_VARIANT WHERE STEAM_APP_ID='244850' AND STEAM_APP_ID_VERIFIED_AT IS NOT NULL", Int::class.java))
+        jdbc.update("UPDATE GAME_VARIANT SET STEAM_NEWS_WATCH_ENABLED=TRUE WHERE ID=1")
+        assertEquals(1, store.inbox(now).notices.size)
+    }
+
     @Test fun `disabled monitor never reaches Steam and provider failures do not skip the next app`() {
         val config = mockk<ConfigService>()
         val store = mockk<SteamNewsInboxStore>(relaxed=true)
@@ -80,7 +94,7 @@ class SteamNewsInboxTest {
     @Test fun `bounded batches prioritize unchecked apps before retrying earlier apps`() {
         val jdbc = database()
         val store = SteamNewsInboxStore(jdbc)
-        (10..34).forEach { jdbc.update("INSERT INTO GAME_VARIANT VALUES(?,1,?,CURRENT_TIMESTAMP)", it, it.toString()) }
+        (10..34).forEach { jdbc.update("INSERT INTO GAME_VARIANT(ID,GAME_ID,STEAM_APP_ID,STEAM_APP_ID_VERIFIED_AT) VALUES(?,1,?,CURRENT_TIMESTAMP)", it, it.toString()) }
         val first = store.due(now)
         assertEquals(10, first.size)
         first.forEach { store.record(it, emptyList(), now, classifier) }

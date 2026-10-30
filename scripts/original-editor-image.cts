@@ -625,7 +625,8 @@ async function run(): Promise<void> {
   await clickText(viewerPage, 'v1.5.0');
   await viewerPage.waitForFunction(() => [...document.querySelectorAll('button[aria-haspopup="listbox"]')].some(node => node.parentElement?.textContent?.includes('Version') && node.textContent?.includes('v1.5.0')) &&
     ['Survivors of the Void','Seekers of the Storm','Alloyed Collective','Hallowed Concepts'].every(label =>
-      [...document.querySelectorAll('[aria-label="Edition details"] [data-slot="content"]')].some(node => node.textContent?.trim() === label)), {timeout: 5000});
+      [...document.querySelectorAll('[aria-label="Edition details"] span')].some(node => node.textContent?.trim() === label &&
+        node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0)), {timeout: 5000});
   proof.ordinarySavedDetailsVisible = true;
   proof.stage = 'ordinary-avatar';
   // Actual local-profile controls only. No managedBySso bypass, RPC mutation,

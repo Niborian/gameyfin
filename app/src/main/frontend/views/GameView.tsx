@@ -43,7 +43,7 @@ import GameVariantDto from "Frontend/generated/org/gameyfin/app/games/dto/GameVa
 import VariantContentDto from "Frontend/generated/org/gameyfin/app/games/dto/VariantContentDto";
 import VariantLinkStatus from "Frontend/generated/org/gameyfin/app/games/entities/VariantLinkStatus";
 import VariantContentType from "Frontend/generated/org/gameyfin/app/games/entities/VariantContentType";
-import {variantDisplayLabel, VariantDisplay} from "Frontend/util/variantDisplay";
+import {editionPillLabels, variantDisplayLabel, VariantDisplay} from "Frontend/util/variantDisplay";
 
 const VariantManagerModal = lazy(() => import("Frontend/components/general/modals/VariantManagerModal"));
 type ProviderOwner = {key: string; controller: AbortController};
@@ -96,6 +96,7 @@ export default function GameView() {
     const selectedVariant = variants.find((variant) => variant.id === selectedVariantId)
         ?? effectiveDefaultVariant
         ?? variants[0];
+    const editionLabels = editionPillLabels(displayRows.find(row => row.variantId === selectedVariant?.id)?.edition);
     const previousContents = contentGeneration.current;
     const sameContentOwner = previousContents?.gameId === game?.id && previousContents?.variantId === selectedVariant?.id;
     const effectiveContentIds = new Set((selectedVariant?.contents ?? []).filter(content => content.required ||
@@ -460,7 +461,7 @@ export default function GameView() {
                     </div>
                 </div>
                 {selectedVariant && <div className="flex flex-col gap-3 max-w-5xl">
-                    <div className="flex flex-row gap-3 items-end">
+                    <div className="flex flex-row flex-wrap gap-3 items-end">
                         <Select
                             size="sm"
                             label="Version"
@@ -478,16 +479,11 @@ export default function GameView() {
                         {isAdmin(auth) && <Button variant="flat" onPress={variantManagerModal.onOpen}>
                             Versions &amp; content
                         </Button>}
-                        <div className="flex flex-col gap-1">
-                            <p className="text-default-500 text-sm">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <Chip size="md" color="primary" variant="flat" className="font-medium">
                                 Estimated download: {humanFileSize(estimatedDownloadSize)}
-                            </p>
-                            <Tooltip content="Latest means newest available for this variant in your library, not the publisher's latest release.">
-                            <p className="text-default-500 text-sm" tabIndex={0}>
-                                Downloading: {variantDisplayLabel(selectedVariant, displayRows.find(row => row.variantId === selectedVariant.id))}
-                            </p>
-                            </Tooltip>
-                            <div className="flex flex-row gap-1">
+                            </Chip>
+                            <div className="flex flex-row flex-wrap gap-2">
                                 {selectedVariant.tags.map((tag) =>
                                     <Chip key={tag} size="sm" variant="flat">{tag}</Chip>
                                 )}
@@ -501,11 +497,11 @@ export default function GameView() {
                             </div>
                         </div>
                     </div>
-                    {displayRows.find(row => row.variantId === selectedVariant.id)?.edition?.trim() &&
-                        <p className="text-sm text-default-600 leading-relaxed break-words max-w-3xl">
-                            <span className="text-default-400">Edition: </span>
-                            {displayRows.find(row => row.variantId === selectedVariant.id)!.edition}
-                        </p>}
+                    {editionLabels.length > 0 && <div aria-label="Edition details" className="flex flex-wrap items-center gap-2 max-w-3xl">
+                        <span className="text-sm font-medium">Edition</span>
+                        {editionLabels.map(label => <Chip key={label} size="md" variant="flat" color="secondary"
+                            classNames={{base: "h-auto max-w-full py-1", content: "whitespace-normal break-words font-medium"}}>{label}</Chip>)}
+                    </div>}
                     {contentGroups.length > 0 &&
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
                             {[0, 1].map((column) => (

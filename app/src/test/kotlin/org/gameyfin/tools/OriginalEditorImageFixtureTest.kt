@@ -181,6 +181,11 @@ class OriginalEditorImageFixtureTest {
                 (134001,${a.size + b.size + patch.size},FALSE,TRUE,'Normal','/fixture/Normal 1.0','1.0',34000,FALSE,FALSE,'DIRECT');
                 INSERT INTO VARIANT_DETAILS(VARIANT_ID,GAME_ID,EDITION,LIBRARY_VERSION,MANUAL_OVERRIDE,REVISION)
                 VALUES(134001,34000,'Survivors of the Void + Seekers of the Storm + Alloyed Collective + Hallowed Concepts','1.5.0',TRUE,1);
+                UPDATE GAME_VARIANT SET STEAM_APP_ID='244850',STEAM_APP_ID_VERIFIED_AT=CURRENT_TIMESTAMP WHERE ID=134001;
+                INSERT INTO STEAM_NEWS_CHECK(APP_ID,ATTEMPTED_AT,SUCCEEDED_AT,FAILED) VALUES('244850',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,TRUE);
+                INSERT INTO STEAM_NEWS_NOTICE(APP_ID,EVENT_ID,TITLE,EVENT_URL,PUBLISHED_AT,OBSERVED_AT,CLASSIFICATION,REASON,SOURCE,FEED_NAME,FEED_LABEL,TAGS) VALUES
+                ('244850','90001','Synthetic patch notice','https://store.steampowered.com/news/app/244850/view/90001',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'CONTENT_UPDATE','Synthetic patch classification','Synthetic fixture (no provider call)','fixture','Synthetic feed','patchnotes'),
+                ('244850','90002','Synthetic review notice','https://store.steampowered.com/news/app/244850/view/90002',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'REVIEW_NEEDED','Synthetic ambiguous classification','Synthetic fixture (no provider call)','fixture','Synthetic feed','');
                 INSERT INTO VARIANT_CONTENT(ID,DEFAULT_SELECTED,FILE_SIZE,NAME,PATH,REQUIRED,TYPE,VARIANT_ID) VALUES
                 (268000,TRUE,${a.size + b.size + patch.size},'Broad original','/fixture/Normal 1.0',TRUE,'BASE',134001),
                 (268001,TRUE,24,'Older base','/fixture/Normal 0.9/old.bin',TRUE,'BASE',134000);
@@ -216,10 +221,11 @@ class OriginalEditorImageFixtureTest {
                 "immediateCanonicalCards", "clickedExactDownload", "ordinaryUserEditorAbsent", "ordinarySavedDetailsVisible", "adminProfileIdentityVerified", "ordinaryProfileIdentityVerified",
                 "keepEditingPreserved", "escapePreserved", "escapeFocusRestored", "keepEditingFocusRestored", "controlledDiscardAccepted",
                 "viewerLogoutObserved", "loggedOutLoginFormObserved", "repeatedViewerIdentityVerified", "cleanupConfirmed",
-                "ordinaryAvatarChooserUsed", "ordinaryAvatarUploadRendered", "ordinaryAvatarRemoveRendered", "ordinaryAvatarNoReload")
+                "ordinaryAvatarChooserUsed", "ordinaryAvatarUploadRendered", "ordinaryAvatarRemoveRendered", "ordinaryAvatarNoReload",
+                "steamInboxRendered", "steamInboxSnoozePersisted", "steamInboxIgnorePersisted", "steamInboxCheckStatusVisible")
             proof["browser"] = expectedFlags.associateWith { browserProof[it]?.booleanValue() == true }
             val browserStage = browserProof["stage"]?.asText()
-            require(browserStage in setOf("input", "launch", "normal-login", "editor", "immediate-download", "ordinary-user", "ordinary-avatar", "repeat-login", "complete"))
+            require(browserStage in setOf("input", "launch", "normal-login", "editor", "immediate-download", "steam-inbox", "ordinary-user", "ordinary-avatar", "repeat-login", "complete"))
             proof["browserStage"] = browserStage
             val probe = browserProof["currentSessionProbe"]
             require(probe.isObject && probe.properties().map { it.key }.toSet() ==
@@ -287,6 +293,12 @@ class OriginalEditorImageFixtureTest {
                 mapOf("Content-Type" to "application/json", "X-CSRF-Token" to token), seconds = 5)
             require(denied.status == 403) { "Ordinary-user mutation was not denied" }
             proof["ordinaryUserMutationDenied"] = true
+            for ((method, body) in listOf("inbox" to "{}", "ignore" to "{\"appId\":\"244850\",\"eventId\":\"90001\"}")) {
+                val refusal = http.request("/connect/SteamNewsInboxEndpoint/$method", body,
+                    mapOf("Content-Type" to "application/json", "X-CSRF-Token" to token), seconds = 5)
+                require(refusal.status == 403) { "Ordinary-user Steam inbox access was not denied" }
+            }
+            proof["ordinarySteamInboxDenied"] = true
             val health = FixtureHttp("http://${owned.address(app)}:8081", deadline = { deadline.remaining() }).request("/actuator/health/readiness", seconds = 5)
             require(health.status == 200 && FixtureRuntime.tree(health.bytes.toString(Charsets.UTF_8))["status"].asText() == "UP")
             proof["readinessUp"] = true

@@ -24,6 +24,8 @@ const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', s
   expectedNativeConfirmAccepted: false, immediateCanonicalCards: false, clickedExactDownload: false,
   ordinaryUserEditorAbsent: false, cleanupConfirmed: false,
   ordinarySavedDetailsVisible: false,
+  steamInboxRendered: false, steamInboxSnoozePersisted: false, steamInboxIgnorePersisted: false,
+  steamInboxCheckStatusVisible: false,
   ordinaryAvatarChooserUsed: false, ordinaryAvatarUploadRendered: false,
   ordinaryAvatarRemoveRendered: false, ordinaryAvatarNoReload: false,
   loginPhase: 'not-started', profileResponseObserved: false, profileIdentityMatched: false,
@@ -604,6 +606,35 @@ async function run(): Promise<void> {
   const path = '/tmp/editor-downloads/' + files[0]; const info = await stat(path);
   if (!info.isFile() || info.size < 1 || info.size > 65536) throw new Error('ZIP byte bound');
   zip = (await readFile(path)).toString('base64'); proof.clickedExactDownload = true;
+  proof.stage = 'steam-inbox';
+  // Existing original admin UI, cached synthetic evidence only. No provider calls or new test service.
+  await page.goto(input.origin + '/administration/requests', {waitUntil:'domcontentloaded', timeout:10000});
+  await page.waitForFunction(() => [...document.querySelectorAll('article')].some(node => node.textContent?.includes('Synthetic patch notice')) &&
+    [...document.querySelectorAll('article')].some(node => node.textContent?.includes('Synthetic review notice') && node.textContent?.includes('Needs review')), {timeout:5000});
+  proof.steamInboxRendered = true;
+  for (const [title, action] of [['Synthetic patch notice','Snooze 7 days'],['Synthetic review notice','Ignore this event']]) {
+    const control = await page.evaluateHandle((title:string, action:string) => {
+      const article = [...document.querySelectorAll('article')].find(node => node.textContent?.includes(title));
+      return [...(article?.querySelectorAll('button') ?? [])].find(node => node.textContent?.trim() === action);
+    }, title, action);
+    try { await control.asElement().asLocator().setTimeout(3000).click(); } finally { await control.dispose(); }
+    await page.waitForFunction((title:string) => ![...document.querySelectorAll('article')].some(node => node.textContent?.includes(title)), {timeout:3000}, title);
+  }
+  // A normal reload must read the persisted decisions, not just hide local cards.
+  await page.reload({waitUntil:'domcontentloaded', timeout:10000});
+  await page.waitForFunction(() => document.body.textContent?.includes('No unsnoozed update notices.') &&
+    [...document.querySelectorAll('summary')].some(node => node.textContent?.trim() === 'Recent Steam checks (1)'), {timeout:5000});
+  const status = await page.evaluateHandle(() => [...document.querySelectorAll('summary')].find(node => node.textContent?.trim() === 'Recent Steam checks (1)'));
+  try { await status.asElement().asLocator().setTimeout(3000).click(); } finally { await status.dispose(); }
+  await page.waitForFunction(() => document.body.textContent?.includes('Check failed; previous evidence retained') &&
+    document.body.textContent?.includes('Last successful check'), {timeout:3000});
+  proof.steamInboxCheckStatusVisible = true;
+  const inboxDecisions = await page.evaluate(() => ({
+    patchAbsent: ![...document.querySelectorAll('article')].some(node => node.textContent?.includes('Synthetic patch notice')),
+    reviewAbsent: ![...document.querySelectorAll('article')].some(node => node.textContent?.includes('Synthetic review notice'))
+  }));
+  proof.steamInboxSnoozePersisted = inboxDecisions.patchAbsent;
+  proof.steamInboxIgnorePersisted = inboxDecisions.reviewAbsent;
   await context.close();
   proof.stage = 'ordinary-user';
   const viewer = await browser.createBrowserContext(); const viewerPage = await viewer.newPage();

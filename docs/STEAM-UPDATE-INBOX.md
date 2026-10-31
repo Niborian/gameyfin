@@ -25,7 +25,10 @@ a newer compatible build exists.
 
 Only the official public ISteamNews API is called. Titles/content/tags are classified
 conservatively. Provider text is never rendered as HTML; evidence links are limited
-to HTTPS Steam Store/Community origins. No SteamDB/depot/store scraping occurs.
+to HTTPS Steam Store/Community origins and the exact legacy Steam news host
+`steamstore-a.akamaihd.net/news/externalpost/`. Other CDN hosts/paths, userinfo,
+nonstandard ports and insecure links are refused. Evidence links are not fetched
+by Gameyfin. No SteamDB/depot/store scraping occurs.
 There is no external notification delivery, automatic version claim, request approval,
 Prowlarr search, torrent add, import or source mutation from these notices.
 

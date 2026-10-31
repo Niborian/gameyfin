@@ -51,7 +51,11 @@ class SteamNewsInboxStore(private val jdbc: JdbcTemplate) {
             if (classification.classification == SteamNewsClassification.NOT_CONTENT_UPDATE) return@forEach
             // Public links are evidence only; never fetch links or render provider HTML.
             val uri = runCatching { URI(event.url) }.getOrNull() ?: return@forEach
-            if (uri.scheme != "https" || uri.userInfo != null || uri.host !in setOf("store.steampowered.com", "steamcommunity.com", "www.steamcommunity.com")) return@forEach
+            val steamOrigin = uri.host in setOf("store.steampowered.com", "steamcommunity.com", "www.steamcommunity.com")
+            // GetNewsForApp also returns this exact legacy Steam host for announcement links.
+            // Preserve the original evidence URL; do not fetch it or trust arbitrary CDN origins.
+            val steamNewsCdn = uri.host == "steamstore-a.akamaihd.net" && uri.path.startsWith("/news/externalpost/")
+            if (uri.scheme != "https" || uri.userInfo != null || uri.port !in setOf(-1, 443) || !(steamOrigin || steamNewsCdn)) return@forEach
             if (!event.id.matches(Regex("[0-9]{1,32}")) || event.title.isBlank() || event.url.length > 2048) return@forEach
             jdbc.update("""
                 INSERT INTO STEAM_NEWS_NOTICE(APP_ID,EVENT_ID,TITLE,EVENT_URL,PUBLISHED_AT,OBSERVED_AT,CLASSIFICATION,REASON,SOURCE,FEED_NAME,FEED_LABEL,TAGS)

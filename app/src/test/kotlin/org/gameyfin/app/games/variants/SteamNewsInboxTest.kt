@@ -134,6 +134,23 @@ class SteamNewsInboxTest {
         assertEquals(1, store.inbox(now).notices.size)
     }
 
+    @Test fun `official Steam news CDN evidence is preserved while lookalikes and non-news paths are refused`() {
+        val store = SteamNewsInboxStore(database())
+        val official = "https://steamstore-a.akamaihd.net/news/externalpost/steam_community_announcements/123"
+        val rejected = listOf(
+            "https://steamstore-a.akamaihd.net.evil.invalid/news/externalpost/123",
+            "https://arbitrary.akamaihd.net/news/externalpost/123",
+            "https://steamstore-a.akamaihd.net/assets/123",
+            "http://steamstore-a.akamaihd.net/news/externalpost/123",
+            "https://steamstore-a.akamaihd.net:444/news/externalpost/123",
+            "https://user:secret@steamstore-a.akamaihd.net/news/externalpost/123"
+        )
+        store.record("244850", listOf(event("124").copy(url=official)) + rejected.mapIndexed { i, url -> event((200+i).toString()).copy(url=url) }, now, classifier)
+        val notice = store.inbox(now).notices.single()
+        assertEquals("124", notice.eventId)
+        assertEquals(official, notice.url)
+    }
+
     @Test fun `disabled monitor never reaches Steam and provider failures do not skip the next app`() {
         val config = mockk<ConfigService>()
         val store = mockk<SteamNewsInboxStore>(relaxed=true)

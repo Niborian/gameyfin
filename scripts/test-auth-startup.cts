@@ -33,7 +33,7 @@ function load<T extends object = VmExports>(file: string, mocks: ModuleMocks = {
 const lifecycle = load('util/startupLifecycle.ts');
 function deferred<T = unknown>(): Deferred<T> { let resolve!: (value: T) => void; const promise = new Promise<T>(r => {resolve = r;}); return {promise, resolve}; }
 const cases: StateName[] = ['Library', 'Collection', 'Platform', 'GameRequest', 'Plugin', 'Game', 'DownloadSession', 'User'];
-test('actual Hilla close and reopen refreshes the library snapshot instead of retaining a dead subscription', async () => {
+for (const name of ['Library', 'Config'] as const) test(`actual Hilla close and reopen refreshes the ${name} snapshot instead of retaining a dead subscription`, async () => {
     let transport: any; const sent: any[] = [];
     const fluxSource = fs.readFileSync(path.join(path.dirname(appRequire.resolve('@vaadin/hilla-frontend')), 'FluxConnection.js'), 'utf8');
     const compiled = ts.transpileModule(fluxSource, {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}});
@@ -48,26 +48,100 @@ test('actual Hilla close and reopen refreshes the library snapshot instead of re
         }});
     const connection = new fluxModule.exports.FluxConnection('/connect');
     await connection.ready; transport.onOpen();
-    let requests = 0, rows = [{id: 1}];
+    let requests = 0, rows: any[] = name === 'Config' ? [{key: 'synthetic.value', value: 1}] : [{id: 1}];
+    const eventMethod = name === 'Config' ? 'subscribe' : 'subscribeToLibraryEvents';
     const endpoint = {getAll: async () => {requests++; return rows;},
-        subscribeToLibraryEvents: () => connection.subscribe('LibraryEndpoint', 'subscribeToLibraryEvents', {})};
-    const mod = load('state/LibraryState.ts', {'Frontend/generated/endpoints': {LibraryEndpoint: endpoint}});
+        [eventMethod]: () => connection.subscribe(`${name}Endpoint`, eventMethod, {})};
+    const mod = load(`state/${name}State.ts`, {'Frontend/generated/endpoints': {[`${name}Endpoint`]: endpoint}});
+    const initialize = mod[`initialize${name}State`];
+    const state = mod[name === 'Config' ? 'configState' : 'libraryState'];
     const controller = new AbortController();
-    await mod.initializeLibraryState(controller.signal);
+    await initialize(controller.signal);
     const original = sent.find(message => message['@type'] === 'subscribe').id;
-    rows = [{id: 2}]; // Represents changes while this client was disconnected.
+    rows = name === 'Config' ? [{key: 'synthetic.refreshed', value: 2}] : [{id: 2}]; // Represents changes while this client was disconnected.
     transport.onClose(); transport.onReopen();
     assert.equal(requests, 2, 'Hilla reopen itself must start recovery without another page initializer');
-    await mod.initializeLibraryState(controller.signal);
+    await initialize(controller.signal);
     assert.equal(requests, 2, 'A reopened transport must not leave a stale loaded cache');
-    assert.deepEqual(Object.keys(mod.libraryState.state), ['2']);
+    assert.deepEqual(Object.keys(state.state), [name === 'Config' ? 'synthetic.refreshed' : '2']);
     const subscriptions = sent.filter(message => message['@type'] === 'subscribe');
     assert.equal(subscriptions.length, 2); assert.notEqual(subscriptions[1].id, original);
     transport.onMessage({responseBody: JSON.stringify({'@type': 'update', id: subscriptions[1].id,
-        item: [{type: 'updated', library: {id: 2, refreshed: true}}]})});
-    assert.equal(mod.libraryState.state[2].refreshed, true);
+        item: name === 'Config' ? [{updates: {'synthetic.refreshed': 3}}] : [{type: 'updated', library: {id: 2, refreshed: true}}]})});
+    assert.equal(name === 'Config' ? state.state['synthetic.refreshed'].value : state.state[2].refreshed, name === 'Config' ? 3 : true);
     controller.abort();
 });
+test('Config: cancellation during lost-stream snapshot cannot revive a retired page', async () => {
+    const pending = deferred(); let requests = 0, attached = 0, cancelled = 0, lost: any, queued: any, received: AbortSignal | undefined;
+    const endpoint = {
+        getAll: (init?: RpcInit) => { received = init?.signal; return ++requests === 1 ? Promise.resolve([{key: 'synthetic.value', value: 1}]) : pending.promise; },
+        subscribe: () => ({onNext(fn: EventCallback) { attached++; queued = fn; return {cancel() {cancelled++;}, onSubscriptionLost(fn: any) {lost = fn;}}; }})
+    };
+    const mod = load('state/ConfigState.ts', {'Frontend/generated/endpoints': {ConfigEndpoint: endpoint}});
+    const owner = new AbortController(); await mod.initializeConfigState(owner.signal);
+    assert.equal(received, owner.signal); assert.equal(typeof lost, 'function');
+    const oldLost = lost; assert.equal(oldLost(), 'remove');
+    const refresh = mod.initializeConfigState(owner.signal);
+    assert.equal(requests, 2); assert.equal(received, owner.signal); assert.equal(cancelled, 1);
+    owner.abort(); queued({forEach() {throw new Error('Retired config callback processed payload');}});
+    pending.resolve([{key: 'synthetic.stale', value: 99}]); await refresh;
+    oldLost(); assert.equal(requests, 2); assert.equal(attached, 1);
+    assert.equal(mod.configState.subscription, undefined); assert.deepEqual(Object.keys(mod.configState.state), []);
+});
+
+test('Config page owns initialization and shows only generic current failures', async () => {
+    for (const aborted of [false, true]) {
+        let effect: any, signal: AbortSignal | undefined, hook = 0; const values: any[] = []; const retained = {current: undefined};
+        const pending = deferred(); const jsx = (type: unknown, props: any) => ({type, props});
+        const state = {isLoaded: false, state: {}, config: {}};
+        const mod = load('components/administration/withConfigPage.tsx', {
+            react: {useRef: () => retained, useState: (initial: any) => {const index = hook++; if (!(index in values)) values[index] = initial; return [values[index], (value: any) => {values[index] = value;}];}, useEffect: (fn: any) => {effect ??= fn;}},
+            'react/jsx-runtime': {jsx, jsxs: jsx}, 'valtio/react': {useSnapshot: () => state},
+            'Frontend/state/ConfigState': {configState: state, initializeConfigState: (value: AbortSignal) => {signal = value; return pending.promise;}}
+        });
+        const Page = mod.default(() => undefined, 'Settings'); Page({}); const cleanup = effect();
+        assert.ok(signal); if (aborted) cleanup();
+        pending.resolve(Promise.reject(new Error('private synthetic details'))); await assert.rejects(pending.promise); await Promise.resolve();
+        hook = 0; const rendered = Page({});
+        assert.equal(rendered.props.children.some((child: any) => child?.props?.role === 'alert'), !aborted);
+        assert.ok(!JSON.stringify(rendered).includes('private synthetic details'));
+        cleanup(); assert.equal(signal!.aborted, true);
+    }
+});
+
+test('Config page keeps the same form and snapshot during reconnect but cannot save stale settings', async () => {
+    const snapshot = {'synthetic.value': 1};
+    const entry = {key: 'synthetic.value', value: 1, description: 'Synthetic setting', type: 'integer'};
+    const state = {isLoaded: true, state: {'synthetic.value': entry}, config: snapshot};
+    const retained = {current: undefined}; let updates = 0;
+    const Formik = () => undefined, Button = () => undefined;
+    const jsx = (type: unknown, props: any) => ({type, props});
+    const mod = load('components/administration/withConfigPage.tsx', {
+        react: {useRef: () => retained, useState: (initial: any) => [initial, () => {}], useEffect: () => {}},
+        'react/jsx-runtime': {jsx, jsxs: jsx}, 'valtio/react': {useSnapshot: () => state},
+        formik: {Formik, Form: () => undefined}, '@heroui/react': {Button},
+        'Frontend/state/ConfigState': {configState: state},
+        'Frontend/generated/endpoints': {ConfigEndpoint: {update: async () => {updates++;}}}
+    });
+    const Page = mod.default(() => undefined, 'Settings');
+    const initial = Page({}); const slot = initial.props.children.findIndex((child: any) => child?.type === Formik);
+    const first = initial.props.children[slot]; assert.ok(first); assert.equal(first.props.enableReinitialize, true);
+    state.isLoaded = false; state.config = {}; state.state = {} as typeof state.state;
+    const during = Page({}).props.children[slot];
+    assert.equal(during.type, first.type); assert.equal(during.props.initialValues, snapshot);
+    const fields = during.props.children({isSubmitting: false, dirty: true});
+    const wrapped = fields.props.children[1];
+    assert.equal(wrapped.props.getConfig('synthetic.value'), entry, 'Mounted fields retain their description/type metadata while global cache is empty');
+    const save = fields.props.children[0].props.children[1].props.children[1];
+    assert.equal(save.type, Button); assert.equal(save.props.isDisabled, true);
+    await during.props.onSubmit({'synthetic.value': 2}); assert.equal(updates, 0);
+    state.isLoaded = true; state.config = {'synthetic.value': 1}; state.state = {'synthetic.value': entry};
+    const recovered = Page({}).props.children[slot];
+    assert.equal(recovered.type, first.type); assert.deepEqual(recovered.props.initialValues, snapshot);
+    state.config = {'synthetic.value': 3};
+    assert.deepEqual(Page({}).props.children[slot].props.initialValues, {'synthetic.value': 3});
+});
+
 test('lost subscription refresh is owned, single-shot and cannot attach after auth cancellation', async () => {
     const pending = deferred(); let requests = 0, cancelled = 0;
     const callbacks: EventCallback[] = [], lost: Array<() => string> = [];

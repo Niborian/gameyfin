@@ -371,20 +371,28 @@ async function run(): Promise<void> {
     (document.querySelector('.swiper') as any)?.swiper?.autoplay?.running === true);
   if (!proof.carouselAutoplayRunning) throw new Error('Carousel autoplay not running');
   const autoplayStart = await page.$eval('.swiper-slide-active', (node: Element) => node.getAttribute('data-swiper-slide-index'));
+  if (typeof autoplayStart !== 'string' || !autoplayStart) throw new Error('Carousel active slide unavailable');
   // Observe one normal 10-second autoplay tick; do not alter the app's timer.
-  await page.waitForFunction((previous: string) => !(document.querySelector('.swiper') as any)?.swiper?.animating &&
-    document.querySelector('.swiper-slide-active')?.getAttribute('data-swiper-slide-index') !== previous,
-    {timeout: 12000}, autoplayStart);
+  await page.waitForFunction((previous: string) => {
+    const swiper = (document.querySelector('.swiper') as any)?.swiper;
+    const index = document.querySelector('.swiper-slide-active')?.getAttribute('data-swiper-slide-index');
+    return !!swiper && !swiper.animating && typeof index === 'string' && index.length > 0 && index !== previous;
+  }, {timeout: 12000}, autoplayStart);
   proof.carouselAutoplayAdvanced = true;
   const initialSlide = await page.$eval('.swiper-slide-active', (node: Element) => node.getAttribute('data-swiper-slide-index'));
+  if (typeof initialSlide !== 'string' || !initialSlide) throw new Error('Carousel active slide unavailable');
   await page.locator('.swiper-custom-button-next').setTimeout(5000).click();
-  await page.waitForFunction((previous: string) => !(document.querySelector('.swiper') as any)?.swiper?.animating &&
-    document.querySelector('.swiper-slide-active')?.getAttribute('data-swiper-slide-index') !== previous,
-    {timeout: 5000}, initialSlide);
+  await page.waitForFunction((previous: string) => {
+    const swiper = (document.querySelector('.swiper') as any)?.swiper;
+    const index = document.querySelector('.swiper-slide-active')?.getAttribute('data-swiper-slide-index');
+    return !!swiper && !swiper.animating && typeof index === 'string' && index.length > 0 && index !== previous;
+  }, {timeout: 5000}, initialSlide);
   await page.locator('.swiper-custom-button-prev').setTimeout(5000).click();
-  await page.waitForFunction((previous: string) => !(document.querySelector('.swiper') as any)?.swiper?.animating &&
-    document.querySelector('.swiper-slide-active')?.getAttribute('data-swiper-slide-index') === previous,
-    {timeout: 5000}, initialSlide);
+  await page.waitForFunction((previous: string) => {
+    const swiper = (document.querySelector('.swiper') as any)?.swiper;
+    const index = document.querySelector('.swiper-slide-active')?.getAttribute('data-swiper-slide-index');
+    return !!swiper && !swiper.animating && typeof index === 'string' && index.length > 0 && index === previous;
+  }, {timeout: 5000}, initialSlide);
   proof.carouselNavigationWorked = true;
   await page.locator('.swiper-slide-active img').setTimeout(5000).click();
   await page.waitForSelector('[role="dialog"] img[alt="Game screenshot"]', {visible: true, timeout: 5000});

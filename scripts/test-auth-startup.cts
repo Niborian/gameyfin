@@ -442,32 +442,48 @@ test('failure-only session probe distinguishes browser input, connection and res
     const source=fs.readFileSync(path.resolve(__dirname,'original-editor-image.cts'),'utf8');
     const fragment=source.slice(source.indexOf('const emptySessionProbe ='),source.indexOf('const gameDiagnostic =')) +
         source.slice(source.indexOf('async function probeCurrentSession('),source.indexOf('async function login('));
-    const compiled=ts.transpileModule(fragment+'\nmodule.exports=probeCurrentSession;', {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+    const compiled=ts.transpileModule(fragment+'\nmodule.exports={probeCurrentSession,emptySessionProbe};', {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
     const {EventEmitter}=require('node:events');
-    for(const phase of ['browser-input','connection','response','success']) {
-        let requests=0,destroyed=0,agentDestroyed=0;
+    for(const phase of ['browser-input','connection','response','success','late-input']) {
+        let requests=0,destroyed=0,agentDestroyed=0,now=0;
         const nativeHttp={Agent:class {destroy(){agentDestroyed++;}},request(_options:any,response:any){
             requests++;const request=new EventEmitter();request.destroy=()=>{destroyed++;};
             request.end=()=>queueMicrotask(()=>{
                 if(phase==='connection')return;
-                const socket=new EventEmitter();request.emit('socket',socket);socket.emit('connect');request.emit('finish');
+                const socket=new EventEmitter();request.emit('socket',socket);
+                now=phase==='late-input'?1880:150;socket.emit('connect');
+                now=phase==='late-input'?1900:160;request.emit('finish');
                 if(phase!=='success')return;
+                now=180;
                 const body=new EventEmitter();body.statusCode=200;response(body);
                 body.emit('data',Buffer.from(JSON.stringify({username:'fixture-admin',enabled:true,id:1})));body.emit('end');
             });return request;
         }};
         const module={exports:undefined as any};
-        vm.runInNewContext(compiled,{module,nativeHttp,URL,Buffer,performance,
-            setTimeout:(fn:()=>void)=>setTimeout(fn,20),clearTimeout});
-        const page={cookies:()=>phase==='browser-input'?new Promise(()=>{}):Promise.resolve([]),evaluate:()=>Promise.resolve('synthetic-csrf')};
-        const result=await module.exports(page,{origin:'http://172.20.0.2:8080',username:'fixture-admin'});
+        vm.runInNewContext(compiled,{module,nativeHttp,URL,Buffer,performance:{now:()=>now},
+            // A deterministic probe clock models input overhead without any
+            // application sleep, timeout extension or real socket/server call.
+            setTimeout:(fn:()=>void,ms:number)=>{assert.equal(ms,2000);return setTimeout(()=>{now=2000;fn();},20);},clearTimeout});
+        const empty=module.exports.emptySessionProbe();
+        const times=['inputsElapsedMs','socketConnectedElapsedMs','requestFlushedElapsedMs','responseHeadersElapsedMs','totalElapsedMs'];
+        assert.equal(empty.kind,'not-run');assert.ok(times.every(key=>empty[key]===null));
+        const page={cookies:()=>phase==='browser-input'?new Promise(()=>{}):Promise.resolve().then(()=>{now=phase==='late-input'?1750:100;return [];}),evaluate:()=>Promise.resolve('synthetic-csrf')};
+        const result=await module.exports.probeCurrentSession(page,{origin:'http://172.20.0.2:8080',username:'fixture-admin'});
         assert.equal(result.inputsReady,phase!=='browser-input');
-        assert.equal(result.socketConnected,phase==='response'||phase==='success');
-        assert.equal(result.requestFlushed,phase==='response'||phase==='success');
+        assert.equal(result.socketConnected,['response','success','late-input'].includes(phase));
+        assert.equal(result.requestFlushed,['response','success','late-input'].includes(phase));
         assert.equal(result.kind,phase==='success'?'completed':'timeout');
         assert.equal(result.currentIdentityMatches,phase==='success');
         assert.equal(result.status,phase==='success'?200:null);
         assert.equal(requests,phase==='browser-input'?0:1);
+        assert.deepEqual(Object.keys(result).sort(),['kind','status','currentIdentityMatches','profileNull','inputsReady','socketConnected','requestFlushed',...times].sort());
+        assert.ok(times.every(key=>result[key]===null||Number.isInteger(result[key])&&result[key]>=0&&result[key]<=2000));
+        assert.equal(result.inputsElapsedMs,phase==='browser-input'?null:phase==='late-input'?1750:100);
+        assert.equal(result.socketConnectedElapsedMs,result.socketConnected?(phase==='late-input'?1880:150):null);
+        assert.equal(result.requestFlushedElapsedMs,result.requestFlushed?(phase==='late-input'?1900:160):null);
+        assert.equal(result.responseHeadersElapsedMs,phase==='success'?180:null);
+        assert.equal(result.totalElapsedMs,phase==='success'?180:2000);
+        if(phase==='late-input')assert.equal(result.totalElapsedMs-result.requestFlushedElapsedMs,100); // Not a 2-second server stall.
         if(requests){assert.ok(destroyed>=1);assert.equal(agentDestroyed,1);}
         assert.ok(!JSON.stringify(result).includes('synthetic-csrf'));
     }

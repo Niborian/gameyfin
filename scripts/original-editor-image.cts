@@ -11,9 +11,13 @@ interface SavedVariant { id: number; version: string; default: boolean; contents
 interface SavedGame { id: number; variants: SavedVariant[]; }
 type SessionProbe = {kind: 'not-run' | 'completed' | 'timeout' | 'error' | 'input-refused' | 'body-refused' | 'json-refused';
   status: number | null; currentIdentityMatches: boolean; profileNull: boolean;
-  inputsReady: boolean; socketConnected: boolean; requestFlushed: boolean};
+  inputsReady: boolean; socketConnected: boolean; requestFlushed: boolean;
+  inputsElapsedMs: number | null; socketConnectedElapsedMs: number | null; requestFlushedElapsedMs: number | null;
+  responseHeadersElapsedMs: number | null; totalElapsedMs: number | null};
 const emptySessionProbe = (): SessionProbe => ({kind: 'not-run', status: null, currentIdentityMatches: false, profileNull: false,
-  inputsReady: false, socketConnected: false, requestFlushed: false});
+  inputsReady: false, socketConnected: false, requestFlushed: false,
+  inputsElapsedMs: null, socketConnectedElapsedMs: null, requestFlushedElapsedMs: null,
+  responseHeadersElapsedMs: null, totalElapsedMs: null});
 const gameDiagnostic = () => ({phase: 'not-started', truncated: false, pageerrorSeen: false,
   domObserved: false, profilePresent: false, signInPresent: false, loginFormPresent: false, errorHeadingPresent: false,
   families: Object.fromEntries(['game', 'library', 'user'].map(key => [key, {count: 0, status: null as number | null,
@@ -153,7 +157,11 @@ async function clickText(page: any, text: string, scope = 'body'): Promise<void>
  * Secrets/body remain transient in this process and never enter the proof envelope. */
 async function probeCurrentSession(page: any, input: FixtureInput): Promise<SessionProbe> {
   const result = emptySessionProbe();
-  const deadline = performance.now() + 2000;
+  const started = performance.now();
+  const deadline = started + 2000;
+  // Capped to the fixed diagnostic budget, not a server-latency measurement.
+  const elapsed = () => Math.min(2000, Math.max(0, Math.floor(performance.now() - started)));
+  let outcome: SessionProbe;
   let request: any;
   let agent: any;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -169,6 +177,7 @@ async function probeCurrentSession(page: any, input: FixtureInput): Promise<Sess
       const [cookies, csrf] = await Promise.all([page.cookies(input.origin), page.evaluate(() =>
         document.querySelector('meta[name="_csrf"]')?.getAttribute('content'))]);
       if (expired || performance.now() >= deadline) return {...result, kind: 'timeout'};
+      result.inputsElapsedMs = elapsed();
       if (!Array.isArray(cookies) || cookies.length > 32 || typeof csrf !== 'string' ||
           csrf.length < 1 || csrf.length > 1024 || !/^[A-Za-z0-9_.~+/%=-]+$/.test(csrf) ||
           cookies.some(cookie => typeof cookie.name !== 'string' || !/^[A-Za-z0-9_.-]{1,128}$/.test(cookie.name) ||
@@ -185,6 +194,8 @@ async function probeCurrentSession(page: any, input: FixtureInput): Promise<Sess
           path: '/connect/UserEndpoint/getUserInfo', agent,
           headers: {'Content-Type': 'application/json', 'Content-Length': '2', 'X-CSRF-Token': csrf,
             Cookie: cookieHeader, Accept: 'application/json', Connection: 'close'}}, (response: any) => {
+          if (expired) { response.destroy(); return; }
+          result.responseHeadersElapsedMs = elapsed();
           const status = response.statusCode;
           if (!Number.isInteger(status) || status < 100 || status > 599) {
             response.destroy(); resolve({...result, kind: 'error'}); return;
@@ -209,19 +220,24 @@ async function probeCurrentSession(page: any, input: FixtureInput): Promise<Sess
             } catch { resolve({...result, kind: 'json-refused'}); }
           });
         });
-        // Value-free phase evidence only. A timeout collecting browser inputs is
-        // not proof that this independent HTTP request ever reached the server.
-        request.on('socket', (socket: any) => socket.once('connect', () => { result.socketConnected = true; }));
-        request.on('finish', () => { result.requestFlushed = true; });
+        // This is a TOTAL 2-second probe, including browser input collection.
+        // TCP connect/client finish do not establish server-handler receipt.
+        request.on('socket', (socket: any) => socket.once('connect', () => {
+          if (!expired) { result.socketConnected = true; result.socketConnectedElapsedMs = elapsed(); }
+        }));
+        request.on('finish', () => {
+          if (!expired) { result.requestFlushed = true; result.requestFlushedElapsedMs = elapsed(); }
+        });
         request.on('error', () => resolve({...result, kind: expired ? 'timeout' : 'error'}));
         request.end('{}');
       });
     };
-    return await Promise.race([work(), new Promise<SessionProbe>(resolve => {
+    outcome = await Promise.race([work(), new Promise<SessionProbe>(resolve => {
       timer = setTimeout(() => { expired = true; request?.destroy(); resolve({...result, kind: 'timeout'}); }, 2000);
     })]);
-  } catch { return {...result, kind: expired ? 'timeout' : 'error'}; }
-  finally { if (timer) clearTimeout(timer); request?.destroy(); agent?.destroy(); }
+  } catch { outcome = {...result, kind: expired ? 'timeout' : 'error'}; }
+  finally { expired = true; if (timer) clearTimeout(timer); request?.destroy(); agent?.destroy(); }
+  return {...outcome, totalElapsedMs: elapsed()};
 }
 async function login(page: any, input: FixtureInput, username: string, password: string, alreadyOnForm = false): Promise<void> {
   proof.loginPhase = 'opening-login';

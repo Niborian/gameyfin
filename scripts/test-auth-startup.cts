@@ -17,11 +17,11 @@ const {createRequire} = require('node:module');
 const appRequire = createRequire(path.resolve(__dirname, '../app/package.json'));
 const ts = process.env.TEST_TYPESCRIPT_MODULE ? require(process.env.TEST_TYPESCRIPT_MODULE) : appRequire('typescript');
 const frontend = path.resolve(__dirname, '../app/src/main/frontend');
-function load<T extends object = VmExports>(file: string, mocks: ModuleMocks = {}, suffix: string = ''): T {
+function load<T extends object = VmExports>(file: string, mocks: ModuleMocks = {}, suffix: string = '', globals: ModuleMocks = {}): T {
     const source = fs.readFileSync(path.join(frontend, file), 'utf8') + suffix;
     const compiled = ts.transpileModule(source, {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX}});
     const module = {exports: {}};
-    vm.runInNewContext(compiled.outputText, {module, exports: module.exports, AbortController, console,
+    vm.runInNewContext(compiled.outputText, {module, exports: module.exports, AbortController, console, ...globals,
         require(name: string) {
             if (name === 'Frontend/util/startupLifecycle') return lifecycle;
             if (name === 'valtio' || name === 'valtio/index') return {proxy: value => value};
@@ -401,3 +401,39 @@ for (const kind of ['Library', 'Collection'] as const) {
         assert.equal(rendered.find(n=>n?.type===grid).props.games,selected);
     });
 }
+
+test('session check failure surfaces explicit recovery without changing Hilla authentication outcomes', async () => {
+    for(const outcome of ['network','unauthorized','success','anonymous','unmounted','superseded'] as const) {
+        class UnauthorizedResponseError extends Error {}
+        const failure=outcome==='unauthorized'?new UnauthorizedResponseError():new TypeError('private synthetic details must not appear');
+        const result={id:42,roles:[]}; const request=deferred<any>();
+        let failed=false,check:any,cleanup:any,reloads=0,updates=0,calls=0,cached:any;
+        const owner={current:{active:true,request:0}};
+        const provider=()=>undefined,hook=()=>undefined;
+        const jsx=(type:unknown,props:any)=>({type,props});
+        const exports=load('util/SessionAuthProvider.tsx',{
+            'react':{useState:()=>[failed,(v:boolean)=>{failed=v;updates++;}],useRef:()=>owner,useLayoutEffect:(fn:()=>any)=>{cleanup=fn();},useMemo:(fn:()=>unknown)=>cached??=(fn())},
+            'react/jsx-runtime':{jsx,jsxs:jsx},
+            '@vaadin/hilla-react-auth':{configureAuth:(getUser:any)=>{check=getUser;return{AuthProvider:provider,useAuth:hook};}},
+            '@vaadin/hilla-frontend':{UnauthorizedResponseError},
+            'Frontend/generated/endpoints':{UserEndpoint:{getUserInfo:()=>++calls===1?request.promise:Promise.resolve(result)}}
+        }, '', {window:{location:{reload:()=>{reloads++;}}}});
+        const first=exports.AuthProvider({children:'protected content'});
+        assert.equal(first.type,provider);assert.equal(exports.useAuth,hook);
+        const pending=check();
+        if(outcome==='unmounted')cleanup();
+        if(outcome==='superseded')assert.equal(await check(),result);
+        if(outcome==='success'||outcome==='anonymous')request.resolve(outcome==='success'?result:undefined);
+        else request.promise.catch(()=>{}), request.resolve(Promise.reject(failure));
+        if(outcome==='success')assert.equal(await pending,result);
+        else if(outcome==='anonymous')assert.equal(await pending,undefined);
+        else await assert.rejects(pending,error=>error===failure);
+        const rendered=exports.AuthProvider({children:'protected content'});
+        if(outcome==='network') {
+            assert.equal(rendered.props.role,'alert');assert.equal(updates,1);
+            const text=JSON.stringify(rendered);assert.ok(text.includes('Reload Gameyfin'));assert.ok(!text.includes('private synthetic details'));assert.ok(!text.includes('protected content'));
+            const button=rendered.props.children.find(n=>n?.type==='button');assert.equal(reloads,0);button.props.onClick();assert.equal(reloads,1);
+        } else {assert.equal(rendered.type,provider);assert.equal(updates,0);}
+
+    }
+});

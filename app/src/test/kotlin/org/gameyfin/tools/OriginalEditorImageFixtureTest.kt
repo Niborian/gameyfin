@@ -229,18 +229,23 @@ class OriginalEditorImageFixtureTest {
             proof["browserStage"] = browserStage
             val probe = browserProof["currentSessionProbe"]
             require(probe.isObject && probe.properties().map { it.key }.toSet() ==
-                setOf("kind", "status", "currentIdentityMatches", "profileNull"))
+                setOf("kind", "status", "currentIdentityMatches", "profileNull", "inputsReady", "socketConnected", "requestFlushed"))
             val probeKind = probe["kind"].asText()
             require(probeKind in setOf("not-run", "completed", "timeout", "error", "input-refused", "body-refused", "json-refused"))
             val probeStatus = probe["status"]
             require(probeStatus.isNull || probeStatus.isIntegralNumber && probeStatus.canConvertToInt() && probeStatus.intValue() in 100..599)
             require(probe["currentIdentityMatches"].isBoolean && probe["profileNull"].isBoolean)
+            val probePhases = listOf("inputsReady", "socketConnected", "requestFlushed")
+            require(probePhases.all { probe[it].isBoolean })
+            require(probe["inputsReady"].booleanValue() || probeStatus.isNull &&
+                !probe["socketConnected"].booleanValue() && !probe["requestFlushed"].booleanValue())
             require(!(probe["currentIdentityMatches"].booleanValue() && probe["profileNull"].booleanValue()))
             require((!probe["currentIdentityMatches"].booleanValue() && !probe["profileNull"].booleanValue()) ||
                 probeKind == "completed" && !probeStatus.isNull && probeStatus.intValue() == 200)
             proof["currentSessionProbe"] = mapOf("kind" to probeKind,
                 "status" to if (probeStatus.isNull) null else probeStatus.intValue(),
-                "currentIdentityMatches" to probe["currentIdentityMatches"].booleanValue(), "profileNull" to probe["profileNull"].booleanValue())
+                "currentIdentityMatches" to probe["currentIdentityMatches"].booleanValue(), "profileNull" to probe["profileNull"].booleanValue()) +
+                probePhases.associateWith { probe[it].booleanValue() }
             val repeatPhase = browserProof["repeatPhase"]?.asText()
             require(repeatPhase in setOf("not-started", "profile-menu", "sign-out", "logged-out-form", "normal-form", "complete"))
             proof["repeatPhase"] = repeatPhase

@@ -47,7 +47,10 @@ export default function LoginView() {
         owner.interactive = true;
         owner.pending = true;
         try {
-            const {defaultUrl, error, redirectUrl} = await login(values.username, values.password);
+            // Hilla navigates before its post-login profile request completes.
+            // Route that documented callback through the same owner as the
+            // fallback below, so neither can navigate twice or after unmount.
+            const {defaultUrl, error, redirectUrl} = await login(values.username, values.password, {navigate: redirectAfterLogin});
             if (!owner.mounted) return;
             if (error) {
                 owner.interactive = false;

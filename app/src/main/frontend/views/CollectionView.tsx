@@ -9,7 +9,9 @@ export default function CollectionView() {
     const {collectionId} = useParams();
     const navigate = useNavigate();
     const collections = useSnapshot(collectionState);
-    const games = collectionId ? useSnapshot(gameState).gamesByCollectionId[parseInt(collectionId!)] || [] : [];
+    const gameSnapshot = useSnapshot(gameState);
+    const games = collectionId ? gameSnapshot.gamesByCollectionId[parseInt(collectionId)] || [] : [];
+    const ready = collections.isLoaded && gameSnapshot.isLoaded;
 
     useEffect(() => {
         window.scrollTo(0, 0)
@@ -25,8 +27,10 @@ export default function CollectionView() {
     return (
         <div className="flex flex-col gap-6">
             <p className="text-4xl font-bold text-center">{collections.state[parseInt(collectionId!)]?.name}</p>
-            <CoverGrid games={games}/>
-            {games.length === 0 && <p className="text-center text-gray-500">This collection is empty.</p>}
+            {ready ? <>
+                <CoverGrid games={games}/>
+                {games.length === 0 && <p className="text-center text-gray-500">This collection is empty.</p>}
+            </> : <p role="status" className="text-center text-gray-500">Loading collection…</p>}
         </div>
     );
 }

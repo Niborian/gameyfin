@@ -362,3 +362,42 @@ test('actual LoginView prevents fast submit until policy settles, including a fa
         for (const cleanup of cleanups) if (typeof cleanup === 'function') cleanup();
     }
 });
+
+for (const kind of ['Library', 'Collection'] as const) {
+    test(`actual ${kind} view distinguishes pending snapshots from loaded empty content`, () => {
+        const container = {isLoaded:false,state:{52:{name:'Fixture catalogue'}}};
+        const grouping = kind === 'Library' ? 'gamesByLibraryId' : 'gamesByCollectionId';
+        const games = {isLoaded:false,[grouping]:{} as Record<number,object[]>};
+        const jsx = (type: unknown, props: any) => ({type,props});
+        const grid = () => undefined;
+        const view = load(`views/${kind}View.tsx`, {
+            'react': {useEffect:()=>{}},
+            'react/jsx-runtime': {jsx,jsxs:jsx,Fragment:'fragment'},
+            'valtio/react': {useSnapshot:(value:unknown)=>value},
+            'react-router': {useParams:()=>({libraryId:'52',collectionId:'52'}),useNavigate:()=>()=>{}},
+            [`Frontend/state/${kind}State`]: {[`${kind.toLowerCase()}State`]:container},
+            'Frontend/state/GameState': {gameState:games},
+            'Frontend/components/general/covers/CoverGrid': {default:grid,__esModule:true}
+        }).default;
+        function nodes(value:any):any[] {
+            if(Array.isArray(value)) return value.flatMap(nodes);
+            if(!value || typeof value!=='object') return [value];
+            return [value,...nodes(value.props?.children)];
+        }
+        const empty = `This ${kind.toLowerCase()} is empty.`;
+        for(const [containerReady,gameReady] of [[false,false],[true,false],[false,true]]) {
+            container.isLoaded=containerReady; games.isLoaded=gameReady;
+            const rendered=nodes(view());
+            assert.ok(rendered.some(n=>n?.props?.role==='status'));
+            assert.equal(rendered.includes(empty),false);
+            assert.equal(rendered.some(n=>n?.type===grid),false);
+        }
+        container.isLoaded=true; games.isLoaded=true;
+        assert.ok(nodes(view()).includes(empty));
+        const selected=[{id:1,title:'Fixture game'}]; games[grouping][52]=selected;
+        const rendered=nodes(view());
+        assert.equal(rendered.includes(empty),false);
+        assert.equal(rendered.some(n=>n?.props?.role==='status'),false);
+        assert.equal(rendered.find(n=>n?.type===grid).props.games,selected);
+    });
+}

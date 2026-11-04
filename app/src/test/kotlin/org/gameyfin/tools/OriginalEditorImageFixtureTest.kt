@@ -167,6 +167,16 @@ class OriginalEditorImageFixtureTest {
             owned.docker("stop", "--time", "10", app)
             require(!FixtureRuntime.tree(owned.docker("inspect", app))[0]["State"]["Running"].booleanValue())
             proof["stage"] = "offline-image-schema-seed"
+            // Tiny local screenshots exercise the real carousel, never remote media.
+            val screenshots = (0..6).map { index ->
+                val file = state.getValue("data").resolve("synthetic-carousel-$index.png")
+                val pixels = BufferedImage(8, 8, BufferedImage.TYPE_INT_RGB)
+                try {
+                    pixels.setRGB(0, 0, 0x2176a5 + index)
+                    require(ImageIO.write(pixels, "PNG", file.toFile()))
+                } finally { pixels.flush() }
+                file
+            }
             val sql = root.resolve("seed.sql")
             Files.writeString(sql, """
                 SELECT 1 / CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END FROM "flyway_schema_history" WHERE "success" = FALSE;
@@ -176,6 +186,7 @@ class OriginalEditorImageFixtureTest {
                 INSERT INTO DIRECTORY_MAPPING(ID,EXTERNAL_PATH,INTERNAL_PATH) VALUES(27001,'/fixture','/fixture');
                 INSERT INTO LIBRARY_DIRECTORIES(LIBRARY_ID,DIRECTORIES_ID) VALUES(27001,27001);
                 INSERT INTO GAME(ID,CREATED_AT,TITLE,UPDATED_AT,PATH,FILE_SIZE,LIBRARY_ID,DOWNLOAD_COUNT,MATCH_CONFIRMED) VALUES(34000,CURRENT_TIMESTAMP,'Synthetic editor game',CURRENT_TIMESTAMP,'/fixture',${a.size + b.size + patch.size},27001,0,TRUE);
+                ${screenshots.mapIndexed { index, file -> "INSERT INTO IMAGE(ID,CONTENT_ID,CONTENT_LENGTH,MIME_TYPE,TYPE) VALUES(${34010 + index},'${file.fileName}',${Files.size(file)},'image/png',2); INSERT INTO GAME_IMAGES(GAME_ID,IMAGES_ID) VALUES(34000,${34010 + index});" }.joinToString("\n")}
                 INSERT INTO GAME_VARIANT(ID,FILE_SIZE,IS_DEFAULT,IS_LATEST_FOR_VARIANT,NAME,PATH,VERSION,GAME_ID,SCAN_MANAGED,DEFAULT_LOCKED,LINK_STATUS) VALUES
                 (134000,24,TRUE,FALSE,'Normal','/fixture/Normal 0.9','0.9',34000,FALSE,TRUE,'DIRECT'),
                 (134001,${a.size + b.size + patch.size},FALSE,TRUE,'Normal','/fixture/Normal 1.0','1.0',34000,FALSE,FALSE,'DIRECT');
@@ -222,7 +233,8 @@ class OriginalEditorImageFixtureTest {
                 "keepEditingPreserved", "escapePreserved", "escapeFocusRestored", "keepEditingFocusRestored", "controlledDiscardAccepted",
                 "viewerLogoutObserved", "loggedOutLoginFormObserved", "repeatedViewerIdentityVerified", "cleanupConfirmed",
                 "ordinaryAvatarChooserUsed", "ordinaryAvatarUploadRendered", "ordinaryAvatarRemoveRendered", "ordinaryAvatarNoReload",
-                "steamInboxRendered", "steamInboxSnoozePersisted", "steamInboxIgnorePersisted", "steamInboxCheckStatusVisible")
+                "steamInboxRendered", "steamInboxSnoozePersisted", "steamInboxIgnorePersisted", "steamInboxCheckStatusVisible",
+                "carouselImagesRendered", "carouselAutoplayRunning", "carouselNavigationWorked", "carouselPopupWorked")
             proof["browser"] = expectedFlags.associateWith { browserProof[it]?.booleanValue() == true }
             val browserStage = browserProof["stage"]?.asText()
             require(browserStage in setOf("input", "launch", "normal-login", "editor", "immediate-download", "steam-inbox", "ordinary-user", "ordinary-avatar", "repeat-login", "complete"))

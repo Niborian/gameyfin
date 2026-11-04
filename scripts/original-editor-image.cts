@@ -30,6 +30,8 @@ const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', s
   steamInboxCheckStatusVisible: false,
   ordinaryAvatarChooserUsed: false, ordinaryAvatarUploadRendered: false,
   ordinaryAvatarRemoveRendered: false, ordinaryAvatarNoReload: false,
+  carouselImagesRendered: false, carouselAutoplayRunning: false,
+  carouselNavigationWorked: false, carouselPopupWorked: false,
   loginPhase: 'not-started', profileResponseObserved: false, profileIdentityMatched: false,
   authenticatedLandingObserved: false, profileTriggerObserved: false, profileDomIdentityMatched: false,
   editorPhase: 'not-started', gameRouteMatches: false, footerMatches: false, versionTriggerUnique: false,
@@ -358,6 +360,31 @@ async function run(): Promise<void> {
     finally { if (snapshotTimer) clearTimeout(snapshotTimer); }
     if (!gameReadyPassed) proof.currentSessionProbe = await probeCurrentSession(page, input);
   }
+  // A few tiny local images in the existing fixture exercise the original UI.
+  // No response interception, application mutation, external media or extra run.
+  await page.waitForFunction(() => {
+    const images = [...document.querySelectorAll<HTMLImageElement>('.swiper-slide img')];
+    return images.length === 7 && images.every(image => image.complete && image.naturalWidth === 8);
+  }, {timeout: 5000});
+  proof.carouselImagesRendered = true;
+  proof.carouselAutoplayRunning = await page.evaluate(() =>
+    (document.querySelector('.swiper') as any)?.swiper?.autoplay?.running === true);
+  if (!proof.carouselAutoplayRunning) throw new Error('Carousel autoplay not running');
+  const initialSlide = await page.$eval('.swiper-slide-active', (node: Element) => node.getAttribute('data-swiper-slide-index'));
+  await page.locator('.swiper-custom-button-next').setTimeout(5000).click();
+  await page.waitForFunction((previous: string) => !(document.querySelector('.swiper') as any)?.swiper?.animating &&
+    document.querySelector('.swiper-slide-active')?.getAttribute('data-swiper-slide-index') !== previous,
+    {timeout: 5000}, initialSlide);
+  await page.locator('.swiper-custom-button-prev').setTimeout(5000).click();
+  await page.waitForFunction((previous: string) => !(document.querySelector('.swiper') as any)?.swiper?.animating &&
+    document.querySelector('.swiper-slide-active')?.getAttribute('data-swiper-slide-index') === previous,
+    {timeout: 5000}, initialSlide);
+  proof.carouselNavigationWorked = true;
+  await page.locator('.swiper-slide-active img').setTimeout(5000).click();
+  await page.waitForSelector('[role="dialog"] img[alt="Game screenshot"]', {visible: true, timeout: 5000});
+  await page.locator('[role="dialog"] img[alt="Game screenshot"]').setTimeout(5000).click();
+  await page.waitForSelector('[role="dialog"]', {hidden: true, timeout: 5000});
+  proof.carouselPopupWorked = true;
   // The original Version select, not a direct endpoint/state mutation.
   proof.editorPhase = 'version-trigger';
   const version = await page.evaluateHandle(() => {

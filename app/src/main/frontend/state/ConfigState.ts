@@ -3,6 +3,7 @@ import ConfigEntryDto from "Frontend/generated/org/gameyfin/app/config/dto/Confi
 import {ConfigEndpoint} from "Frontend/generated/endpoints";
 import ConfigUpdateDto from "Frontend/generated/org/gameyfin/app/config/dto/ConfigUpdateDto";
 import {Subscription} from "@vaadin/hilla-frontend";
+import {runStartupState} from "Frontend/util/startupLifecycle";
 
 type ConfigState = {
     subscription?: Subscription<ConfigUpdateDto[]>;
@@ -22,24 +23,28 @@ export const configState = proxy<ConfigState>({
 });
 
 /** Subscribe to and process state updates from backend **/
-export async function initializeConfigState() {
-    if (configState.isLoaded) return;
+export async function initializeConfigState(signal?: AbortSignal) {
+    return runStartupState(configState, signal, () => { configState.state = {}; }, async current => {
+        if (!current() || configState.isLoaded) return;
 
-    // Fetch initial configuration data
-    const initialEntries = await ConfigEndpoint.getAll();
-    initialEntries.forEach((entry) => {
-        configState.state[entry.key] = entry;
-    });
+        // Fetch initial configuration data
+        const initialEntries = await ConfigEndpoint.getAll(signal ? {signal} : undefined);
+        if (!current()) return;
+        initialEntries.forEach((entry) => {
+            configState.state[entry.key] = entry;
+        });
 
-    // Subscribe to real-time updates
-    configState.subscription = ConfigEndpoint.subscribe().onNext((updateDtos: ConfigUpdateDto[]) => {
-        updateDtos.forEach((updateDto: ConfigUpdateDto) => {
-            Object.entries(updateDto.updates).forEach(([key, value]) => {
-                if (configState.state[key]) {
-                    configState.state[key].value = value;
-                }
-            });
-        })
+        // Subscribe to real-time updates
+        configState.subscription = ConfigEndpoint.subscribe().onNext((updateDtos: ConfigUpdateDto[]) => {
+            if (!current()) return;
+            updateDtos.forEach((updateDto: ConfigUpdateDto) => {
+                Object.entries(updateDto.updates).forEach(([key, value]) => {
+                    if (configState.state[key]) {
+                        configState.state[key].value = value;
+                    }
+                });
+            })
+        });
     });
 }
 

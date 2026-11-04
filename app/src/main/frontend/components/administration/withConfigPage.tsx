@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from "react";
+import React, {useEffect, useRef, useState} from "react";
 import {ConfigEndpoint} from "Frontend/generated/endpoints";
 import ConfigEntryDto from "Frontend/generated/org/gameyfin/app/config/dto/ConfigEntryDto";
 import {Form, Formik, FormikProps} from "formik";
@@ -19,11 +19,20 @@ export default function withConfigPage(WrappedComponent: React.ComponentType<Con
     return function ConfigPage(props: Record<string, never>) {
         const [configSaved, setConfigSaved] = useState(false);
         const [saveMessage, setSaveMessage] = useState<string>();
+        const [loadFailed, setLoadFailed] = useState(false);
 
         const state = useSnapshot(configState);
+        // Keep the mounted form and its draft through a transient reconnect.
+        // A changed authoritative snapshot still follows enableReinitialize.
+        const lastLoadedConfig = useRef<{values: NestedConfig; entries: Record<string, ConfigEntryDto>} | undefined>(undefined);
+        if (state.isLoaded) lastLoadedConfig.current = {values: state.config, entries: state.state};
 
         useEffect(() => {
-            initializeConfigState();
+            const lifecycle = new AbortController();
+            void initializeConfigState(lifecycle.signal).catch(() => {
+                if (!lifecycle.signal.aborted) setLoadFailed(true);
+            });
+            return () => lifecycle.abort();
         }, []);
 
         useEffect(() => {
@@ -33,13 +42,14 @@ export default function withConfigPage(WrappedComponent: React.ComponentType<Con
         }, [configSaved])
 
         async function handleSubmit(values: NestedConfig): Promise<void> {
+            if (!configState.isLoaded) return;
             const changed = getChangedValues(state.config, values);
             await ConfigEndpoint.update({updates: changed});
             setConfigSaved(true);
         }
 
         function getConfig(key: string): ConfigEntryDto | undefined {
-            return state.state[key];
+            return (state.isLoaded ? state.state : lastLoadedConfig.current?.entries)?.[key];
         }
 
         function getChangedValues(initial: NestedConfig, current: NestedConfig): Record<string, NestedConfig[string]> {
@@ -90,9 +100,12 @@ export default function withConfigPage(WrappedComponent: React.ComponentType<Con
 
         return (
             <>
-                {state.isLoaded ?
+                {loadFailed && <p role="alert">Could not load settings. Reload to try again.</p>}
+                {!state.isLoaded && lastLoadedConfig.current &&
+                    <p role="status">Settings are reconnecting. Reload if they do not recover.</p>}
+                {lastLoadedConfig.current ?
                     <Formik
-                        initialValues={state.config}
+                        initialValues={lastLoadedConfig.current.values}
                         onSubmit={handleSubmit}
                         validationSchema={validationSchema}
                         enableReinitialize={true}
@@ -110,7 +123,7 @@ export default function withConfigPage(WrappedComponent: React.ComponentType<Con
                                         <Button
                                             color="primary"
                                             isLoading={formik.isSubmitting}
-                                            isDisabled={formik.isSubmitting || configSaved || !formik.dirty}
+                                            isDisabled={!state.isLoaded || formik.isSubmitting || configSaved || !formik.dirty}
                                             type="submit"
                                         >
                                             {formik.isSubmitting ? "" : configSaved ? <CheckIcon/> : "Save"}
@@ -124,7 +137,7 @@ export default function withConfigPage(WrappedComponent: React.ComponentType<Con
                                                   setSaveMessage={setSaveMessage}/>
                             </Form>
                         )}
-                    </Formik> :
+                    </Formik> : loadFailed ? null :
                     [...Array(4)].map((_e, i) =>
                         <div className="flex flex-col grow gap-8 mb-12" key={i}>
                             <Skeleton className="h-10 w-full rounded-md"/>

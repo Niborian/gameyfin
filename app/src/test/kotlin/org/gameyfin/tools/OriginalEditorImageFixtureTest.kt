@@ -234,7 +234,7 @@ class OriginalEditorImageFixtureTest {
                 "viewerLogoutObserved", "loggedOutLoginFormObserved", "repeatedViewerIdentityVerified", "cleanupConfirmed",
                 "ordinaryAvatarChooserUsed", "ordinaryAvatarUploadRendered", "ordinaryAvatarRemoveRendered", "ordinaryAvatarNoReload",
                 "steamInboxRendered", "steamInboxSnoozePersisted", "steamInboxIgnorePersisted", "steamInboxCheckStatusVisible",
-                "carouselImagesRendered", "carouselAutoplayRunning", "carouselNavigationWorked", "carouselPopupWorked")
+                "carouselImagesRendered", "carouselAutoplayRunning", "carouselAutoplayAdvanced", "carouselNavigationWorked", "carouselPopupWorked")
             proof["browser"] = expectedFlags.associateWith { browserProof[it]?.booleanValue() == true }
             val browserStage = browserProof["stage"]?.asText()
             require(browserStage in setOf("input", "launch", "normal-login", "editor", "immediate-download", "steam-inbox", "ordinary-user", "ordinary-avatar", "repeat-login", "complete"))

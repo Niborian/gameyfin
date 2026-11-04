@@ -31,7 +31,7 @@ const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', s
   ordinaryAvatarChooserUsed: false, ordinaryAvatarUploadRendered: false,
   ordinaryAvatarRemoveRendered: false, ordinaryAvatarNoReload: false,
   carouselImagesRendered: false, carouselAutoplayRunning: false,
-  carouselNavigationWorked: false, carouselPopupWorked: false,
+  carouselNavigationWorked: false, carouselPopupWorked: false, carouselAutoplayAdvanced: false,
   loginPhase: 'not-started', profileResponseObserved: false, profileIdentityMatched: false,
   authenticatedLandingObserved: false, profileTriggerObserved: false, profileDomIdentityMatched: false,
   editorPhase: 'not-started', gameRouteMatches: false, footerMatches: false, versionTriggerUnique: false,
@@ -370,6 +370,12 @@ async function run(): Promise<void> {
   proof.carouselAutoplayRunning = await page.evaluate(() =>
     (document.querySelector('.swiper') as any)?.swiper?.autoplay?.running === true);
   if (!proof.carouselAutoplayRunning) throw new Error('Carousel autoplay not running');
+  const autoplayStart = await page.$eval('.swiper-slide-active', (node: Element) => node.getAttribute('data-swiper-slide-index'));
+  // Observe one normal 10-second autoplay tick; do not alter the app's timer.
+  await page.waitForFunction((previous: string) => !(document.querySelector('.swiper') as any)?.swiper?.animating &&
+    document.querySelector('.swiper-slide-active')?.getAttribute('data-swiper-slide-index') !== previous,
+    {timeout: 12000}, autoplayStart);
+  proof.carouselAutoplayAdvanced = true;
   const initialSlide = await page.$eval('.swiper-slide-active', (node: Element) => node.getAttribute('data-swiper-slide-index'));
   await page.locator('.swiper-custom-button-next').setTimeout(5000).click();
   await page.waitForFunction((previous: string) => !(document.querySelector('.swiper') as any)?.swiper?.animating &&

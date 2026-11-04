@@ -172,7 +172,12 @@ function versionControlReadiness(trigger: HTMLButtonElement, label: string, mode
   const hitReady = visible(trigger) && enabled && centerOwn;
   const expanded = trigger.isConnected && trigger.getAttribute('aria-expanded') === 'true';
   const controls = (trigger.getAttribute('aria-controls') ?? '').split(/\s+/).filter(Boolean);
-  const boxes = controls.map(id => document.getElementById(id)).filter(node => visible(node) && node.getAttribute('role') === 'listbox');
+  // HeroUI may assign the controlled ID to a wrapper around the role=listbox.
+  const boxes = [...new Set(controls.flatMap(id => {
+    const root = document.getElementById(id);
+    if (!visible(root)) return [];
+    return root.getAttribute('role') === 'listbox' ? [root] : [...root.querySelectorAll('[role="listbox"]')].filter(visible);
+  }))];
   const controlledListboxVisible = expanded && boxes.length === 1;
   const options = controlledListboxVisible ? [...boxes[0]!.querySelectorAll('[role="option"]')]
     .filter(option => visible(option) && option.getAttribute('aria-disabled') !== 'true' && option.textContent?.trim() === label) : [];

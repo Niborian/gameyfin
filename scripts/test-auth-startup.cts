@@ -442,16 +442,16 @@ test('version interaction waits for an unobstructed trigger and its own exact vi
     const source=fs.readFileSync(path.resolve(__dirname,'original-editor-image.cts'),'utf8');
     const fragment=source.slice(source.indexOf('function versionControlReadiness('),source.indexOf('/** Failure-only discriminator'));
     const compiled=ts.transpileModule(fragment+'\nmodule.exports=versionControlReadiness;',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
-    function node(role='',text='') {return {isConnected:true,hidden:false,disabled:false,textContent:text,attributes:{role} as Record<string,string>,options:[] as any[],
+    function node(role='',text='') {return {isConnected:true,hidden:false,disabled:false,textContent:text,attributes:{role} as Record<string,string>,options:[] as any[],listboxes:[] as any[],
         ancestors:new Set<string>(),rect:{x:10,y:10,width:100,height:30},
         getAttribute(key:string){return this.attributes[key]??null;},closest(selector:string){return selector.split(',').some(part=>this.ancestors.has(part)||this.hidden&&part==='[aria-hidden="true"]')?{}:null;},
-        getBoundingClientRect(){return this.rect;},querySelectorAll(){return this.options;},contains(child:any){return child===this;}};}
+        getBoundingClientRect(){return this.rect;},querySelectorAll(selector:string){return selector==='[role="listbox"]'?this.listboxes:this.options;},contains(child:any){return child===this;}};}
     const trigger=node(),controlled=node('listbox'),unrelated=node('listbox'),target=node('option','v1.5.0'),decoy=node('option','v1.5.0');
     controlled.options=[target];unrelated.options=[decoy];trigger.attributes['aria-controls']='controlled';trigger.attributes['aria-expanded']='false';
-    let hit:any=unrelated;
+    let hit:any=unrelated,controlledRoot:any=controlled;
     const module={exports:undefined as any};
     vm.runInNewContext(compiled,{module,window:{innerWidth:1000,innerHeight:700},document:{elementFromPoint:()=>hit,
-        getElementById:(id:string)=>({controlled,unrelated})[id]??null,querySelectorAll:()=>{throw new Error('Global option lookup is not scoped');}}});
+        getElementById:(id:string)=>({controlled:controlledRoot,alias:controlledRoot,unrelated})[id]??null,querySelectorAll:()=>{throw new Error('Global option lookup is not scoped');}}});
     const ready=(mode:string)=>module.exports(trigger,'v1.5.0',mode);
     assert.equal(ready('trigger'),false); // A retained popup backdrop intercepts the pointer.
     hit=trigger;assert.equal(ready('trigger'),true);
@@ -462,6 +462,14 @@ test('version interaction waits for an unobstructed trigger and its own exact vi
     target.textContent='v1.5.00';assert.equal(ready('option'),false);target.textContent='v1.5.0';
     controlled.options=[target,decoy];assert.equal(ready('option'),false);controlled.options=[target];
     assert.equal(ready('option'),target);
+    const wrapper=node();wrapper.listboxes=[controlled];controlledRoot=wrapper;
+    assert.equal(ready('option'),target); // Installed HeroUI wrapper ID still scopes its own inner listbox.
+    trigger.attributes['aria-controls']='controlled alias';assert.equal(ready('option'),target); // Duplicate references deduplicate.
+    wrapper.listboxes=[controlled,unrelated];assert.equal(ready('option'),false); // Two visible scoped listboxes are ambiguous.
+    unrelated.hidden=true;assert.equal(ready('option'),target);unrelated.hidden=false;
+    wrapper.listboxes=[unrelated];assert.equal(ready('option'),decoy); // A different controlled subtree changes ownership, never global lookup.
+    wrapper.listboxes=[];assert.equal(ready('option'),false);
+    controlledRoot=controlled;trigger.attributes['aria-controls']='controlled';
     const flags=ready('snapshot');assert.deepEqual({...flags},{observed:true,connected:true,enabled:true,inertAncestor:false,ariaHiddenAncestor:false,
         inViewport:true,centerOwn:true,centerNavbar:false,centerOverlay:false,centerSwiper:false,
         hitReady:true,expanded:true,controlledListboxVisible:true,targetOptionVisible:true});

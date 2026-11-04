@@ -362,3 +362,38 @@ test('actual LoginView prevents fast submit until policy settles, including a fa
         for (const cleanup of cleanups) if (typeof cleanup === 'function') cleanup();
     }
 });
+
+test('actual library view distinguishes pending catalogue snapshots from a loaded empty library', () => {
+    const libraries = {isLoaded:false,state:{52:{name:'Fixture library'}}};
+    const games: {isLoaded:boolean;gamesByLibraryId:Record<number,object[]>} = {isLoaded:false,gamesByLibraryId:{}};
+    const jsx = (type: unknown, props: any) => ({type,props});
+    const grid = () => undefined;
+    const view = load('views/LibraryView.tsx', {
+        'react': {useEffect:()=>{}},
+        'react/jsx-runtime': {jsx,jsxs:jsx,Fragment:'fragment'},
+        'valtio/react': {useSnapshot:(value: unknown)=>value},
+        'react-router': {useParams:()=>({libraryId:'52'}),useNavigate:()=>()=>{}},
+        'Frontend/state/LibraryState': {libraryState:libraries},
+        'Frontend/state/GameState': {gameState:games},
+        'Frontend/components/general/covers/CoverGrid': {default:grid,__esModule:true}
+    }).default;
+    function nodes(value: any): any[] {
+        if (Array.isArray(value)) return value.flatMap(nodes);
+        if (!value || typeof value!=='object') return [value];
+        return [value,...nodes(value.props?.children)];
+    }
+    for (const [libraryReady,gameReady] of [[false,false],[true,false],[false,true]]) {
+        libraries.isLoaded=libraryReady; games.isLoaded=gameReady;
+        const rendered=nodes(view());
+        assert.ok(rendered.some(n=>n?.props?.role==='status'));
+        assert.equal(rendered.includes('This library is empty.'),false);
+        assert.equal(rendered.some(n=>n?.type===grid),false);
+    }
+    libraries.isLoaded=true; games.isLoaded=true;
+    assert.ok(nodes(view()).includes('This library is empty.'));
+    const selected=[{id:1,title:'Fixture game'}]; games.gamesByLibraryId[52]=selected;
+    const rendered=nodes(view());
+    assert.equal(rendered.includes('This library is empty.'),false);
+    assert.equal(rendered.some(n=>n?.props?.role==='status'),false);
+    assert.equal(rendered.find(n=>n?.type===grid).props.games,selected);
+});

@@ -9,7 +9,9 @@ export default function LibraryView() {
     const {libraryId} = useParams();
     const navigate = useNavigate();
     const libraries = useSnapshot(libraryState);
-    const games = useSnapshot(gameState).gamesByLibraryId[parseInt(libraryId!)] || [];
+    const gameSnapshot = useSnapshot(gameState);
+    const games = gameSnapshot.gamesByLibraryId[parseInt(libraryId!)] || [];
+    const ready = libraries.isLoaded && gameSnapshot.isLoaded;
 
     useEffect(() => {
         window.scrollTo(0, 0)
@@ -25,8 +27,10 @@ export default function LibraryView() {
     return (
         <div className="flex flex-col gap-6">
             <p className="text-4xl font-bold text-center">{libraries.state[parseInt(libraryId!)]?.name}</p>
-            <CoverGrid games={games}/>
-            {games.length === 0 && <p className="text-center text-gray-500">This library is empty.</p>}
+            {ready ? <>
+                <CoverGrid games={games}/>
+                {games.length === 0 && <p className="text-center text-gray-500">This library is empty.</p>}
+            </> : <p role="status" className="text-center text-gray-500">Loading library…</p>}
         </div>
     );
 }

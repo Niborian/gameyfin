@@ -13,15 +13,27 @@ export default function PasswordResetModal({
                                                isOpen,
                                                onOpenChange
                                            }: PasswordResetModalProps) {
-    const [canResetPassword, setCanResetPassword] = useState(false);
+    const [policy, setPolicy] = useState<{controller: AbortController; status: 'enabled' | 'disabled' | 'error'}>();
+    const currentPolicy = isOpen && policy && !policy.controller.signal.aborted ? policy : undefined;
+    const canResetPassword = currentPolicy?.status === 'enabled';
     const [resetEmail, setResetEmail] = useState<string>();
 
     useEffect(() => {
-        MessageEndpoint.isEnabled().then(setCanResetPassword);
-    }, []);
+        if (!isOpen) return;
+        const controller = new AbortController();
+        setPolicy(undefined);
+        MessageEndpoint.isEnabled({signal: controller.signal})
+            .then(enabled => {
+                if (!controller.signal.aborted) setPolicy({controller, status: enabled ? 'enabled' : 'disabled'});
+            })
+            .catch(() => {
+                if (!controller.signal.aborted) setPolicy({controller, status: 'error'});
+            });
+        return () => controller.abort();
+    }, [isOpen]);
 
     async function resetPassword() {
-        if (!resetEmail) return;
+        if (!canResetPassword || !resetEmail) return;
 
         await PasswordResetEndpoint.requestPasswordReset(resetEmail);
         addToast({
@@ -38,7 +50,9 @@ export default function PasswordResetModal({
                     <>
                         <ModalHeader className="flex flex-col gap-1">Request a password reset</ModalHeader>
                         <ModalBody>
-                            {canResetPassword ?
+                            {!currentPolicy ? <p role="status">Checking password reset availability…</p> :
+                                currentPolicy.status === 'error' ? <p role="alert">Could not check password reset availability. Close and reopen to try again.</p> :
+                                canResetPassword ?
                                 <NextInput
                                     onChange={(event: any) => {
                                         setResetEmail(event.target.value);

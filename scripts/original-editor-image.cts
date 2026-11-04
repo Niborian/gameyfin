@@ -49,7 +49,9 @@ const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', s
   closeClick: {observed: false, preExists: false, preEnabled: false, preInViewport: false, preCenterOwn: false, preCenterToast: false,
     postExists: false, postEnabled: false, postInViewport: false, postCenterOwn: false, postCenterToast: false,
     trustedCloseClick: false, trustedOtherClick: false},
-  versionClick: {hitReady: false, expanded: false, controlledListboxVisible: false, targetOptionVisible: false},
+  versionClick: {observed: false, connected: false, enabled: false, inertAncestor: false, ariaHiddenAncestor: false,
+    inViewport: false, centerOwn: false, centerNavbar: false, centerOverlay: false, centerSwiper: false,
+    hitReady: false, expanded: false, controlledListboxVisible: false, targetOptionVisible: false, errorKind: 'not-run'},
   gameDiagnostics: gameDiagnostic(),
   currentSessionProbe: emptySessionProbe(),
   repeatPhase: 'not-started', viewerLogoutObserved: false, loggedOutLoginFormObserved: false,
@@ -159,8 +161,15 @@ function versionControlReadiness(trigger: HTMLButtonElement, label: string, mode
     !node.closest('[inert],[aria-hidden="true"]') && node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0;
   const rect = trigger.getBoundingClientRect(), x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
   const hit = x >= 0 && y >= 0 && x < window.innerWidth && y < window.innerHeight ? document.elementFromPoint(x, y) : null;
-  const hitReady = visible(trigger) && !trigger.disabled && trigger.getAttribute('aria-disabled') !== 'true' &&
-    !!hit && (hit === trigger || trigger.contains(hit));
+  const connected = trigger.isConnected;
+  const enabled = !trigger.disabled && trigger.getAttribute('aria-disabled') !== 'true';
+  const inertAncestor = !!trigger.closest('[inert]'), ariaHiddenAncestor = !!trigger.closest('[aria-hidden="true"]');
+  const inViewport = x >= 0 && y >= 0 && x < window.innerWidth && y < window.innerHeight;
+  const centerOwn = !!hit && (hit === trigger || trigger.contains(hit));
+  const centerNavbar = !!hit?.closest('nav');
+  const centerOverlay = !!hit?.closest('[role="dialog"],[data-slot="backdrop"],[data-slot="wrapper"]');
+  const centerSwiper = !!hit?.closest('.swiper');
+  const hitReady = visible(trigger) && enabled && centerOwn;
   const expanded = trigger.isConnected && trigger.getAttribute('aria-expanded') === 'true';
   const controls = (trigger.getAttribute('aria-controls') ?? '').split(/\s+/).filter(Boolean);
   const boxes = controls.map(id => document.getElementById(id)).filter(node => visible(node) && node.getAttribute('role') === 'listbox');
@@ -170,7 +179,8 @@ function versionControlReadiness(trigger: HTMLButtonElement, label: string, mode
   const targetOptionVisible = options.length === 1;
   if (mode === 'trigger') return hitReady;
   if (mode === 'option') return targetOptionVisible ? options[0] : false;
-  return {hitReady, expanded, controlledListboxVisible, targetOptionVisible};
+  return {observed: true, connected, enabled, inertAncestor, ariaHiddenAncestor, inViewport, centerOwn,
+    centerNavbar, centerOverlay, centerSwiper, hitReady, expanded, controlledListboxVisible, targetOptionVisible};
 }
 /** Failure-only discriminator, NOT retry/recovery/acceptance. Current cookie jar
  * is not proof of the original pending request's send-time cookies/server receipt.
@@ -463,11 +473,13 @@ async function run(): Promise<void> {
     proof.targetOptionObserved = true; proof.editorPhase = 'selected-version';
     try { await option.asElement().asLocator().setTimeout(5000).click(); } finally { await option.dispose(); }
   } catch (error) {
+    const name = error instanceof Error ? error.name : '';
+    proof.versionClick.errorKind = ['TimeoutError', 'TypeError', 'SyntaxError'].includes(name) ? name : 'other';
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const observed = await Promise.race([page.evaluate(versionControlReadiness, version, 'v1.5.0', 'snapshot'),
         new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Version diagnostic deadline')), 500); })]);
-      proof.versionClick = {...observed, hitReady: proof.versionClick.hitReady || observed.hitReady};
+      proof.versionClick = {...proof.versionClick, ...observed, hitReady: proof.versionClick.hitReady || observed.hitReady};
     } catch { /* Missing fixed-boolean diagnostics cannot replace the original failure. */ }
     finally { if (timer) clearTimeout(timer); }
     throw error;

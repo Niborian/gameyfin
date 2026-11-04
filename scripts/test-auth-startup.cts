@@ -443,8 +443,9 @@ test('version interaction waits for an unobstructed trigger and its own exact vi
     const fragment=source.slice(source.indexOf('function versionControlReadiness('),source.indexOf('/** Failure-only discriminator'));
     const compiled=ts.transpileModule(fragment+'\nmodule.exports=versionControlReadiness;',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
     function node(role='',text='') {return {isConnected:true,hidden:false,disabled:false,textContent:text,attributes:{role} as Record<string,string>,options:[] as any[],
-        getAttribute(key:string){return this.attributes[key]??null;},closest(){return this.hidden?{}:null;},
-        getBoundingClientRect(){return {x:10,y:10,width:100,height:30};},querySelectorAll(){return this.options;},contains(child:any){return child===this;}};}
+        ancestors:new Set<string>(),rect:{x:10,y:10,width:100,height:30},
+        getAttribute(key:string){return this.attributes[key]??null;},closest(selector:string){return selector.split(',').some(part=>this.ancestors.has(part)||this.hidden&&part==='[aria-hidden="true"]')?{}:null;},
+        getBoundingClientRect(){return this.rect;},querySelectorAll(){return this.options;},contains(child:any){return child===this;}};}
     const trigger=node(),controlled=node('listbox'),unrelated=node('listbox'),target=node('option','v1.5.0'),decoy=node('option','v1.5.0');
     controlled.options=[target];unrelated.options=[decoy];trigger.attributes['aria-controls']='controlled';trigger.attributes['aria-expanded']='false';
     let hit:any=unrelated;
@@ -461,8 +462,19 @@ test('version interaction waits for an unobstructed trigger and its own exact vi
     target.textContent='v1.5.00';assert.equal(ready('option'),false);target.textContent='v1.5.0';
     controlled.options=[target,decoy];assert.equal(ready('option'),false);controlled.options=[target];
     assert.equal(ready('option'),target);
-    const flags=ready('snapshot');assert.deepEqual({...flags},{hitReady:true,expanded:true,controlledListboxVisible:true,targetOptionVisible:true});
-    trigger.isConnected=false;assert.equal(ready('option'),false);
+    const flags=ready('snapshot');assert.deepEqual({...flags},{observed:true,connected:true,enabled:true,inertAncestor:false,ariaHiddenAncestor:false,
+        inViewport:true,centerOwn:true,centerNavbar:false,centerOverlay:false,centerSwiper:false,
+        hitReady:true,expanded:true,controlledListboxVisible:true,targetOptionVisible:true});
+    for(const [ancestor,key] of [['nav','centerNavbar'],['[data-slot="backdrop"]','centerOverlay'],['.swiper','centerSwiper']]) {
+        hit=unrelated;unrelated.ancestors.add(ancestor);const blocked=ready('snapshot');
+        assert.equal(blocked[key],true);assert.equal(blocked.centerOwn,false);assert.equal(blocked.inViewport,true);assert.equal(blocked.hitReady,false);
+        unrelated.ancestors.clear();
+    }
+    hit=trigger;trigger.ancestors.add('[inert]');assert.equal(ready('snapshot').inertAncestor,true);assert.equal(ready('trigger'),false);trigger.ancestors.clear();
+    trigger.hidden=true;assert.equal(ready('snapshot').ariaHiddenAncestor,true);trigger.hidden=false;
+    trigger.rect.y=800;assert.equal(ready('snapshot').inViewport,false);assert.equal(ready('snapshot').centerOwn,false);trigger.rect.y=10;
+    trigger.disabled=true;assert.equal(ready('snapshot').enabled,false);trigger.disabled=false;
+    trigger.isConnected=false;assert.equal(ready('option'),false);assert.equal(ready('snapshot').connected,false);
 });
 
 test('failure-only session probe distinguishes browser input, connection and response waits', async () => {

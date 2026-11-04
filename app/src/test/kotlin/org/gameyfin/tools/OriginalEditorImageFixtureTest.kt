@@ -298,10 +298,14 @@ class OriginalEditorImageFixtureTest {
             val closeClick = browserProof["closeClick"]
             require(closeClick.isObject && closeClick.properties().map { it.key }.toSet() == clickKeys)
             proof["closeClick"] = clickKeys.associateWith { require(closeClick[it].isBoolean); closeClick[it].booleanValue() }
-            val versionClickKeys = setOf("hitReady", "expanded", "controlledListboxVisible", "targetOptionVisible")
+            val versionClickKeys = setOf("observed", "connected", "enabled", "inertAncestor", "ariaHiddenAncestor", "inViewport",
+                "centerOwn", "centerNavbar", "centerOverlay", "centerSwiper", "hitReady", "expanded", "controlledListboxVisible", "targetOptionVisible")
             val versionClick = browserProof["versionClick"]
-            require(versionClick.isObject && versionClick.properties().map { it.key }.toSet() == versionClickKeys)
-            proof["versionClick"] = versionClickKeys.associateWith { require(versionClick[it].isBoolean); versionClick[it].booleanValue() }
+            require(versionClick.isObject && versionClick.properties().map { it.key }.toSet() == versionClickKeys + "errorKind")
+            val versionErrorKind = versionClick["errorKind"]
+            require(versionErrorKind.isTextual && versionErrorKind.textValue() in setOf("not-run", "TimeoutError", "TypeError", "SyntaxError", "other"))
+            proof["versionClick"] = versionClickKeys.associateWith { require(versionClick[it].isBoolean); versionClick[it].booleanValue() } +
+                ("errorKind" to versionErrorKind.textValue())
             proof["editorObservations"] = listOf("gameRouteMatches", "footerMatches", "versionTriggerUnique", "defaultVersionObserved",
                 "targetOptionObserved", "targetVersionObserved", "editorDialogObserved", "splitPreviewObserved", "typeTriggerFound", "typeOptionsSeen",
                 "editorClosed", "savedVersionShown", "savedBaseShown", "savedPatchShown", "broadOriginalAbsent",

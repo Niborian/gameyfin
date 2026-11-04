@@ -16,8 +16,10 @@ export default function LoginView() {
 
     const [signUpAllowed, setSignUpAllowed] = useState<boolean>(false);
     const [policySettled, setPolicySettled] = useState(false);
+    const [loginCompletion, setLoginCompletion] = useState(0);
     const ready = loginIsReady(state.initializing, state.loading, policySettled);
-    const redirectOwner = useRef({mounted: false, interactive: false, pending: false, redirected: false});
+    const redirectOwner = useRef({mounted: false, interactive: false, pending: false, redirected: false,
+        completed: false, destination: undefined as string | undefined, sessionFailure: undefined as (() => void) | undefined});
 
     useEffect(() => {
         redirectOwner.current.mounted = true;
@@ -41,29 +43,57 @@ export default function LoginView() {
         return () => { current = false; };
     }, [state.user]);
 
+    useEffect(() => {
+        const owner = redirectOwner.current;
+        if (!owner.mounted || !owner.completed || state.initializing || state.loading) return;
+        owner.completed = false;
+        owner.pending = false;
+        const sessionFailure = owner.sessionFailure;
+        owner.sessionFailure = undefined;
+        if (state.user) {
+            redirectAfterLogin(owner.destination);
+        } else {
+            owner.interactive = false;
+            sessionFailure?.();
+        }
+    }, [state.user, state.initializing, state.loading, loginCompletion]);
+
     async function tryLogin(values: any, formik: any) {
         const owner = redirectOwner.current;
         if (!ready || !owner.mounted || owner.pending || owner.redirected) return;
         owner.interactive = true;
         owner.pending = true;
+        owner.completed = false;
+        owner.destination = undefined;
+        owner.sessionFailure = () => {
+            formik.setFieldError("username", " ");
+            formik.setFieldError("password", "Could not verify your session. Please try again.");
+        };
         try {
-            // Hilla navigates before its post-login profile request completes.
-            // Route that documented callback through the same owner as the
-            // fallback below, so neither can navigate twice or after unmount.
-            const {defaultUrl, error, redirectUrl} = await login(values.username, values.password, {navigate: redirectAfterLogin});
+            // Capture Hilla's normalized destination without unloading the page
+            // that owns its awaited post-login profile request.
+            const {defaultUrl, error, redirectUrl} = await login(values.username, values.password, {
+                navigate: destination => { if (owner.mounted) owner.destination = destination; }
+            });
             if (!owner.mounted) return;
             if (error) {
                 owner.interactive = false;
+                owner.sessionFailure = undefined;
                 formik.setFieldError("username", " "); // Mark the field red, but don't show an error message
                 formik.setFieldError("password", "Invalid username and/or password.");
             } else {
-                redirectAfterLogin(redirectUrl, defaultUrl);
+                owner.destination ??= redirectUrl ?? defaultUrl ?? '/';
+                owner.completed = true;
+                // Hilla can return error:false even after a null/401 profile.
+                // Let the effect inspect rendered auth state, not this closure.
+                setLoginCompletion(value => value + 1);
             }
         } catch (error) {
             owner.interactive = false;
+            owner.sessionFailure = undefined;
             throw error;
         } finally {
-            owner.pending = false;
+            if (!owner.completed) owner.pending = false;
         }
     }
 

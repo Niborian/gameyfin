@@ -21,7 +21,8 @@ function installedHilla(navigate: (target: string | URL) => void){
     const frontend=path.dirname(appRequire.resolve('@vaadin/hilla-frontend'));
     const authPackage=path.dirname(appRequire.resolve('@vaadin/hilla-react-auth'));
     const response=deferred<Response>(),profile=deferred<AuthUser>();
-    let fetchCalls=0,profileCalls=0;
+    let fetchCalls=0,profileCalls=0,providerState: any;
+    class UnauthorizedResponseError extends Error {}
     const evaluate=(file: string,resolveModule: (name: string) => unknown,globals: object={})=>{
         const module={exports:{} as any};
         const source=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
@@ -37,19 +38,19 @@ function installedHilla(navigate: (target: string | URL) => void){
     const react={
         createContext:(value: unknown)=>({Provider:{},value}),useContext:()=>{throw new Error('Unused hook');},useEffect:()=>{},
         useReducer:(reducer: (state: any,action: any)=>any,initial: any)=>{
-            const state={...initial,initializing:false,user:null};
-            return [state,(action: any)=>{const next=reducer(state,action);for(const key of Object.keys(state))delete state[key];Object.assign(state,next);}];
+            providerState??={...initial,initializing:false,user:null};
+            return [providerState,(action: any)=>{providerState=reducer(providerState,action);}];
         }
     };
     const provider=evaluate(path.join(authPackage,'useAuth.js'),name=>{
-        if(name==='@vaadin/hilla-frontend')return {...authentication,UnauthorizedResponseError:class extends Error {}};
+        if(name==='@vaadin/hilla-frontend')return {...authentication,UnauthorizedResponseError};
         if(name==='react')return react;
         if(name==='react/jsx-runtime')return {jsx:(type: any,props: any)=>({type,props})};
         throw new Error('Unexpected Hilla provider dependency');
     });
     const configured=provider.configureAuth(()=>{profileCalls++;return profile.promise;}).AuthProvider({children:null});
-    const context=configured.type(configured.props);
-    return {auth:context.props.value as AuthFixture,response,profile,get fetchCalls(){return fetchCalls;},get profileCalls(){return profileCalls;},
+    const renderAuth=()=>configured.type(configured.props).props.value as AuthFixture;
+    return {renderAuth,unauthorized:()=>new UnauthorizedResponseError(),response,profile,get fetchCalls(){return fetchCalls;},get profileCalls(){return profileCalls;},
         respond(saved?: string,defaultUrl='/default',success=true){
             const headers=new Headers({'Result':success?'success':'error','Default-url':defaultUrl});
             if(saved)headers.set('Saved-url',saved);
@@ -59,13 +60,13 @@ function installedHilla(navigate: (target: string | URL) => void){
 
 async function fixture(initialUser: AuthUser = null,actualHilla=false){
     let slots: unknown[]=[],cursor=0,effects: (() => void)[]=[],tree: ElementNode | null,loginCalls=0;
-    const redirects: string[]=[],pending=deferred();
-    const recordNavigation=(target: string | URL)=>{const url=new URL(target,'https://fixture.invalid/');redirects.push(actualHilla?url.pathname+url.search+url.hash:String(target));};
+    const redirects: string[]=[],rawTargets:string[]=[],pending=deferred();
+    const recordNavigation=(target: string | URL)=>{rawTargets.push(String(target));const url=new URL(target,'https://fixture.invalid/');redirects.push(actualHilla?url.pathname+url.search+url.hash:String(target));};
     const hilla=actualHilla?installedHilla(recordNavigation):undefined;
-    const auth: AuthFixture=hilla?.auth??{state:{user:initialUser,initializing:false,loading:false},login:()=>{loginCalls++;return pending.promise;}};
+    let auth: AuthFixture=hilla?.renderAuth()??{state:{user:initialUser,initializing:false,loading:false},login:()=>{loginCalls++;return pending.promise;}};
     const react={
         useRef<T>(value: T): {current: T} {const i=cursor++;return (slots[i]??(slots[i]={current:value})) as {current: T};},
-        useState<T>(value: T): [T, (value: T) => void] {const i=cursor++;slots[i]??=value;return [slots[i] as T,v=>{slots[i]=v;}];},
+        useState<T>(value: T): [T, (value: T) => void] {const i=cursor++;slots[i]??=value;return [slots[i] as T,(v: T | ((previous: T)=>T))=>{slots[i]=typeof v==='function'?(v as (previous:T)=>T)(slots[i] as T):v;}];},
         useEffect(fn: Effect,deps: unknown[]) {const i=cursor++,old=slots[i] as EffectSlot | undefined;if(!old||deps.some((v,j)=>v!==old.deps[j])){effects.push(()=>{if(typeof old?.cleanup==='function')old.cleanup();const cleanup=fn();slots[i]={deps,cleanup,fn};});}}
     };
     const jsx=(type: unknown,props: ElementNode['props']): ElementNode=>({type,props});
@@ -73,38 +74,66 @@ async function fixture(initialUser: AuthUser = null,actualHilla=false){
     const compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}});
     const lifecycleModule={exports:{}};vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.resolve(__dirname,'../app/src/main/frontend/util/startupLifecycle.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{module:lifecycleModule,exports:lifecycleModule.exports});
     vm.runInNewContext(compiled.outputText,{module,exports:module.exports,window:{location:{set href(value){recordNavigation(value);}}},require(name){if(name==='react')return react;if(name==='react/jsx-runtime')return {jsx,jsxs:jsx};if(name==='Frontend/util/startupLifecycle')return lifecycleModule.exports;if(name==='Frontend/util/auth')return {useAuth:()=>auth};if(name==='@heroui/react')return new Proxy({useDisclosure:()=>({})},{get:(o,k)=>o[k]??k});if(name==='formik')return {Form:'Form',Formik:'Formik'};if(name==='Frontend/generated/endpoints')return {RegistrationEndpoint:{isSelfRegistrationAllowed:async()=>false}};return {default:name};}});
-    function render(){cursor=0;effects=[];tree=module.exports.default();for(const effect of effects)effect();return tree;}
+    function render(){if(hilla)auth=hilla.renderAuth();cursor=0;effects=[];tree=module.exports.default();for(const effect of effects)effect();return tree;}
     function find(node: unknown): ElementNode | null {if(!node||typeof node!=='object')return null;const element=node as ElementNode;if(element.type==='Formik')return element;for(const child of [element.props?.children].flat(Infinity)){const result=find(child);if(result)return result;}return null;}
-    render();await new Promise<void>(resolve=>setImmediate(resolve));render();return {auth,pending,hilla,redirects,render,get loginCalls(){return loginCalls;},submit(formik: FormikHelpers={setFieldError(){}}){return find(tree)!.props.onSubmit!({username:'synthetic',password:'not-persisted'},formik);},replayEffects(){for(const value of slots){const slot=value as EffectSlot | undefined;if(slot?.fn){if(typeof slot.cleanup==='function')slot.cleanup();slot.cleanup=slot.fn();}}},unmount(){for(const value of slots){const slot=value as EffectSlot | undefined;if(typeof slot?.cleanup==='function')slot.cleanup();}}};
+    render();await new Promise<void>(resolve=>setImmediate(resolve));render();return {get auth(){return auth;},pending,hilla,redirects,rawTargets,render,get loginCalls(){return loginCalls;},submit(formik: FormikHelpers={setFieldError(){}}){return find(tree)!.props.onSubmit!({username:'synthetic',password:'not-persisted'},formik);},replayEffects(){for(const value of slots){const slot=value as EffectSlot | undefined;if(slot?.fn){if(typeof slot.cleanup==='function')slot.cleanup();slot.cleanup=slot.fn();}}},unmount(){for(const value of slots){const slot=value as EffectSlot | undefined;if(typeof slot?.cleanup==='function')slot.cleanup();}}};
 }
 test('interactive state update before login result preserves saved target exactly once',async()=>{const f=await fixture(),p=f.submit();f.auth.state.user={};f.render();const before=[...f.redirects];f.pending.resolve({redirectUrl:'/saved',defaultUrl:'/default'});await p;f.render();assert.deepEqual({before,after:f.redirects},{before:[],after:['/saved']});});
 test('interactive result before auth rerender uses default target exactly once',async()=>{const f=await fixture(),p=f.submit();f.pending.resolve({defaultUrl:'/default'});await p;f.auth.state.user={};f.render();f.render();assert.deepEqual(f.redirects,['/default']);});
 test('already authenticated visit and effect replay redirect once without interactive login',async()=>{const f=await fixture({});f.replayEffects();f.render();f.auth.state.user={};f.render();assert.deepEqual(f.redirects,['/']);assert.equal(f.loginCalls,0);});
-test('failed credentials retain form error and allow a successful retry',async()=>{const f=await fixture(),errors=[],p=f.submit({setFieldError:(...v)=>errors.push(v)});f.pending.resolve({error:true});await p;assert.equal(errors.length,2);assert.deepEqual(f.redirects,[]);f.auth.login=async()=>({redirectUrl:'/retry'});f.render();await f.submit();assert.deepEqual(f.redirects,['/retry']);});
+test('failed credentials retain form error and allow a successful retry',async()=>{const f=await fixture(),errors=[],p=f.submit({setFieldError:(...v)=>errors.push(v)});f.pending.resolve({error:true});await p;assert.equal(errors.length,2);assert.deepEqual(f.redirects,[]);f.auth.login=async()=>{f.auth.state.user={};return {redirectUrl:'/retry'};};f.render();await f.submit();f.render();assert.deepEqual(f.redirects,['/retry']);});
 test('double submit is single flight and unmounted completion cannot redirect',async()=>{const f=await fixture(),a=f.submit(),b=f.submit(),calls=f.loginCalls;f.unmount();f.pending.resolve({redirectUrl:'/saved'});await Promise.all([a,b]);assert.deepEqual({calls,redirects:f.redirects},{calls:1,redirects:[]});});
-test('rejected login promise releases ownership for a normal retry',async()=>{const f=await fixture(),failure=new Error('Synthetic transport failure');f.auth.login=async()=>{throw failure;};f.render();await assert.rejects(f.submit(),error=>error===failure);assert.deepEqual(f.redirects,[]);f.auth.login=async()=>({defaultUrl:'/retry-default'});f.render();await f.submit();assert.deepEqual(f.redirects,['/retry-default']);});
+test('rejected login promise releases ownership for a normal retry',async()=>{const f=await fixture(),failure=new Error('Synthetic transport failure');f.auth.login=async()=>{throw failure;};f.render();await assert.rejects(f.submit(),error=>error===failure);assert.deepEqual(f.redirects,[]);f.auth.login=async()=>{f.auth.state.user={};return {defaultUrl:'/retry-default'};};f.render();await f.submit();f.render();assert.deepEqual(f.redirects,['/retry-default']);});
 
-for(const saved of [undefined,'https://fixture.invalid/saved?q=synthetic#section'])test(`actual Hilla navigates once before a pending profile with ${saved?'saved':'default'} destination`,async()=>{
+for(const saved of [undefined,'https://fixture.invalid/saved?q=synthetic#section'])test(`actual Hilla waits for a rendered positive profile before one navigation with ${saved?'saved':'default'} destination`,async()=>{
     const f=await fixture(null,true),pending=f.submit(),hilla=f.hilla!;
     hilla.respond(saved);await new Promise<void>(resolve=>setImmediate(resolve));
     const expected=saved?'/saved?q=synthetic#section':'/default';
     const before=[...f.redirects];assert.equal(hilla.profileCalls,1);
-    hilla.profile.resolve({username:'synthetic'});await pending;f.render();
-    assert.deepEqual({before,after:f.redirects},{before:[expected],after:[expected]});
+    assert.deepEqual(before,[]);
+    hilla.profile.resolve({username:'synthetic'});await pending;
+    assert.deepEqual(f.redirects,[]); // The submit closure cannot stand in for rendered auth state.
+    f.render();f.render();assert.deepEqual(f.redirects,[expected]);
+    assert.deepEqual(f.rawTargets,[expected]); // Preserve Hilla's normalized callback, not the raw absolute saved header.
 });
 test('actual Hilla cannot navigate after the form unmounts before login completes',async()=>{
     const f=await fixture(null,true),pending=f.submit(),hilla=f.hilla!;f.unmount();
     hilla.respond('/saved');hilla.profile.resolve({username:'synthetic'});await pending;
     assert.deepEqual(f.redirects,[]);
 });
-test('actual Hilla profile rejection preserves the first navigation and rejects without another navigation',async()=>{
+test('actual Hilla profile rejection cannot navigate or turn into authenticated success',async()=>{
     const f=await fixture(null,true),pending=f.submit(),hilla=f.hilla!,failure=new Error('Synthetic profile rejection');
     hilla.respond('/saved');await new Promise<void>(resolve=>setImmediate(resolve));
     const rejected=assert.rejects(pending,error=>error===failure);hilla.profile.reject(failure);await rejected;
-    assert.deepEqual(f.redirects,['/saved']);
+    assert.deepEqual(f.redirects,[]);
 });
 test('actual Hilla credential failure neither navigates nor fetches a profile',async()=>{
     const f=await fixture(null,true),errors: string[][]=[],pending=f.submit({setFieldError:(...values)=>errors.push(values)}),hilla=f.hilla!;
     hilla.respond(undefined,'/default',false);await pending;
     assert.deepEqual({redirects:f.redirects,profiles:hilla.profileCalls,errors:errors.length},{redirects:[],profiles:0,errors:2});
+});
+
+for(const unauthorized of [false,true])test(`actual Hilla ${unauthorized?'unauthorized':'null'} profile refuses navigation and releases form ownership`,async()=>{
+    const f=await fixture(null,true),errors:string[][]=[],pending=f.submit({setFieldError:(...values)=>errors.push(values)}),hilla=f.hilla!;
+    hilla.respond('https://fixture.invalid/saved?q=synthetic#section');await new Promise<void>(resolve=>setImmediate(resolve));
+    if(unauthorized)hilla.profile.reject(hilla.unauthorized());else hilla.profile.resolve(null);
+    await pending;f.render();
+    assert.deepEqual(f.redirects,[]);assert.equal(errors.length,2);assert.match(errors[1][1],/session/i);
+    await new Promise<void>(resolve=>setImmediate(resolve));f.render();await f.submit({setFieldError:(...values)=>errors.push(values)});f.render();
+    assert.equal(hilla.fetchCalls,2);assert.equal(hilla.profileCalls,2);assert.deepEqual(f.redirects,[]);
+});
+
+test('actual Hilla completion after captured destination and unmount cannot redirect',async()=>{
+    const f=await fixture(null,true),pending=f.submit(),hilla=f.hilla!;
+    hilla.respond('/saved');await new Promise<void>(resolve=>setImmediate(resolve));f.unmount();
+    hilla.profile.resolve({username:'synthetic'});await pending;
+    assert.deepEqual(f.redirects,[]);
+});
+
+test('actual Hilla double submit remains single flight while its profile is pending',async()=>{
+    const f=await fixture(null,true),first=f.submit(),second=f.submit(),hilla=f.hilla!;
+    hilla.respond('/saved');await new Promise<void>(resolve=>setImmediate(resolve));f.render();
+    assert.equal(hilla.fetchCalls,1);assert.equal(hilla.profileCalls,1);assert.deepEqual(f.redirects,[]);
+    hilla.profile.resolve({username:'synthetic'});await Promise.all([first,second]);f.render();
+    assert.deepEqual(f.redirects,['/saved']);
 });

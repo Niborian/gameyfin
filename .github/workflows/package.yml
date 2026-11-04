@@ -115,6 +115,7 @@ jobs:
           node --test scripts/test-login-redirect-owner.cts
           node --test scripts/test-variant-editor-selection.cts
           node --test scripts/test-owned-torrent-download.cts
+          node --test scripts/test-swiper-security.cts
           node --experimental-strip-types --test app/src/test/typescript/avatarMetadata.test.ts
 
       - name: Verify read-only test report policy

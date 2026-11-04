@@ -48,7 +48,7 @@
     "react-router": "7.18.5",
     "react-window": "^2.2.3",
     "remark-breaks": "^4.0.0",
-    "swiper": "^11.2.6",
+    "swiper": "14.4.0",
     "valtio": "^2.1.5",
     "yup": "^1.6.1"
   },

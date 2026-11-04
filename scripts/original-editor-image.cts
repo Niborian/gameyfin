@@ -10,8 +10,10 @@ interface SavedContent { id: number; name: string; required: boolean; defaultSel
 interface SavedVariant { id: number; version: string; default: boolean; contents: SavedContent[]; }
 interface SavedGame { id: number; variants: SavedVariant[]; }
 type SessionProbe = {kind: 'not-run' | 'completed' | 'timeout' | 'error' | 'input-refused' | 'body-refused' | 'json-refused';
-  status: number | null; currentIdentityMatches: boolean; profileNull: boolean};
-const emptySessionProbe = (): SessionProbe => ({kind: 'not-run', status: null, currentIdentityMatches: false, profileNull: false});
+  status: number | null; currentIdentityMatches: boolean; profileNull: boolean;
+  inputsReady: boolean; socketConnected: boolean; requestFlushed: boolean};
+const emptySessionProbe = (): SessionProbe => ({kind: 'not-run', status: null, currentIdentityMatches: false, profileNull: false,
+  inputsReady: false, socketConnected: false, requestFlushed: false});
 const gameDiagnostic = () => ({phase: 'not-started', truncated: false, pageerrorSeen: false,
   domObserved: false, profilePresent: false, signInPresent: false, loginFormPresent: false, errorHeadingPresent: false,
   families: Object.fromEntries(['game', 'library', 'user'].map(key => [key, {count: 0, status: null as number | null,
@@ -173,6 +175,7 @@ async function probeCurrentSession(page: any, input: FixtureInput): Promise<Sess
         return {...result, kind: 'input-refused'};
       const cookieHeader = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
       if (cookieHeader.length > 8192) return {...result, kind: 'input-refused'};
+      result.inputsReady = true;
       return new Promise<SessionProbe>(resolve => {
         // Dedicated direct transport: never inherit a global environment proxy.
         agent = new nativeHttp.Agent({keepAlive: false, proxyEnv: {}});
@@ -204,6 +207,10 @@ async function probeCurrentSession(page: any, input: FixtureInput): Promise<Sess
             } catch { resolve({...result, kind: 'json-refused'}); }
           });
         });
+        // Value-free phase evidence only. A timeout collecting browser inputs is
+        // not proof that this independent HTTP request ever reached the server.
+        request.on('socket', (socket: any) => socket.once('connect', () => { result.socketConnected = true; }));
+        request.on('finish', () => { result.requestFlushed = true; });
         request.on('error', () => resolve({...result, kind: expired ? 'timeout' : 'error'}));
         request.end('{}');
       });

@@ -437,3 +437,38 @@ test('session check failure surfaces explicit recovery without changing Hilla au
 
     }
 });
+
+test('failure-only session probe distinguishes browser input, connection and response waits', async () => {
+    const source=fs.readFileSync(path.resolve(__dirname,'original-editor-image.cts'),'utf8');
+    const fragment=source.slice(source.indexOf('const emptySessionProbe ='),source.indexOf('const gameDiagnostic =')) +
+        source.slice(source.indexOf('async function probeCurrentSession('),source.indexOf('async function login('));
+    const compiled=ts.transpileModule(fragment+'\nmodule.exports=probeCurrentSession;', {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+    const {EventEmitter}=require('node:events');
+    for(const phase of ['browser-input','connection','response','success']) {
+        let requests=0,destroyed=0,agentDestroyed=0;
+        const nativeHttp={Agent:class {destroy(){agentDestroyed++;}},request(_options:any,response:any){
+            requests++;const request=new EventEmitter();request.destroy=()=>{destroyed++;};
+            request.end=()=>queueMicrotask(()=>{
+                if(phase==='connection')return;
+                const socket=new EventEmitter();request.emit('socket',socket);socket.emit('connect');request.emit('finish');
+                if(phase!=='success')return;
+                const body=new EventEmitter();body.statusCode=200;response(body);
+                body.emit('data',Buffer.from(JSON.stringify({username:'fixture-admin',enabled:true,id:1})));body.emit('end');
+            });return request;
+        }};
+        const module={exports:undefined as any};
+        vm.runInNewContext(compiled,{module,nativeHttp,URL,Buffer,performance,
+            setTimeout:(fn:()=>void)=>setTimeout(fn,20),clearTimeout});
+        const page={cookies:()=>phase==='browser-input'?new Promise(()=>{}):Promise.resolve([]),evaluate:()=>Promise.resolve('synthetic-csrf')};
+        const result=await module.exports(page,{origin:'http://172.20.0.2:8080',username:'fixture-admin'});
+        assert.equal(result.inputsReady,phase!=='browser-input');
+        assert.equal(result.socketConnected,phase==='response'||phase==='success');
+        assert.equal(result.requestFlushed,phase==='response'||phase==='success');
+        assert.equal(result.kind,phase==='success'?'completed':'timeout');
+        assert.equal(result.currentIdentityMatches,phase==='success');
+        assert.equal(result.status,phase==='success'?200:null);
+        assert.equal(requests,phase==='browser-input'?0:1);
+        if(requests){assert.ok(destroyed>=1);assert.equal(agentDestroyed,1);}
+        assert.ok(!JSON.stringify(result).includes('synthetic-csrf'));
+    }
+});

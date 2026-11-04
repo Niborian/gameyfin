@@ -506,3 +506,32 @@ test('actual search waits for URL filters and both snapshots before reporting ma
     state.sortedAlphabetically=[other];rendered=render();
     assert.ok(rendered.some(n=>typeof n==='string'&&n.includes('No games found')));
 });
+
+test('closed password reset has no startup RPC and reopening cannot reuse a stale policy', async () => {
+    const requests:Array<{result:Deferred<boolean>;signal?:AbortSignal}>=[];
+    const values:any[]=[];let cursor=0,previous:any[]|undefined,pending:any,cleanup:any,open=false;
+    const jsx=(type:any,props:any)=>type==='ModalContent'?props.children(()=>{}):({type,props});
+    const view=load('components/general/modals/PasswordResetModal.tsx',{
+        'react':{useState:(initial:any)=>{const i=cursor++;if(!(i in values))values[i]=initial;return[values[i],(next:any)=>{values[i]=next;}];},
+            useEffect:(fn:any,deps:any[])=>{if(!previous||deps.some((v,i)=>v!==previous![i])){pending=fn;previous=deps;}}},
+        'react/jsx-runtime':{jsx,jsxs:jsx,Fragment:'fragment'},
+        '@heroui/react':{Button:'Button',Modal:'Modal',ModalContent:'ModalContent'},
+        '@heroui/input':{Input:'Input'},
+        'Frontend/generated/endpoints':{MessageEndpoint:{isEnabled:(init?:{signal:AbortSignal})=>{const result=deferred<boolean>();requests.push({result,signal:init?.signal});return result.promise;}}}
+    }).default;
+    function nodes(v:any):any[]{return Array.isArray(v)?v.flatMap(nodes):v&&typeof v==='object'?[v,...nodes(v.props?.children)]:[v];}
+    function render(){cursor=0;pending=undefined;const tree=nodes(view({isOpen:open,onOpenChange:()=>{}}));if(pending){cleanup?.();cleanup=pending();}return tree;}
+    function send(tree:any[]){return tree.find(n=>n?.type==='Button'&&n.props.children==='Send request').props;}
+    render();assert.equal(requests.length,0);
+    open=true;assert.equal(send(render()).isDisabled,true);assert.equal(requests.length,1);
+    open=false;render();assert.equal(requests[0].signal?.aborted,true);
+    requests[0].result.resolve(true);await new Promise(resolve=>setImmediate(resolve));
+    open=true;assert.equal(send(render()).isDisabled,true);assert.equal(requests.length,2);
+    requests[1].result.resolve(false);await new Promise(resolve=>setImmediate(resolve));
+    let tree=render();assert.equal(send(tree).isDisabled,true);assert.ok(tree.some(n=>typeof n==='string'&&n.includes('Password self-service is disabled')));
+    open=false;render();open=true;render();requests[2].result.resolve(Promise.reject(new Error('private synthetic payload')) as any);
+    await new Promise(resolve=>setImmediate(resolve));tree=render();assert.equal(send(tree).isDisabled,true);assert.ok(tree.some(n=>n?.props?.role==='alert'));assert.ok(!JSON.stringify(tree).includes('private synthetic payload'));
+    open=false;render();open=true;render();requests[3].result.resolve(true);await new Promise(resolve=>setImmediate(resolve));
+    tree=render();assert.equal(send(tree).isDisabled,false);assert.ok(tree.some(n=>n?.type==='Input'));
+    open=false;render();assert.equal(requests[3].signal?.aborted,true);assert.equal(requests.length,4);
+});

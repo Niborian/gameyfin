@@ -208,12 +208,67 @@ jobs:
       - name: Determine immutable candidate tag
         id: tags
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.verify.outputs.version }}
+          REGISTRY_ACTOR: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if docker buildx imagetools inspect "${IMAGE_NAME}:${{ needs.verify.outputs.version }}" >/dev/null 2>&1; then
-            echo "Release tag ${{ needs.verify.outputs.version }} already exists and must not be moved." >&2
+          set -euo pipefail
+          if [[ ! "$IMAGE_NAME" =~ ^ghcr\.io/([a-z0-9]+([._-]+[a-z0-9]+)*(/[a-z0-9]+([._-]+[a-z0-9]+)*)+)$ ]] ||
+             [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid candidate repository or semantic version; refusing publication." >&2
             exit 1
           fi
-          tags="${IMAGE_NAME}:${{ needs.verify.outputs.version }}"
+          repository=${IMAGE_NAME#ghcr.io/}
+          # Supply credentials through stdin, never command arguments or files.
+          credentials="${REGISTRY_ACTOR}:${REGISTRY_PASSWORD}"
+          if [[ -z "$REGISTRY_ACTOR" || -z "$REGISTRY_PASSWORD" || "$credentials" == *$'\n'* || "$credentials" == *$'\r'* ]]; then
+            echo "Registry credentials unavailable; refusing publication." >&2
+            exit 1
+          fi
+          credentials=${credentials//\\/\\\\}
+          credentials=${credentials//\"/\\\"}
+          token_response=$(printf 'user = "%s"\n' "$credentials" |
+            curl --config - --silent --connect-timeout 10 --max-time 30 --max-filesize 65536 \
+              --write-out $'\n%{http_code}' "https://ghcr.io/token?service=ghcr.io&scope=repository:${repository}:pull") || {
+            echo "Registry authentication transport failed; refusing publication." >&2; exit 1;
+          }
+          unset credentials
+          token_status=${token_response##*$'\n'}
+          if [[ "$token_status" != 200 ]]; then
+            echo "Registry authentication failed; refusing publication." >&2; exit 1
+          fi
+          registry_token=$(printf '%s' "${token_response%$'\n'*}" |
+            jq -er '(.token // .access_token) | select(type == "string" and length > 0)' 2>/dev/null) || {
+            echo "Registry token unavailable; refusing publication." >&2; exit 1;
+          }
+          unset token_response
+          if [[ ! "$registry_token" =~ ^[A-Za-z0-9._~+/-]+=*$ ]]; then
+            echo "Invalid registry token; refusing publication." >&2; exit 1
+          fi
+          # A positive repository read excludes permission/missing-repository
+          # failures before a manifest 404 can mean an absent version tag.
+          repository_status=$(printf 'header = "Authorization: Bearer %s"\n' "$registry_token" |
+            curl --config - --silent --connect-timeout 10 --max-time 30 --max-filesize 65536 --output /dev/null \
+              --write-out '%{http_code}' "https://ghcr.io/v2/${repository}/tags/list?n=1") || {
+            echo "Registry repository lookup failed; refusing publication." >&2; exit 1;
+          }
+          if [[ "$repository_status" != 200 ]]; then
+            echo "Registry repository read failed; refusing publication." >&2; exit 1
+          fi
+          manifest_status=$(printf 'header = "Authorization: Bearer %s"\n' "$registry_token" |
+            curl --config - --silent --head --connect-timeout 10 --max-time 30 --output /dev/null \
+              --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
+              --write-out '%{http_code}' "https://ghcr.io/v2/${repository}/manifests/${RELEASE_VERSION}") || {
+            echo "Registry manifest lookup failed; refusing publication." >&2; exit 1;
+          }
+          unset registry_token
+          case "$manifest_status" in
+            404) ;;
+            200) echo "Release tag already exists and must not be moved." >&2; exit 1 ;;
+            *) echo "Registry manifest lookup was inconclusive; refusing publication." >&2; exit 1 ;;
+          esac
+          tags="${IMAGE_NAME}:${RELEASE_VERSION}"
           echo "tags=${tags}" >> "$GITHUB_OUTPUT"
 
       - name: Build image

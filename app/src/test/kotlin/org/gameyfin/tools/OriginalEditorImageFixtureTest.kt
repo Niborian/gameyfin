@@ -355,6 +355,7 @@ class OriginalEditorImageFixtureTest {
             val diagnostic = linkedMapOf<String, Any?>("containerObserved" to false,
                 "running" to null, "oomKilled" to null, "restartCount" to null,
                 "readinessAttempted" to false, "readinessStatus" to null, "readinessUp" to null,
+                "readinessOutcome" to "not-run", "readinessElapsedMs" to null,
                 "captureFailed" to false)
             proof["failureRuntime"] = diagnostic
             try {
@@ -376,8 +377,36 @@ class OriginalEditorImageFixtureTest {
                             address.split('.').all { it.toInt() in 0..255 } &&
                             java.net.InetAddress.getByName(address).isSiteLocalAddress)
                         diagnostic["readinessAttempted"] = true
-                        val health = FixtureHttp("http://$address:8081", limit = 4096)
-                            .request("/actuator/health/readiness", seconds = 2)
+                        val readinessStarted = System.nanoTime()
+                        val health = try {
+                            FixtureHttp("http://$address:8081", limit = 4096)
+                                .request("/actuator/health/readiness", seconds = 2)
+                                .also { diagnostic["readinessOutcome"] = "response" }
+                        } catch (readinessError: Throwable) {
+                            // sendAsync/get may wrap a transport failure in ExecutionException.
+                            // Inspect at most eight causes; retain no exception text or type names.
+                            var cause: Throwable? = readinessError
+                            var timedOut = false
+                            var connectError = false
+                            for (depth in 0 until 8) {
+                                val current = cause ?: break
+                                timedOut = timedOut || current is java.util.concurrent.TimeoutException ||
+                                    current is java.net.http.HttpTimeoutException || current is java.net.SocketTimeoutException
+                                connectError = connectError || current is java.net.ConnectException ||
+                                    current is java.net.NoRouteToHostException || current is java.net.UnknownHostException ||
+                                    current is java.nio.channels.UnresolvedAddressException
+                                cause = current.cause
+                            }
+                            diagnostic["readinessOutcome"] = when {
+                                timedOut -> "timeout"
+                                connectError -> "connect-error"
+                                else -> "other"
+                            }
+                            throw readinessError
+                        } finally {
+                            // Observed elapsed time may slightly exceed the unchanged 2-second deadline.
+                            diagnostic["readinessElapsedMs"] = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - readinessStarted)
+                        }
                         diagnostic["readinessStatus"] = health.status
                         diagnostic["readinessUp"] = health.status == 200 &&
                             FixtureRuntime.tree(health.bytes.toString(Charsets.UTF_8))["status"]?.asText() == "UP"

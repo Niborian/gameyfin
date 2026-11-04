@@ -11,9 +11,13 @@ interface SavedVariant { id: number; version: string; default: boolean; contents
 interface SavedGame { id: number; variants: SavedVariant[]; }
 type SessionProbe = {kind: 'not-run' | 'completed' | 'timeout' | 'error' | 'input-refused' | 'body-refused' | 'json-refused';
   status: number | null; currentIdentityMatches: boolean; profileNull: boolean;
-  inputsReady: boolean; socketConnected: boolean; requestFlushed: boolean};
+  inputsReady: boolean; socketConnected: boolean; requestFlushed: boolean;
+  inputsElapsedMs: number | null; socketConnectedElapsedMs: number | null; requestFlushedElapsedMs: number | null;
+  responseHeadersElapsedMs: number | null; totalElapsedMs: number | null};
 const emptySessionProbe = (): SessionProbe => ({kind: 'not-run', status: null, currentIdentityMatches: false, profileNull: false,
-  inputsReady: false, socketConnected: false, requestFlushed: false});
+  inputsReady: false, socketConnected: false, requestFlushed: false,
+  inputsElapsedMs: null, socketConnectedElapsedMs: null, requestFlushedElapsedMs: null,
+  responseHeadersElapsedMs: null, totalElapsedMs: null});
 const gameDiagnostic = () => ({phase: 'not-started', truncated: false, pageerrorSeen: false,
   domObserved: false, profilePresent: false, signInPresent: false, loginFormPresent: false, errorHeadingPresent: false,
   families: Object.fromEntries(['game', 'library', 'user'].map(key => [key, {count: 0, status: null as number | null,
@@ -30,6 +34,8 @@ const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', s
   steamInboxCheckStatusVisible: false,
   ordinaryAvatarChooserUsed: false, ordinaryAvatarUploadRendered: false,
   ordinaryAvatarRemoveRendered: false, ordinaryAvatarNoReload: false,
+  carouselImagesRendered: false, carouselAutoplayRunning: false,
+  carouselNavigationWorked: false, carouselPopupWorked: false, carouselAutoplayAdvanced: false,
   loginPhase: 'not-started', profileResponseObserved: false, profileIdentityMatched: false,
   authenticatedLandingObserved: false, profileTriggerObserved: false, profileDomIdentityMatched: false,
   editorPhase: 'not-started', gameRouteMatches: false, footerMatches: false, versionTriggerUnique: false,
@@ -43,6 +49,9 @@ const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', s
   closeClick: {observed: false, preExists: false, preEnabled: false, preInViewport: false, preCenterOwn: false, preCenterToast: false,
     postExists: false, postEnabled: false, postInViewport: false, postCenterOwn: false, postCenterToast: false,
     trustedCloseClick: false, trustedOtherClick: false},
+  versionClick: {observed: false, connected: false, enabled: false, inertAncestor: false, ariaHiddenAncestor: false,
+    inViewport: false, centerOwn: false, centerNavbar: false, centerOverlay: false, centerSwiper: false,
+    hitReady: false, expanded: false, controlledListboxVisible: false, targetOptionVisible: false, errorKind: 'not-run'},
   gameDiagnostics: gameDiagnostic(),
   currentSessionProbe: emptySessionProbe(),
   repeatPhase: 'not-started', viewerLogoutObserved: false, loggedOutLoginFormObserved: false,
@@ -146,12 +155,48 @@ async function clickText(page: any, text: string, scope = 'body'): Promise<void>
   }, text, scope);
   try { await handle.asElement().asLocator().setTimeout(5000).click(); } finally { await handle.dispose(); }
 }
+/** Read-only pointer readiness and exact option scope; only booleans leave diagnostics. */
+function versionControlReadiness(trigger: HTMLButtonElement, label: string, mode: 'trigger' | 'option' | 'snapshot') {
+  const visible = (node: Element | null): node is Element => !!node?.isConnected &&
+    !node.closest('[inert],[aria-hidden="true"]') && node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0;
+  const rect = trigger.getBoundingClientRect(), x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
+  const hit = x >= 0 && y >= 0 && x < window.innerWidth && y < window.innerHeight ? document.elementFromPoint(x, y) : null;
+  const connected = trigger.isConnected;
+  const enabled = !trigger.disabled && trigger.getAttribute('aria-disabled') !== 'true';
+  const inertAncestor = !!trigger.closest('[inert]'), ariaHiddenAncestor = !!trigger.closest('[aria-hidden="true"]');
+  const inViewport = x >= 0 && y >= 0 && x < window.innerWidth && y < window.innerHeight;
+  const centerOwn = !!hit && (hit === trigger || trigger.contains(hit));
+  const centerNavbar = !!hit?.closest('nav');
+  const centerOverlay = !!hit?.closest('[role="dialog"],[data-slot="backdrop"],[data-slot="wrapper"]');
+  const centerSwiper = !!hit?.closest('.swiper');
+  const hitReady = visible(trigger) && enabled && centerOwn;
+  const expanded = trigger.isConnected && trigger.getAttribute('aria-expanded') === 'true';
+  const controls = (trigger.getAttribute('aria-controls') ?? '').split(/\s+/).filter(Boolean);
+  // HeroUI may assign the controlled ID to a wrapper around the role=listbox.
+  const boxes = [...new Set(controls.flatMap(id => {
+    const root = document.getElementById(id);
+    if (!visible(root)) return [];
+    return root.getAttribute('role') === 'listbox' ? [root] : [...root.querySelectorAll('[role="listbox"]')].filter(visible);
+  }))];
+  const controlledListboxVisible = expanded && boxes.length === 1;
+  const options = controlledListboxVisible ? [...boxes[0]!.querySelectorAll('[role="option"]')]
+    .filter(option => visible(option) && option.getAttribute('aria-disabled') !== 'true' && option.textContent?.trim() === label) : [];
+  const targetOptionVisible = options.length === 1;
+  if (mode === 'trigger') return hitReady;
+  if (mode === 'option') return targetOptionVisible ? options[0] : false;
+  return {observed: true, connected, enabled, inertAncestor, ariaHiddenAncestor, inViewport, centerOwn,
+    centerNavbar, centerOverlay, centerSwiper, hitReady, expanded, controlledListboxVisible, targetOptionVisible};
+}
 /** Failure-only discriminator, NOT retry/recovery/acceptance. Current cookie jar
  * is not proof of the original pending request's send-time cookies/server receipt.
  * Secrets/body remain transient in this process and never enter the proof envelope. */
 async function probeCurrentSession(page: any, input: FixtureInput): Promise<SessionProbe> {
   const result = emptySessionProbe();
-  const deadline = performance.now() + 2000;
+  const started = performance.now();
+  const deadline = started + 2000;
+  // Capped to the fixed diagnostic budget, not a server-latency measurement.
+  const elapsed = () => Math.min(2000, Math.max(0, Math.floor(performance.now() - started)));
+  let outcome: SessionProbe;
   let request: any;
   let agent: any;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -167,6 +212,7 @@ async function probeCurrentSession(page: any, input: FixtureInput): Promise<Sess
       const [cookies, csrf] = await Promise.all([page.cookies(input.origin), page.evaluate(() =>
         document.querySelector('meta[name="_csrf"]')?.getAttribute('content'))]);
       if (expired || performance.now() >= deadline) return {...result, kind: 'timeout'};
+      result.inputsElapsedMs = elapsed();
       if (!Array.isArray(cookies) || cookies.length > 32 || typeof csrf !== 'string' ||
           csrf.length < 1 || csrf.length > 1024 || !/^[A-Za-z0-9_.~+/%=-]+$/.test(csrf) ||
           cookies.some(cookie => typeof cookie.name !== 'string' || !/^[A-Za-z0-9_.-]{1,128}$/.test(cookie.name) ||
@@ -183,6 +229,8 @@ async function probeCurrentSession(page: any, input: FixtureInput): Promise<Sess
           path: '/connect/UserEndpoint/getUserInfo', agent,
           headers: {'Content-Type': 'application/json', 'Content-Length': '2', 'X-CSRF-Token': csrf,
             Cookie: cookieHeader, Accept: 'application/json', Connection: 'close'}}, (response: any) => {
+          if (expired) { response.destroy(); return; }
+          result.responseHeadersElapsedMs = elapsed();
           const status = response.statusCode;
           if (!Number.isInteger(status) || status < 100 || status > 599) {
             response.destroy(); resolve({...result, kind: 'error'}); return;
@@ -207,19 +255,24 @@ async function probeCurrentSession(page: any, input: FixtureInput): Promise<Sess
             } catch { resolve({...result, kind: 'json-refused'}); }
           });
         });
-        // Value-free phase evidence only. A timeout collecting browser inputs is
-        // not proof that this independent HTTP request ever reached the server.
-        request.on('socket', (socket: any) => socket.once('connect', () => { result.socketConnected = true; }));
-        request.on('finish', () => { result.requestFlushed = true; });
+        // This is a TOTAL 2-second probe, including browser input collection.
+        // TCP connect/client finish do not establish server-handler receipt.
+        request.on('socket', (socket: any) => socket.once('connect', () => {
+          if (!expired) { result.socketConnected = true; result.socketConnectedElapsedMs = elapsed(); }
+        }));
+        request.on('finish', () => {
+          if (!expired) { result.requestFlushed = true; result.requestFlushedElapsedMs = elapsed(); }
+        });
         request.on('error', () => resolve({...result, kind: expired ? 'timeout' : 'error'}));
         request.end('{}');
       });
     };
-    return await Promise.race([work(), new Promise<SessionProbe>(resolve => {
+    outcome = await Promise.race([work(), new Promise<SessionProbe>(resolve => {
       timer = setTimeout(() => { expired = true; request?.destroy(); resolve({...result, kind: 'timeout'}); }, 2000);
     })]);
-  } catch { return {...result, kind: expired ? 'timeout' : 'error'}; }
-  finally { if (timer) clearTimeout(timer); request?.destroy(); agent?.destroy(); }
+  } catch { outcome = {...result, kind: expired ? 'timeout' : 'error'}; }
+  finally { expired = true; if (timer) clearTimeout(timer); request?.destroy(); agent?.destroy(); }
+  return {...outcome, totalElapsedMs: elapsed()};
 }
 async function login(page: any, input: FixtureInput, username: string, password: string, alreadyOnForm = false): Promise<void> {
   proof.loginPhase = 'opening-login';
@@ -358,19 +411,84 @@ async function run(): Promise<void> {
     finally { if (snapshotTimer) clearTimeout(snapshotTimer); }
     if (!gameReadyPassed) proof.currentSessionProbe = await probeCurrentSession(page, input);
   }
+  // A few tiny local images in the existing fixture exercise the original UI.
+  // No response interception, application mutation, external media or extra run.
+  await page.waitForFunction(() => {
+    const images = [...document.querySelectorAll<HTMLImageElement>('.swiper-slide img')];
+    return images.length === 7 && images.every(image => image.complete && image.naturalWidth === 8);
+  }, {timeout: 5000});
+  proof.carouselImagesRendered = true;
+  proof.carouselAutoplayRunning = await page.evaluate(() =>
+    (document.querySelector('.swiper') as any)?.swiper?.autoplay?.running === true);
+  if (!proof.carouselAutoplayRunning) throw new Error('Carousel autoplay not running');
+  const autoplayStart = await page.$eval('.swiper-slide-active', (node: Element) => node.getAttribute('data-swiper-slide-index'));
+  if (typeof autoplayStart !== 'string' || !autoplayStart) throw new Error('Carousel active slide unavailable');
+  // Observe one normal 10-second autoplay tick; do not alter the app's timer.
+  await page.waitForFunction((previous: string) => {
+    const swiper = (document.querySelector('.swiper') as any)?.swiper;
+    const index = document.querySelector('.swiper-slide-active')?.getAttribute('data-swiper-slide-index');
+    return !!swiper && !swiper.animating && typeof index === 'string' && index.length > 0 && index !== previous;
+  }, {timeout: 12000}, autoplayStart);
+  proof.carouselAutoplayAdvanced = true;
+  const initialSlide = await page.$eval('.swiper-slide-active', (node: Element) => node.getAttribute('data-swiper-slide-index'));
+  if (typeof initialSlide !== 'string' || !initialSlide) throw new Error('Carousel active slide unavailable');
+  await page.locator('.swiper-custom-button-next').setTimeout(5000).click();
+  await page.waitForFunction((previous: string) => {
+    const swiper = (document.querySelector('.swiper') as any)?.swiper;
+    const index = document.querySelector('.swiper-slide-active')?.getAttribute('data-swiper-slide-index');
+    return !!swiper && !swiper.animating && typeof index === 'string' && index.length > 0 && index !== previous;
+  }, {timeout: 5000}, initialSlide);
+  await page.locator('.swiper-custom-button-prev').setTimeout(5000).click();
+  await page.waitForFunction((previous: string) => {
+    const swiper = (document.querySelector('.swiper') as any)?.swiper;
+    const index = document.querySelector('.swiper-slide-active')?.getAttribute('data-swiper-slide-index');
+    return !!swiper && !swiper.animating && typeof index === 'string' && index.length > 0 && index === previous;
+  }, {timeout: 5000}, initialSlide);
+  proof.carouselNavigationWorked = true;
+  await page.locator('.swiper-slide-active img').setTimeout(5000).click();
+  await page.waitForSelector('[role="dialog"] img[alt="Game screenshot"]', {visible: true, timeout: 5000});
+  await page.locator('[role="dialog"] img[alt="Game screenshot"]').setTimeout(5000).click();
+  await page.waitForSelector('[role="dialog"]', {hidden: true, timeout: 5000});
+  proof.carouselPopupWorked = true;
   // The original Version select, not a direct endpoint/state mutation.
   proof.editorPhase = 'version-trigger';
   const version = await page.evaluateHandle(() => {
     const buttons = [...document.querySelectorAll('button[aria-haspopup="listbox"]')].filter(node => node.parentElement?.textContent?.includes('Version'));
     if (buttons.length !== 1) throw new Error('Unique version control'); return buttons[0];
   });
-  // Real pointer interaction, with visibility/enabled/stable-layout preconditions.
-  // A raw handle click can hit an animating control before its final position.
-  await version.asElement().asLocator().setTimeout(5000).click(); await version.dispose();
-  proof.editorPhase = 'version-options';
-  await page.waitForFunction(() => [...document.querySelectorAll('[role="option"]')].some(option => option.textContent?.trim() === 'v1.5.0'), {timeout: 5000});
-  proof.targetOptionObserved = true; proof.editorPhase = 'selected-version';
-  await clickText(page, 'v1.5.0');
+  try {
+    // CI observed the sticky navbar covering the trigger after plain scrolling.
+    // Share the original 5-second click budget; never click twice.
+    const clickDeadline = performance.now() + 5000;
+    const clickRemaining = () => { const left = clickDeadline - performance.now(); if (left <= 0) throw new Error('Version click deadline'); return Math.ceil(left); };
+    let scrollTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      // The carousel is below the Version control; use ordinary scrolling before
+      // hit testing, within the same budget as the one real trigger click.
+      await Promise.race([version.asElement().evaluate((element: Element) => element.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'})), new Promise<never>((_, reject) => {
+        scrollTimer = setTimeout(() => reject(new Error('Version click deadline')), clickRemaining());
+      })]);
+    } finally { if (scrollTimer) clearTimeout(scrollTimer); }
+    await page.waitForFunction(versionControlReadiness, {timeout: clickRemaining()}, version, 'v1.5.0', 'trigger');
+    proof.versionClick.hitReady = true;
+    await version.asElement().asLocator().setTimeout(clickRemaining()).click();
+    proof.editorPhase = 'version-options';
+    const option = await page.waitForFunction(versionControlReadiness, {timeout: 5000}, version, 'v1.5.0', 'option');
+    proof.versionClick.expanded = true; proof.versionClick.controlledListboxVisible = true; proof.versionClick.targetOptionVisible = true;
+    proof.targetOptionObserved = true; proof.editorPhase = 'selected-version';
+    try { await option.asElement().asLocator().setTimeout(5000).click(); } finally { await option.dispose(); }
+  } catch (error) {
+    const name = error instanceof Error ? error.name : '';
+    proof.versionClick.errorKind = ['TimeoutError', 'TypeError', 'SyntaxError'].includes(name) ? name : 'other';
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const observed = await Promise.race([page.evaluate(versionControlReadiness, version, 'v1.5.0', 'snapshot'),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Version diagnostic deadline')), 500); })]);
+      proof.versionClick = {...proof.versionClick, ...observed, hitReady: proof.versionClick.hitReady || observed.hitReady};
+    } catch { /* Missing fixed-boolean diagnostics cannot replace the original failure. */ }
+    finally { if (timer) clearTimeout(timer); }
+    throw error;
+  } finally { await version.dispose(); }
   await page.waitForFunction(() => [...document.querySelectorAll('button[aria-haspopup="listbox"]')].some(node => node.parentElement?.textContent?.includes('Version') && node.textContent?.includes('v1.5.0')), {timeout: 5000});
   proof.targetVersionObserved = true; proof.editorPhase = 'editor-open';
   await clickText(page, 'Versions & content');

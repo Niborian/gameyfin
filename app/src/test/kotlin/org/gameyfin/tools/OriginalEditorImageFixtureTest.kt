@@ -52,6 +52,7 @@ class OriginalEditorImageFixtureTest {
             "cleanupConfirmed" to false, "fixtureOwner" to owned.owner)
         var relay: FixtureRelay? = null
         var failure: Throwable? = null
+        var diagnosticApp: String? = null
         fun receipt() { Files.writeString(output, FixtureRuntime.json.writeValueAsString(proof) + "\n") }
         try {
             receipt() // Cleanup identity is durable before any external resource creation.
@@ -86,6 +87,7 @@ class OriginalEditorImageFixtureTest {
                 "--restart", "no", "--env", "GAMEYFIN_AVATAR_OVERLAY_ENABLED=true",
                 "--env", "GAMEYFIN_AVATAR_MACHINE_ENABLED=false", "--env", "GAMEYFIN_AVATAR_OPERATOR_ENABLED=false",
                 "--env-file", env.toString()) + mounts)
+            diagnosticApp = app // Only the exact ID returned by the owned creator.
             val appState = FixtureRuntime.tree(owned.docker("inspect", app))[0]
             require(appState["HostConfig"]["NanoCpus"].longValue() == 1_000_000_000L)
             require(appState["HostConfig"]["Memory"].longValue() == 1536L * 1024 * 1024)
@@ -167,6 +169,16 @@ class OriginalEditorImageFixtureTest {
             owned.docker("stop", "--time", "10", app)
             require(!FixtureRuntime.tree(owned.docker("inspect", app))[0]["State"]["Running"].booleanValue())
             proof["stage"] = "offline-image-schema-seed"
+            // Tiny local screenshots exercise the real carousel, never remote media.
+            val screenshots = (0..6).map { index ->
+                val file = state.getValue("data").resolve("synthetic-carousel-$index.png")
+                val pixels = BufferedImage(8, 8, BufferedImage.TYPE_INT_RGB)
+                try {
+                    pixels.setRGB(0, 0, 0x2176a5 + index)
+                    require(ImageIO.write(pixels, "PNG", file.toFile()))
+                } finally { pixels.flush() }
+                file
+            }
             val sql = root.resolve("seed.sql")
             Files.writeString(sql, """
                 SELECT 1 / CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END FROM "flyway_schema_history" WHERE "success" = FALSE;
@@ -176,6 +188,7 @@ class OriginalEditorImageFixtureTest {
                 INSERT INTO DIRECTORY_MAPPING(ID,EXTERNAL_PATH,INTERNAL_PATH) VALUES(27001,'/fixture','/fixture');
                 INSERT INTO LIBRARY_DIRECTORIES(LIBRARY_ID,DIRECTORIES_ID) VALUES(27001,27001);
                 INSERT INTO GAME(ID,CREATED_AT,TITLE,UPDATED_AT,PATH,FILE_SIZE,LIBRARY_ID,DOWNLOAD_COUNT,MATCH_CONFIRMED) VALUES(34000,CURRENT_TIMESTAMP,'Synthetic editor game',CURRENT_TIMESTAMP,'/fixture',${a.size + b.size + patch.size},27001,0,TRUE);
+                ${screenshots.mapIndexed { index, file -> "INSERT INTO IMAGE(ID,CONTENT_ID,CONTENT_LENGTH,MIME_TYPE,TYPE) VALUES(${34010 + index},'${file.fileName}',${Files.size(file)},'image/png',2); INSERT INTO GAME_IMAGES(GAME_ID,IMAGES_ID) VALUES(34000,${34010 + index});" }.joinToString("\n")}
                 INSERT INTO GAME_VARIANT(ID,FILE_SIZE,IS_DEFAULT,IS_LATEST_FOR_VARIANT,NAME,PATH,VERSION,GAME_ID,SCAN_MANAGED,DEFAULT_LOCKED,LINK_STATUS) VALUES
                 (134000,24,TRUE,FALSE,'Normal','/fixture/Normal 0.9','0.9',34000,FALSE,TRUE,'DIRECT'),
                 (134001,${a.size + b.size + patch.size},FALSE,TRUE,'Normal','/fixture/Normal 1.0','1.0',34000,FALSE,FALSE,'DIRECT');
@@ -222,14 +235,17 @@ class OriginalEditorImageFixtureTest {
                 "keepEditingPreserved", "escapePreserved", "escapeFocusRestored", "keepEditingFocusRestored", "controlledDiscardAccepted",
                 "viewerLogoutObserved", "loggedOutLoginFormObserved", "repeatedViewerIdentityVerified", "cleanupConfirmed",
                 "ordinaryAvatarChooserUsed", "ordinaryAvatarUploadRendered", "ordinaryAvatarRemoveRendered", "ordinaryAvatarNoReload",
-                "steamInboxRendered", "steamInboxSnoozePersisted", "steamInboxIgnorePersisted", "steamInboxCheckStatusVisible")
+                "steamInboxRendered", "steamInboxSnoozePersisted", "steamInboxIgnorePersisted", "steamInboxCheckStatusVisible",
+                "carouselImagesRendered", "carouselAutoplayRunning", "carouselAutoplayAdvanced", "carouselNavigationWorked", "carouselPopupWorked")
             proof["browser"] = expectedFlags.associateWith { browserProof[it]?.booleanValue() == true }
             val browserStage = browserProof["stage"]?.asText()
             require(browserStage in setOf("input", "launch", "normal-login", "editor", "immediate-download", "steam-inbox", "ordinary-user", "ordinary-avatar", "repeat-login", "complete"))
             proof["browserStage"] = browserStage
             val probe = browserProof["currentSessionProbe"]
+            val probeTimes = listOf("inputsElapsedMs", "socketConnectedElapsedMs", "requestFlushedElapsedMs",
+                "responseHeadersElapsedMs", "totalElapsedMs")
             require(probe.isObject && probe.properties().map { it.key }.toSet() ==
-                setOf("kind", "status", "currentIdentityMatches", "profileNull", "inputsReady", "socketConnected", "requestFlushed"))
+                setOf("kind", "status", "currentIdentityMatches", "profileNull", "inputsReady", "socketConnected", "requestFlushed") + probeTimes)
             val probeKind = probe["kind"].asText()
             require(probeKind in setOf("not-run", "completed", "timeout", "error", "input-refused", "body-refused", "json-refused"))
             val probeStatus = probe["status"]
@@ -242,10 +258,23 @@ class OriginalEditorImageFixtureTest {
             require(!(probe["currentIdentityMatches"].booleanValue() && probe["profileNull"].booleanValue()))
             require((!probe["currentIdentityMatches"].booleanValue() && !probe["profileNull"].booleanValue()) ||
                 probeKind == "completed" && !probeStatus.isNull && probeStatus.intValue() == 200)
+            val probeTiming = probeTimes.associateWith { key ->
+                val value = probe[key]
+                require(value != null && (value.isNull || value.isIntegralNumber && value.canConvertToInt() && value.intValue() in 0..2000))
+                if (value.isNull) null else value.intValue()
+            }
+            val probeTotal = probeTiming.getValue("totalElapsedMs")
+            require(if (probeKind == "not-run") probeTiming.values.all { it == null } && probeStatus.isNull &&
+                probePhases.none { probe[it].booleanValue() } else probeTotal != null)
+            require(probeTiming.values.all { it == null || probeTotal != null && it <= probeTotal })
+            require(!probe["inputsReady"].booleanValue() || probeTiming["inputsElapsedMs"] != null)
+            require(probe["socketConnected"].booleanValue() == (probeTiming["socketConnectedElapsedMs"] != null))
+            require(probe["requestFlushed"].booleanValue() == (probeTiming["requestFlushedElapsedMs"] != null))
+            require(probeStatus.isNull || probeTiming["responseHeadersElapsedMs"] != null)
             proof["currentSessionProbe"] = mapOf("kind" to probeKind,
                 "status" to if (probeStatus.isNull) null else probeStatus.intValue(),
                 "currentIdentityMatches" to probe["currentIdentityMatches"].booleanValue(), "profileNull" to probe["profileNull"].booleanValue()) +
-                probePhases.associateWith { probe[it].booleanValue() }
+                probePhases.associateWith { probe[it].booleanValue() } + probeTiming
             val repeatPhase = browserProof["repeatPhase"]?.asText()
             require(repeatPhase in setOf("not-started", "profile-menu", "sign-out", "logged-out-form", "normal-form", "complete"))
             proof["repeatPhase"] = repeatPhase
@@ -269,6 +298,14 @@ class OriginalEditorImageFixtureTest {
             val closeClick = browserProof["closeClick"]
             require(closeClick.isObject && closeClick.properties().map { it.key }.toSet() == clickKeys)
             proof["closeClick"] = clickKeys.associateWith { require(closeClick[it].isBoolean); closeClick[it].booleanValue() }
+            val versionClickKeys = setOf("observed", "connected", "enabled", "inertAncestor", "ariaHiddenAncestor", "inViewport",
+                "centerOwn", "centerNavbar", "centerOverlay", "centerSwiper", "hitReady", "expanded", "controlledListboxVisible", "targetOptionVisible")
+            val versionClick = browserProof["versionClick"]
+            require(versionClick.isObject && versionClick.properties().map { it.key }.toSet() == versionClickKeys + "errorKind")
+            val versionErrorKind = versionClick["errorKind"]
+            require(versionErrorKind.isTextual && versionErrorKind.textValue() in setOf("not-run", "TimeoutError", "TypeError", "SyntaxError", "other"))
+            proof["versionClick"] = versionClickKeys.associateWith { require(versionClick[it].isBoolean); versionClick[it].booleanValue() } +
+                ("errorKind" to versionErrorKind.textValue())
             proof["editorObservations"] = listOf("gameRouteMatches", "footerMatches", "versionTriggerUnique", "defaultVersionObserved",
                 "targetOptionObserved", "targetVersionObserved", "editorDialogObserved", "splitPreviewObserved", "typeTriggerFound", "typeOptionsSeen",
                 "editorClosed", "savedVersionShown", "savedBaseShown", "savedPatchShown", "broadOriginalAbsent",
@@ -311,7 +348,45 @@ class OriginalEditorImageFixtureTest {
             require(final["State"]["Running"].booleanValue() && !final["State"]["OOMKilled"].booleanValue() && final["RestartCount"].intValue() == 0)
             proof["noOomOrAutomaticRestart"] = true
             proof["success"] = true; proof["stage"] = "complete"
-        } catch (error: Throwable) { failure = error; throw IllegalStateException("PR editor fixture did not meet acceptance; see safe receipt", error) }
+        } catch (error: Throwable) {
+            failure = error
+            // Failure-only observation, never recovery or acceptance. Retain only
+            // fixed booleans/count/status; no logs, bodies, credentials or addresses.
+            val diagnostic = linkedMapOf<String, Any?>("containerObserved" to false,
+                "running" to null, "oomKilled" to null, "restartCount" to null,
+                "readinessAttempted" to false, "readinessStatus" to null, "readinessUp" to null,
+                "captureFailed" to false)
+            proof["failureRuntime"] = diagnostic
+            try {
+                diagnosticApp?.let { app ->
+                    val row = FixtureRuntime.tree(owned.docker("inspect", app, seconds = 2))[0]
+                    require(row["Id"].asText() == app && row["Image"].asText() == imageId &&
+                        row["Config"]["Labels"]["gameyfin.fixture.owner"].asText() == owned.owner &&
+                        row["HostConfig"]["NetworkMode"].asText() == owned.network)
+                    val state = row["State"]
+                    require(state["Running"].isBoolean && state["OOMKilled"].isBoolean &&
+                        row["RestartCount"].isIntegralNumber && row["RestartCount"].canConvertToInt() && row["RestartCount"].intValue() >= 0)
+                    diagnostic["containerObserved"] = true
+                    diagnostic["running"] = state["Running"].booleanValue()
+                    diagnostic["oomKilled"] = state["OOMKilled"].booleanValue()
+                    diagnostic["restartCount"] = row["RestartCount"].intValue()
+                    if (state["Running"].booleanValue()) {
+                        val address = row["NetworkSettings"]["Networks"][owned.network]["IPAddress"].asText()
+                        require(address.matches(Regex("[0-9]{1,3}(\\.[0-9]{1,3}){3}")) &&
+                            address.split('.').all { it.toInt() in 0..255 } &&
+                            java.net.InetAddress.getByName(address).isSiteLocalAddress)
+                        diagnostic["readinessAttempted"] = true
+                        val health = FixtureHttp("http://$address:8081", limit = 4096)
+                            .request("/actuator/health/readiness", seconds = 2)
+                        diagnostic["readinessStatus"] = health.status
+                        diagnostic["readinessUp"] = health.status == 200 &&
+                            FixtureRuntime.tree(health.bytes.toString(Charsets.UTF_8))["status"]?.asText() == "UP"
+                    }
+                }
+            } catch (_: Throwable) { diagnostic["captureFailed"] = true }
+            // Diagnostics cannot replace the original thrown failure or turn it green.
+            throw IllegalStateException("PR editor fixture did not meet acceptance; see safe receipt", error)
+        }
         finally {
             var cleanup: Throwable? = null
             try { relay?.close() } catch (error: Throwable) { cleanup = error }

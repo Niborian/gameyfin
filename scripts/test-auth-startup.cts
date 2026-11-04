@@ -438,36 +438,99 @@ test('session check failure surfaces explicit recovery without changing Hilla au
     }
 });
 
+test('version interaction waits for an unobstructed trigger and its own exact visible option', () => {
+    const source=fs.readFileSync(path.resolve(__dirname,'original-editor-image.cts'),'utf8');
+    const fragment=source.slice(source.indexOf('function versionControlReadiness('),source.indexOf('/** Failure-only discriminator'));
+    const compiled=ts.transpileModule(fragment+'\nmodule.exports=versionControlReadiness;',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+    function node(role='',text='') {return {isConnected:true,hidden:false,disabled:false,textContent:text,attributes:{role} as Record<string,string>,options:[] as any[],listboxes:[] as any[],
+        ancestors:new Set<string>(),rect:{x:10,y:10,width:100,height:30},
+        getAttribute(key:string){return this.attributes[key]??null;},closest(selector:string){return selector.split(',').some(part=>this.ancestors.has(part)||this.hidden&&part==='[aria-hidden="true"]')?{}:null;},
+        getBoundingClientRect(){return this.rect;},querySelectorAll(selector:string){return selector==='[role="listbox"]'?this.listboxes:this.options;},contains(child:any){return child===this;}};}
+    const trigger=node(),controlled=node('listbox'),unrelated=node('listbox'),target=node('option','v1.5.0'),decoy=node('option','v1.5.0');
+    controlled.options=[target];unrelated.options=[decoy];trigger.attributes['aria-controls']='controlled';trigger.attributes['aria-expanded']='false';
+    let hit:any=unrelated,controlledRoot:any=controlled;
+    const module={exports:undefined as any};
+    vm.runInNewContext(compiled,{module,window:{innerWidth:1000,innerHeight:700},document:{elementFromPoint:()=>hit,
+        getElementById:(id:string)=>({controlled:controlledRoot,alias:controlledRoot,unrelated})[id]??null,querySelectorAll:()=>{throw new Error('Global option lookup is not scoped');}}});
+    const ready=(mode:string)=>module.exports(trigger,'v1.5.0',mode);
+    assert.equal(ready('trigger'),false); // A retained popup backdrop intercepts the pointer.
+    hit=trigger;assert.equal(ready('trigger'),true);
+    trigger.hidden=true;assert.equal(ready('trigger'),false);trigger.hidden=false;
+    trigger.disabled=true;assert.equal(ready('trigger'),false);trigger.disabled=false;
+    assert.equal(ready('option'),false); // A matching unrelated option cannot open this control.
+    trigger.attributes['aria-expanded']='true';controlled.hidden=true;assert.equal(ready('option'),false);controlled.hidden=false;
+    target.textContent='v1.5.00';assert.equal(ready('option'),false);target.textContent='v1.5.0';
+    controlled.options=[target,decoy];assert.equal(ready('option'),false);controlled.options=[target];
+    assert.equal(ready('option'),target);
+    const wrapper=node();wrapper.listboxes=[controlled];controlledRoot=wrapper;
+    assert.equal(ready('option'),target); // Installed HeroUI wrapper ID still scopes its own inner listbox.
+    trigger.attributes['aria-controls']='controlled alias';assert.equal(ready('option'),target); // Duplicate references deduplicate.
+    wrapper.listboxes=[controlled,unrelated];assert.equal(ready('option'),false); // Two visible scoped listboxes are ambiguous.
+    unrelated.hidden=true;assert.equal(ready('option'),target);unrelated.hidden=false;
+    wrapper.listboxes=[unrelated];assert.equal(ready('option'),decoy); // A different controlled subtree changes ownership, never global lookup.
+    wrapper.listboxes=[];assert.equal(ready('option'),false);
+    controlledRoot=controlled;trigger.attributes['aria-controls']='controlled';
+    const flags=ready('snapshot');assert.deepEqual({...flags},{observed:true,connected:true,enabled:true,inertAncestor:false,ariaHiddenAncestor:false,
+        inViewport:true,centerOwn:true,centerNavbar:false,centerOverlay:false,centerSwiper:false,
+        hitReady:true,expanded:true,controlledListboxVisible:true,targetOptionVisible:true});
+    for(const [ancestor,key] of [['nav','centerNavbar'],['[data-slot="backdrop"]','centerOverlay'],['.swiper','centerSwiper']]) {
+        hit=unrelated;unrelated.ancestors.add(ancestor);const blocked=ready('snapshot');
+        assert.equal(blocked[key],true);assert.equal(blocked.centerOwn,false);assert.equal(blocked.inViewport,true);assert.equal(blocked.hitReady,false);
+        unrelated.ancestors.clear();
+    }
+    hit=trigger;trigger.ancestors.add('[inert]');assert.equal(ready('snapshot').inertAncestor,true);assert.equal(ready('trigger'),false);trigger.ancestors.clear();
+    trigger.hidden=true;assert.equal(ready('snapshot').ariaHiddenAncestor,true);trigger.hidden=false;
+    trigger.rect.y=800;assert.equal(ready('snapshot').inViewport,false);assert.equal(ready('snapshot').centerOwn,false);trigger.rect.y=10;
+    trigger.disabled=true;assert.equal(ready('snapshot').enabled,false);trigger.disabled=false;
+    trigger.isConnected=false;assert.equal(ready('option'),false);assert.equal(ready('snapshot').connected,false);
+});
+
 test('failure-only session probe distinguishes browser input, connection and response waits', async () => {
     const source=fs.readFileSync(path.resolve(__dirname,'original-editor-image.cts'),'utf8');
     const fragment=source.slice(source.indexOf('const emptySessionProbe ='),source.indexOf('const gameDiagnostic =')) +
         source.slice(source.indexOf('async function probeCurrentSession('),source.indexOf('async function login('));
-    const compiled=ts.transpileModule(fragment+'\nmodule.exports=probeCurrentSession;', {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+    const compiled=ts.transpileModule(fragment+'\nmodule.exports={probeCurrentSession,emptySessionProbe};', {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
     const {EventEmitter}=require('node:events');
-    for(const phase of ['browser-input','connection','response','success']) {
-        let requests=0,destroyed=0,agentDestroyed=0;
+    for(const phase of ['browser-input','connection','response','success','late-input']) {
+        let requests=0,destroyed=0,agentDestroyed=0,now=0;
         const nativeHttp={Agent:class {destroy(){agentDestroyed++;}},request(_options:any,response:any){
             requests++;const request=new EventEmitter();request.destroy=()=>{destroyed++;};
             request.end=()=>queueMicrotask(()=>{
                 if(phase==='connection')return;
-                const socket=new EventEmitter();request.emit('socket',socket);socket.emit('connect');request.emit('finish');
+                const socket=new EventEmitter();request.emit('socket',socket);
+                now=phase==='late-input'?1880:150;socket.emit('connect');
+                now=phase==='late-input'?1900:160;request.emit('finish');
                 if(phase!=='success')return;
+                now=180;
                 const body=new EventEmitter();body.statusCode=200;response(body);
                 body.emit('data',Buffer.from(JSON.stringify({username:'fixture-admin',enabled:true,id:1})));body.emit('end');
             });return request;
         }};
         const module={exports:undefined as any};
-        vm.runInNewContext(compiled,{module,nativeHttp,URL,Buffer,performance,
-            setTimeout:(fn:()=>void)=>setTimeout(fn,20),clearTimeout});
-        const page={cookies:()=>phase==='browser-input'?new Promise(()=>{}):Promise.resolve([]),evaluate:()=>Promise.resolve('synthetic-csrf')};
-        const result=await module.exports(page,{origin:'http://172.20.0.2:8080',username:'fixture-admin'});
+        vm.runInNewContext(compiled,{module,nativeHttp,URL,Buffer,performance:{now:()=>now},
+            // A deterministic probe clock models input overhead without any
+            // application sleep, timeout extension or real socket/server call.
+            setTimeout:(fn:()=>void,ms:number)=>{assert.equal(ms,2000);return setTimeout(()=>{now=2000;fn();},20);},clearTimeout});
+        const empty=module.exports.emptySessionProbe();
+        const times=['inputsElapsedMs','socketConnectedElapsedMs','requestFlushedElapsedMs','responseHeadersElapsedMs','totalElapsedMs'];
+        assert.equal(empty.kind,'not-run');assert.ok(times.every(key=>empty[key]===null));
+        const page={cookies:()=>phase==='browser-input'?new Promise(()=>{}):Promise.resolve().then(()=>{now=phase==='late-input'?1750:100;return [];}),evaluate:()=>Promise.resolve('synthetic-csrf')};
+        const result=await module.exports.probeCurrentSession(page,{origin:'http://172.20.0.2:8080',username:'fixture-admin'});
         assert.equal(result.inputsReady,phase!=='browser-input');
-        assert.equal(result.socketConnected,phase==='response'||phase==='success');
-        assert.equal(result.requestFlushed,phase==='response'||phase==='success');
+        assert.equal(result.socketConnected,['response','success','late-input'].includes(phase));
+        assert.equal(result.requestFlushed,['response','success','late-input'].includes(phase));
         assert.equal(result.kind,phase==='success'?'completed':'timeout');
         assert.equal(result.currentIdentityMatches,phase==='success');
         assert.equal(result.status,phase==='success'?200:null);
         assert.equal(requests,phase==='browser-input'?0:1);
+        assert.deepEqual(Object.keys(result).sort(),['kind','status','currentIdentityMatches','profileNull','inputsReady','socketConnected','requestFlushed',...times].sort());
+        assert.ok(times.every(key=>result[key]===null||Number.isInteger(result[key])&&result[key]>=0&&result[key]<=2000));
+        assert.equal(result.inputsElapsedMs,phase==='browser-input'?null:phase==='late-input'?1750:100);
+        assert.equal(result.socketConnectedElapsedMs,result.socketConnected?(phase==='late-input'?1880:150):null);
+        assert.equal(result.requestFlushedElapsedMs,result.requestFlushed?(phase==='late-input'?1900:160):null);
+        assert.equal(result.responseHeadersElapsedMs,phase==='success'?180:null);
+        assert.equal(result.totalElapsedMs,phase==='success'?180:2000);
+        if(phase==='late-input')assert.equal(result.totalElapsedMs-result.requestFlushedElapsedMs,100); // Not a 2-second server stall.
         if(requests){assert.ok(destroyed>=1);assert.equal(agentDestroyed,1);}
         assert.ok(!JSON.stringify(result).includes('synthetic-csrf'));
     }

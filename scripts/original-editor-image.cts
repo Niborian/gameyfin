@@ -452,15 +452,15 @@ async function run(): Promise<void> {
     if (buttons.length !== 1) throw new Error('Unique version control'); return buttons[0];
   });
   try {
-    // The screenshot modal's exiting overlay may still intercept a geometric
-    // click. Share the original 5-second click budget; never click twice.
+    // CI observed the sticky navbar covering the trigger after plain scrolling.
+    // Share the original 5-second click budget; never click twice.
     const clickDeadline = performance.now() + 5000;
     const clickRemaining = () => { const left = clickDeadline - performance.now(); if (left <= 0) throw new Error('Version click deadline'); return Math.ceil(left); };
     let scrollTimer: ReturnType<typeof setTimeout> | undefined;
     try {
       // The carousel is below the Version control; use ordinary scrolling before
       // hit testing, within the same budget as the one real trigger click.
-      await Promise.race([version.asElement().scrollIntoView(), new Promise<never>((_, reject) => {
+      await Promise.race([version.asElement().evaluate((element: Element) => element.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'})), new Promise<never>((_, reject) => {
         scrollTimer = setTimeout(() => reject(new Error('Version click deadline')), clickRemaining());
       })]);
     } finally { if (scrollTimer) clearTimeout(scrollTimer); }

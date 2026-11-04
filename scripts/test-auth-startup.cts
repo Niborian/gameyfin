@@ -472,3 +472,37 @@ test('failure-only session probe distinguishes browser input, connection and res
         assert.ok(!JSON.stringify(result).includes('synthetic-csrf'));
     }
 });
+
+test('actual search waits for URL filters and both snapshots before reporting matches', () => {
+    const state:any={isLoaded:false,sortedAlphabetically:[],knownDevelopers:[],knownGenres:[],knownThemes:[],knownFeatures:[],knownPerspectives:[],knownKeywords:[],knownVariantTags:[]};
+    const libraries={isLoaded:false,libraries:[]};
+    const values:any[]=[]; let cursor=0; let effects:Array<()=>void>=[];
+    const jsx=(type:unknown,props:any)=>({type,props}); const grid=()=>undefined;
+    const params={get:(key:string)=>key==='filters'?'1':null,getAll:(key:string)=>key==='lib'?['7']:[]};
+    const view=load('views/SearchView.tsx',{
+        'react':{useState:(initial:any)=>{const i=cursor++;if(!(i in values))values[i]=initial;return[values[i],(v:any)=>{values[i]=v;}];},useMemo:(fn:()=>unknown)=>fn(),useEffect:(fn:()=>void)=>effects.push(fn)},
+        'react/jsx-runtime':{jsx,jsxs:jsx,Fragment:'fragment'},
+        'valtio/react':{useSnapshot:(v:unknown)=>v},
+        'react-router':{useSearchParams:()=>[params,()=>{}]},
+        'Frontend/state/GameState':{gameState:state},
+        'Frontend/state/LibraryState':{libraryState:libraries},
+        'Frontend/components/general/covers/CoverGrid':{default:grid,__esModule:true},
+        'Frontend/util/utils':{compoundRating:()=>5}
+    },'',{window:{scrollTo:()=>{}}}).default;
+    function nodes(v:any):any[]{return Array.isArray(v)?v.flatMap(nodes):v&&typeof v==='object'?[v,...nodes(v.props?.children)]:[v];}
+    function render(){cursor=0;effects=[];return nodes(view());}
+    function pending(rendered:any[]){assert.ok(rendered.some(n=>n?.props?.role==='status'));assert.equal(rendered.some(n=>n?.type===grid),false);assert.equal(rendered.some(n=>typeof n==='string'&&n.includes('No games found')),false);}
+    pending(render()); const applyUrl=effects[0];
+    state.isLoaded=true;libraries.isLoaded=true;
+    pending(render()); // Even loaded snapshots must wait for the URL filter effect.
+    applyUrl();
+    for(const [g,l] of [[false,true],[true,false]]){state.isLoaded=g;libraries.isLoaded=l;pending(render());}
+    state.isLoaded=true;libraries.isLoaded=true;
+    const matching={id:1,title:'A',libraryId:7}; const other={id:2,title:'B',libraryId:8};
+    state.sortedAlphabetically=[matching,other];
+    let rendered=render();
+    assert.deepEqual(Array.from(rendered.find(n=>n?.type===grid).props.games),( [matching] ));
+    assert.equal(rendered.some(n=>typeof n==='string'&&n.includes('No games found')),false);
+    state.sortedAlphabetically=[other];rendered=render();
+    assert.ok(rendered.some(n=>typeof n==='string'&&n.includes('No games found')));
+});

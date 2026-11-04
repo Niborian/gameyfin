@@ -17,18 +17,21 @@ import CoverGrid from "Frontend/components/general/covers/CoverGrid";
 import {compoundRating} from "Frontend/util/utils";
 
 export default function SearchView() {
-    const games = useSnapshot(gameState).sortedAlphabetically;
-    const knownDevelopers = useSnapshot(gameState).knownDevelopers;
-    const knownGenres = useSnapshot(gameState).knownGenres;
-    const knownThemes = useSnapshot(gameState).knownThemes;
-    const knownFeatures = useSnapshot(gameState).knownFeatures;
-    const knownPerspectives = useSnapshot(gameState).knownPerspectives;
-    const knownKeywords = useSnapshot(gameState).knownKeywords;
-    const knownVariantTags = useSnapshot(gameState).knownVariantTags;
-    const libraries = useSnapshot(libraryState).libraries;
+    const gameSnapshot = useSnapshot(gameState);
+    const librarySnapshot = useSnapshot(libraryState);
+    const games = gameSnapshot.sortedAlphabetically;
+    const knownDevelopers = gameSnapshot.knownDevelopers;
+    const knownGenres = gameSnapshot.knownGenres;
+    const knownThemes = gameSnapshot.knownThemes;
+    const knownFeatures = gameSnapshot.knownFeatures;
+    const knownPerspectives = gameSnapshot.knownPerspectives;
+    const knownKeywords = gameSnapshot.knownKeywords;
+    const knownVariantTags = gameSnapshot.knownVariantTags;
+    const libraries = librarySnapshot.libraries;
 
     const [searchParams, setSearchParams] = useSearchParams();
     const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+    const ready = initialLoadComplete && gameSnapshot.isLoaded && librarySnapshot.isLoaded;
 
     const [showFilters, setShowFilters] = useState(false);
     const [sortBy, setSortBy] = useState("title_asc");
@@ -486,12 +489,14 @@ export default function SearchView() {
         </div>
         }
         <div className="mt-4 w-full select-none">
+            {ready ? <>
             <CoverGrid games={filteredAndSortedGames}/>
             {filteredAndSortedGames.length === 0 && (
                 <div className="text-center mt-8 text-default-500">
                     No games found matching your filters
                 </div>
             )}
+            </> : <p role="status" className="text-center text-default-500">Loading games…</p>}
         </div>
     </div>
 }

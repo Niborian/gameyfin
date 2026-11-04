@@ -49,6 +49,7 @@ const proof = {scope: 'reviewed-pr-synthetic-original-editor', stage: 'input', s
   closeClick: {observed: false, preExists: false, preEnabled: false, preInViewport: false, preCenterOwn: false, preCenterToast: false,
     postExists: false, postEnabled: false, postInViewport: false, postCenterOwn: false, postCenterToast: false,
     trustedCloseClick: false, trustedOtherClick: false},
+  versionClick: {hitReady: false, expanded: false, controlledListboxVisible: false, targetOptionVisible: false},
   gameDiagnostics: gameDiagnostic(),
   currentSessionProbe: emptySessionProbe(),
   repeatPhase: 'not-started', viewerLogoutObserved: false, loggedOutLoginFormObserved: false,
@@ -151,6 +152,25 @@ async function clickText(page: any, text: string, scope = 'body'): Promise<void>
     return candidates[0];
   }, text, scope);
   try { await handle.asElement().asLocator().setTimeout(5000).click(); } finally { await handle.dispose(); }
+}
+/** Read-only pointer readiness and exact option scope; only booleans leave diagnostics. */
+function versionControlReadiness(trigger: HTMLButtonElement, label: string, mode: 'trigger' | 'option' | 'snapshot') {
+  const visible = (node: Element | null): node is Element => !!node?.isConnected &&
+    !node.closest('[inert],[aria-hidden="true"]') && node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0;
+  const rect = trigger.getBoundingClientRect(), x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
+  const hit = x >= 0 && y >= 0 && x < window.innerWidth && y < window.innerHeight ? document.elementFromPoint(x, y) : null;
+  const hitReady = visible(trigger) && !trigger.disabled && trigger.getAttribute('aria-disabled') !== 'true' &&
+    !!hit && (hit === trigger || trigger.contains(hit));
+  const expanded = trigger.isConnected && trigger.getAttribute('aria-expanded') === 'true';
+  const controls = (trigger.getAttribute('aria-controls') ?? '').split(/\s+/).filter(Boolean);
+  const boxes = controls.map(id => document.getElementById(id)).filter(node => visible(node) && node.getAttribute('role') === 'listbox');
+  const controlledListboxVisible = expanded && boxes.length === 1;
+  const options = controlledListboxVisible ? [...boxes[0]!.querySelectorAll('[role="option"]')]
+    .filter(option => visible(option) && option.getAttribute('aria-disabled') !== 'true' && option.textContent?.trim() === label) : [];
+  const targetOptionVisible = options.length === 1;
+  if (mode === 'trigger') return hitReady;
+  if (mode === 'option') return targetOptionVisible ? options[0] : false;
+  return {hitReady, expanded, controlledListboxVisible, targetOptionVisible};
 }
 /** Failure-only discriminator, NOT retry/recovery/acceptance. Current cookie jar
  * is not proof of the original pending request's send-time cookies/server receipt.
@@ -421,13 +441,37 @@ async function run(): Promise<void> {
     const buttons = [...document.querySelectorAll('button[aria-haspopup="listbox"]')].filter(node => node.parentElement?.textContent?.includes('Version'));
     if (buttons.length !== 1) throw new Error('Unique version control'); return buttons[0];
   });
-  // Real pointer interaction, with visibility/enabled/stable-layout preconditions.
-  // A raw handle click can hit an animating control before its final position.
-  await version.asElement().asLocator().setTimeout(5000).click(); await version.dispose();
-  proof.editorPhase = 'version-options';
-  await page.waitForFunction(() => [...document.querySelectorAll('[role="option"]')].some(option => option.textContent?.trim() === 'v1.5.0'), {timeout: 5000});
-  proof.targetOptionObserved = true; proof.editorPhase = 'selected-version';
-  await clickText(page, 'v1.5.0');
+  try {
+    // The screenshot modal's exiting overlay may still intercept a geometric
+    // click. Share the original 5-second click budget; never click twice.
+    const clickDeadline = performance.now() + 5000;
+    const clickRemaining = () => { const left = clickDeadline - performance.now(); if (left <= 0) throw new Error('Version click deadline'); return Math.ceil(left); };
+    let scrollTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      // The carousel is below the Version control; use ordinary scrolling before
+      // hit testing, within the same budget as the one real trigger click.
+      await Promise.race([version.asElement().scrollIntoView(), new Promise<never>((_, reject) => {
+        scrollTimer = setTimeout(() => reject(new Error('Version click deadline')), clickRemaining());
+      })]);
+    } finally { if (scrollTimer) clearTimeout(scrollTimer); }
+    await page.waitForFunction(versionControlReadiness, {timeout: clickRemaining()}, version, 'v1.5.0', 'trigger');
+    proof.versionClick.hitReady = true;
+    await version.asElement().asLocator().setTimeout(clickRemaining()).click();
+    proof.editorPhase = 'version-options';
+    const option = await page.waitForFunction(versionControlReadiness, {timeout: 5000}, version, 'v1.5.0', 'option');
+    proof.versionClick.expanded = true; proof.versionClick.controlledListboxVisible = true; proof.versionClick.targetOptionVisible = true;
+    proof.targetOptionObserved = true; proof.editorPhase = 'selected-version';
+    try { await option.asElement().asLocator().setTimeout(5000).click(); } finally { await option.dispose(); }
+  } catch (error) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const observed = await Promise.race([page.evaluate(versionControlReadiness, version, 'v1.5.0', 'snapshot'),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Version diagnostic deadline')), 500); })]);
+      proof.versionClick = {...observed, hitReady: proof.versionClick.hitReady || observed.hitReady};
+    } catch { /* Missing fixed-boolean diagnostics cannot replace the original failure. */ }
+    finally { if (timer) clearTimeout(timer); }
+    throw error;
+  } finally { await version.dispose(); }
   await page.waitForFunction(() => [...document.querySelectorAll('button[aria-haspopup="listbox"]')].some(node => node.parentElement?.textContent?.includes('Version') && node.textContent?.includes('v1.5.0')), {timeout: 5000});
   proof.targetVersionObserved = true; proof.editorPhase = 'editor-open';
   await clickText(page, 'Versions & content');

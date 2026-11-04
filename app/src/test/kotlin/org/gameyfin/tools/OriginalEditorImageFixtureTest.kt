@@ -298,6 +298,10 @@ class OriginalEditorImageFixtureTest {
             val closeClick = browserProof["closeClick"]
             require(closeClick.isObject && closeClick.properties().map { it.key }.toSet() == clickKeys)
             proof["closeClick"] = clickKeys.associateWith { require(closeClick[it].isBoolean); closeClick[it].booleanValue() }
+            val versionClickKeys = setOf("hitReady", "expanded", "controlledListboxVisible", "targetOptionVisible")
+            val versionClick = browserProof["versionClick"]
+            require(versionClick.isObject && versionClick.properties().map { it.key }.toSet() == versionClickKeys)
+            proof["versionClick"] = versionClickKeys.associateWith { require(versionClick[it].isBoolean); versionClick[it].booleanValue() }
             proof["editorObservations"] = listOf("gameRouteMatches", "footerMatches", "versionTriggerUnique", "defaultVersionObserved",
                 "targetOptionObserved", "targetVersionObserved", "editorDialogObserved", "splitPreviewObserved", "typeTriggerFound", "typeOptionsSeen",
                 "editorClosed", "savedVersionShown", "savedBaseShown", "savedPatchShown", "broadOriginalAbsent",

@@ -438,6 +438,33 @@ test('session check failure surfaces explicit recovery without changing Hilla au
     }
 });
 
+test('version interaction waits for an unobstructed trigger and its own exact visible option', () => {
+    const source=fs.readFileSync(path.resolve(__dirname,'original-editor-image.cts'),'utf8');
+    const fragment=source.slice(source.indexOf('function versionControlReadiness('),source.indexOf('/** Failure-only discriminator'));
+    const compiled=ts.transpileModule(fragment+'\nmodule.exports=versionControlReadiness;',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+    function node(role='',text='') {return {isConnected:true,hidden:false,disabled:false,textContent:text,attributes:{role} as Record<string,string>,options:[] as any[],
+        getAttribute(key:string){return this.attributes[key]??null;},closest(){return this.hidden?{}:null;},
+        getBoundingClientRect(){return {x:10,y:10,width:100,height:30};},querySelectorAll(){return this.options;},contains(child:any){return child===this;}};}
+    const trigger=node(),controlled=node('listbox'),unrelated=node('listbox'),target=node('option','v1.5.0'),decoy=node('option','v1.5.0');
+    controlled.options=[target];unrelated.options=[decoy];trigger.attributes['aria-controls']='controlled';trigger.attributes['aria-expanded']='false';
+    let hit:any=unrelated;
+    const module={exports:undefined as any};
+    vm.runInNewContext(compiled,{module,window:{innerWidth:1000,innerHeight:700},document:{elementFromPoint:()=>hit,
+        getElementById:(id:string)=>({controlled,unrelated})[id]??null,querySelectorAll:()=>{throw new Error('Global option lookup is not scoped');}}});
+    const ready=(mode:string)=>module.exports(trigger,'v1.5.0',mode);
+    assert.equal(ready('trigger'),false); // A retained popup backdrop intercepts the pointer.
+    hit=trigger;assert.equal(ready('trigger'),true);
+    trigger.hidden=true;assert.equal(ready('trigger'),false);trigger.hidden=false;
+    trigger.disabled=true;assert.equal(ready('trigger'),false);trigger.disabled=false;
+    assert.equal(ready('option'),false); // A matching unrelated option cannot open this control.
+    trigger.attributes['aria-expanded']='true';controlled.hidden=true;assert.equal(ready('option'),false);controlled.hidden=false;
+    target.textContent='v1.5.00';assert.equal(ready('option'),false);target.textContent='v1.5.0';
+    controlled.options=[target,decoy];assert.equal(ready('option'),false);controlled.options=[target];
+    assert.equal(ready('option'),target);
+    const flags=ready('snapshot');assert.deepEqual({...flags},{hitReady:true,expanded:true,controlledListboxVisible:true,targetOptionVisible:true});
+    trigger.isConnected=false;assert.equal(ready('option'),false);
+});
+
 test('failure-only session probe distinguishes browser input, connection and response waits', async () => {
     const source=fs.readFileSync(path.resolve(__dirname,'original-editor-image.cts'),'utf8');
     const fragment=source.slice(source.indexOf('const emptySessionProbe ='),source.indexOf('const gameDiagnostic =')) +

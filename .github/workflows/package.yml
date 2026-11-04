@@ -187,7 +187,9 @@ jobs:
           GAMEYFIN_KEYSTORE_TYPE: PKCS12
         # The required verify job already ran app tests on this exact checkout.
         # Keep plugin tests, but do not run the entire app suite twice per workflow.
-        run: ./gradlew clean build -x :app:test -Pvaadin.productionMode=true --no-daemon --console=plain
+        run: |
+          ./gradlew clean build -x :app:test -Pvaadin.productionMode=true --no-daemon --console=plain
+          node -e 'const assert = require("node:assert/strict"); const p = require("./app/package.json"); const lock = require("./app/package-lock.json"); const installed = require("./app/node_modules/react-router/package.json").version; assert.equal(installed, p.dependencies["react-router"]); assert.equal(installed, p.vaadin.dependencies["react-router"]); assert.equal(installed, lock.packages["node_modules/react-router"].version); assert.equal(p.overrides["react-router"], "$react-router"); console.log("Built React Router:", installed);'
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -328,7 +330,9 @@ jobs:
 
       - name: Build pull request application artifact
         # needs: verify preserves the test gate; plugin tests still run here.
-        run: ./gradlew clean build -x :app:test --no-daemon --console=plain
+        run: |
+          ./gradlew clean build -x :app:test --no-daemon --console=plain
+          node -e 'const assert = require("node:assert/strict"); const p = require("./app/package.json"); const lock = require("./app/package-lock.json"); const installed = require("./app/node_modules/react-router/package.json").version; assert.equal(installed, p.dependencies["react-router"]); assert.equal(installed, p.vaadin.dependencies["react-router"]); assert.equal(installed, lock.packages["node_modules/react-router"].version); assert.equal(p.overrides["react-router"], "$react-router"); console.log("Built React Router:", installed);'
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

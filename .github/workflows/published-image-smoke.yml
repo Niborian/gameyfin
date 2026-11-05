@@ -100,7 +100,9 @@ jobs:
           # No application/image/frontend rebuild, publication, production mounts or secrets.
           # Unchanged fixture: actual bundled plugins, normal entrypoint/default JVM,
           # one CPU/1536 MiB app, synthetic auth/avatar/editor/Steam and clicked ZIP.
-          timeout --signal=TERM --kill-after=10s 600s ./gradlew :app:test --tests org.gameyfin.tools.OriginalEditorImageFixtureTest -x :app:vaadinPrepareFrontend -x :app:vaadinBuildFrontend --max-workers=2 --no-daemon --console=plain
+          # The image environment is not a Test task input: execute this task,
+          # retaining compilation caches without reusing a prior smoke result.
+          timeout --signal=TERM --kill-after=10s 600s ./gradlew :app:test --rerun --tests org.gameyfin.tools.OriginalEditorImageFixtureTest -x :app:vaadinPrepareFrontend -x :app:vaadinBuildFrontend --max-workers=2 --no-daemon --console=plain
 
       - name: Exact editor-labelled fallback cleanup
         if: always()

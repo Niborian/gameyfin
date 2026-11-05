@@ -462,7 +462,9 @@ jobs:
         run: |
           timeout --signal=TERM --kill-after=2s 180s docker pull ghcr.io/puppeteer/puppeteer@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3
           # No application rebuild; normal authentication15s/browser90s gates remain.
-          timeout --signal=TERM --kill-after=10s 600s ./gradlew :app:test --tests org.gameyfin.tools.OriginalEditorImageFixtureTest -x :app:vaadinPrepareFrontend -x :app:vaadinBuildFrontend --max-workers=2 --no-daemon --console=plain
+          # Image identity comes from the environment, so force only this test
+          # task to execute while preserving dependency compilation caches.
+          timeout --signal=TERM --kill-after=10s 600s ./gradlew :app:test --rerun --tests org.gameyfin.tools.OriginalEditorImageFixtureTest -x :app:vaadinPrepareFrontend -x :app:vaadinBuildFrontend --max-workers=2 --no-daemon --console=plain
 
       - name: Exact editor-labelled fallback cleanup
         if: always()

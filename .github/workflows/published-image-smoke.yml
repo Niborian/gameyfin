@@ -1,0 +1,151 @@
+name: Published image original-UI component smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      reviewed_workflow_head:
+        description: Exact reviewed main workflow commit (40 lowercase hex)
+        required: true
+        type: string
+      reviewed_source:
+        description: Exact reviewed image source commit (40 lowercase hex)
+        required: true
+        type: string
+      version:
+        description: Exact numeric semantic version, for example 2.4.11
+        required: true
+        type: string
+      digest:
+        description: Exact published sha256 manifest digest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: published-image-component-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    if: github.repository == 'Niborian/gameyfin' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      REVIEWED_WORKFLOW_HEAD: ${{ inputs.reviewed_workflow_head }}
+      REVIEWED_SOURCE: ${{ inputs.reviewed_source }}
+      EXPECTED_VERSION: ${{ inputs.version }}
+      EXPECTED_DIGEST: ${{ inputs.digest }}
+    steps:
+      - name: Admit only the exact reviewed main workflow and image inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$REVIEWED_WORKFLOW_HEAD" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$REVIEWED_WORKFLOW_HEAD" == "$GITHUB_SHA" ]]
+          [[ "$REVIEWED_SOURCE" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$EXPECTED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && ${#EXPECTED_VERSION} -le 64 ]]
+          [[ "$EXPECTED_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.reviewed_source }}
+          persist-credentials: false
+
+      - name: Bind fixture source to the reviewed published-image source
+        run: test "$(git rev-parse HEAD)" = "$REVIEWED_SOURCE"
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Pull public immutable image and retain bounded identity only
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="ghcr.io/niborian/gameyfin@$EXPECTED_DIGEST"
+          timeout --signal=TERM --kill-after=2s 180s docker pull --platform linux/amd64 --quiet "$image" >/dev/null
+          config=$(timeout 10s docker image inspect "$image" --format '{{.Id}}')
+          [[ "$config" =~ ^sha256:[a-f0-9]{64}$ ]]
+          timeout 10s docker image inspect "$config" | jq -e \
+            --arg image "$image" --arg config "$config" --arg source "$REVIEWED_SOURCE" --arg version "$EXPECTED_VERSION" '
+            length == 1 and .[0].Id == $config and
+            .[0].Os == "linux" and .[0].Architecture == "amd64" and
+            (.[0].RepoDigests | index($image)) != null and
+            .[0].Config.Labels["org.opencontainers.image.source"] == "https://github.com/Niborian/gameyfin" and
+            .[0].Config.Labels["org.opencontainers.image.revision"] == $source and
+            .[0].Config.Labels["org.opencontainers.image.version"] == $version' >/dev/null
+          mkdir -p .published-image-smoke
+          jq -n --arg config "$config" --arg digest "$EXPECTED_DIGEST" --arg source "$REVIEWED_SOURCE" \
+            --arg version "$EXPECTED_VERSION" --arg workflow "$REVIEWED_WORKFLOW_HEAD" \
+            '{scope:"Published-image original-UI component only; not server CPU/RAM comparison, external OIDC, Main native transition or cutover proof", repository:"ghcr.io/niborian/gameyfin", manifestDigest:$digest, applicationImageId:$config, sourceRevisionLabel:$source, versionLabel:$version, reviewedWorkflowHead:$workflow, identityMatched:true, fixtureLaunchPolicy:"Unchanged fixture uses normal image entrypoint/default JVM; runtime outcome recorded separately"}' \
+            > .published-image-smoke/identity.json
+          [[ $(wc -c < .published-image-smoke/identity.json) -le 4096 ]]
+          printf 'config=%s\n' "$config" >> "$GITHUB_OUTPUT"
+
+      - name: One existing original-UI editor and exact-download smoke
+        env:
+          GAMEYFIN_ORIGINAL_EDITOR_FIXTURE: reviewed-pr-synthetic-only
+          REVIEWED_HEAD: ${{ inputs.reviewed_source }}
+          BUILT_IMAGE_ID: ${{ steps.image.outputs.config }}
+        run: |
+          set -euo pipefail
+          test ! -e .editor-candidate/result.json
+          timeout --signal=TERM --kill-after=2s 180s docker pull ghcr.io/puppeteer/puppeteer@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3
+          # No application/image/frontend rebuild, publication, production mounts or secrets.
+          # Unchanged fixture: actual bundled plugins, normal entrypoint/default JVM,
+          # one CPU/1536 MiB app, synthetic auth/avatar/editor/Steam and clicked ZIP.
+          # The image environment is not a Test task input: execute this task,
+          # retaining compilation caches without reusing a prior smoke result.
+          timeout --signal=TERM --kill-after=10s 600s ./gradlew :app:test --rerun --tests org.gameyfin.tools.OriginalEditorImageFixtureTest -x :app:vaadinPrepareFrontend -x :app:vaadinBuildFrontend --max-workers=2 --no-daemon --console=plain
+
+      - name: Exact editor-labelled fallback cleanup
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f .editor-candidate/result.json ]]; then
+            owner=$(jq -er '.fixtureOwner' .editor-candidate/result.json)
+            [[ "$owner" =~ ^[a-f0-9]{32}$ ]]
+            ids=$(timeout 5s docker ps -aq --no-trunc --filter "label=gameyfin.fixture.owner=$owner")
+            for id in $ids; do
+              [[ "$id" =~ ^[a-f0-9]{64}$ ]]
+              [[ "$(timeout 5s docker inspect --format '{{index .Config.Labels "gameyfin.fixture.owner"}}' "$id")" == "$owner" ]]
+              timeout 10s docker rm --force "$id" >/dev/null
+            done
+            [[ -z "$(timeout 5s docker ps -aq --no-trunc --filter "label=gameyfin.fixture.owner=$owner")" ]]
+            network="gameyfin-fixture-$owner"
+            existing=$(timeout 5s docker network ls -q --filter "name=^${network}$")
+            if [[ -n "$existing" ]]; then
+              [[ "$(timeout 5s docker network inspect --format '{{index .Labels "gameyfin.fixture.owner"}}' "$network")" == "$owner" ]]
+              timeout 5s docker network rm "$network" >/dev/null
+            fi
+            [[ -z "$(timeout 5s docker network ls -q --filter "name=^${network}$")" ]]
+          fi
+
+      - name: Require actual matching completed fixture and cleanup
+        env:
+          BUILT_IMAGE_ID: ${{ steps.image.outputs.config }}
+        run: |
+          set -euo pipefail
+          jq -e --arg image "$BUILT_IMAGE_ID" --arg source "$REVIEWED_SOURCE" --arg version "$EXPECTED_VERSION" '
+            .success == true and .cleanupConfirmed == true and .stage == "complete" and
+            .applicationImageId == $image and .sourceRevision == $source and .expectedVersion == $version and
+            .zipMemberHashesMatch == true and .sourceHashesUnchanged == true and
+            .readinessUp == true and .noOomOrAutomaticRestart == true' .editor-candidate/result.json >/dev/null
+
+      - name: Retain only sanitized component receipts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: published-image-component-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .editor-candidate/result.json
+            .published-image-smoke/identity.json
+          retention-days: 7
+          if-no-files-found: warn

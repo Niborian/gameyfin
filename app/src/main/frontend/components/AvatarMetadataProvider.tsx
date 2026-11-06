@@ -48,7 +48,15 @@ export default function AvatarMetadataProvider({user, active, admin, children}: 
                     .onError(() => { if (own === subscription) own = undefined; if (!signal.aborted) void refreshOwn(); })
                     .onComplete(() => { if (own === subscription) own = undefined; })
                     .onConnectionStateChange(event => { if (event.detail.state === 'connected' && !signal.aborted) void refreshOwn(); })
-                    .onSubscriptionLost(() => signal.aborted ? ActionOnLostSubscription.REMOVE : ActionOnLostSubscription.RESUBSCRIBE);
+                    .onSubscriptionLost(() => {
+                        if (!signal.aborted && own === subscription) {
+                            own = undefined;
+                            // Retire the old server ID before attaching after Hilla finishes reopening.
+                            subscription.cancel();
+                            queueMicrotask(attach);
+                        }
+                        return ActionOnLostSubscription.REMOVE;
+                    });
             }
             if (admin && !all) {
                 const subscription = UserAvatarEndpoint.subscribeAll();
@@ -57,7 +65,14 @@ export default function AvatarMetadataProvider({user, active, admin, children}: 
                     .onError(() => { if (all === subscription) all = undefined; if (!signal.aborted) void refreshAll(); })
                     .onComplete(() => { if (all === subscription) all = undefined; })
                     .onConnectionStateChange(event => { if (event.detail.state === 'connected' && !signal.aborted) void refreshAll(); })
-                    .onSubscriptionLost(() => signal.aborted ? ActionOnLostSubscription.REMOVE : ActionOnLostSubscription.RESUBSCRIBE);
+                    .onSubscriptionLost(() => {
+                        if (!signal.aborted && all === subscription) {
+                            all = undefined;
+                            subscription.cancel();
+                            queueMicrotask(attach);
+                        }
+                        return ActionOnLostSubscription.REMOVE;
+                    });
             }
         };
         const focus = () => { if (document.visibilityState === 'visible') { attach(); refresh(); } };

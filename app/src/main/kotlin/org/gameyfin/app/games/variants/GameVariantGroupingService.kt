@@ -630,7 +630,31 @@ class GameVariantGroupingService(
             )
     }
 
-    private fun addContentEntry(variant: GameVariant, entry: AttachVariantContentEntryDto, reuseExisting: Boolean = true) {
+    /** Catalogue-only split from the server's exact layout and bounded size inspection. */
+    internal fun replaceLearnedBase(
+        game: Game,
+        variant: GameVariant,
+        broad: VariantContent,
+        version: String,
+        entries: List<AttachVariantContentEntryDto>,
+        sizes: Map<String, Long>
+    ) {
+        require(game.variants.singleOrNull() === variant && variant.scanManaged && variant.contents.singleOrNull() === broad)
+        require(entries.count { it.contentType == VariantContentType.BASE } == 1)
+        entries.forEach { addContentEntry(variant, it, reuseExisting = false, inspectedSize = sizes.getValue(it.path)) }
+        variant.contents.remove(broad)
+        if (variant.version == "0") variant.version = version
+        variant.scanManaged = false
+        refreshVariantFileSize(variant)
+        refreshVariantFlags(game)
+    }
+
+    private fun addContentEntry(
+        variant: GameVariant,
+        entry: AttachVariantContentEntryDto,
+        reuseExisting: Boolean = true,
+        inspectedSize: Long? = null
+    ) {
         val normalizedTags = normalizeTags(entry.tags)
         val entryPaths = requestedPaths(entry.path, entry.paths)
         val primaryPath = entryPaths.first()
@@ -648,7 +672,7 @@ class GameVariantGroupingService(
         content.path = primaryPath
         content.paths.clear()
         content.paths.addAll(entryPaths)
-        content.fileSize = calculatePathsSize(entryPaths)
+        content.fileSize = inspectedSize ?: calculatePathsSize(entryPaths)
         content.required = entry.required || entry.contentType == VariantContentType.BASE
         content.defaultSelected = content.required || entry.defaultSelected
         content.tags.clear()

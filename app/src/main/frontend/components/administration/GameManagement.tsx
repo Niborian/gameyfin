@@ -18,6 +18,7 @@ import {CollectionOverviewCard} from "Frontend/components/general/cards/Collecti
 import CollectionCreationModal from "Frontend/components/general/modals/CollectionCreationModal";
 import CollectionPrioritiesModal from "Frontend/components/general/modals/CollectionPrioritiesModal";
 import {pluginState} from "Frontend/state/PluginState";
+import {LearnedBaseSplitSettings} from "Frontend/components/administration/LearnedBaseSplit";
 
 function GameManagementLayout({getConfig, formik}: any) {
     const libraries = useSnapshot(libraryState);
@@ -116,6 +117,8 @@ function GameManagementLayout({getConfig, formik}: any) {
                 <ConfigFormField configElement={getConfig("library.scan.game-file-extensions")}/>
                 <ConfigFormField configElement={getConfig("library.scan.max-concurrency")}/>
             </div>
+
+            <LearnedBaseSplitSettings/>
 
             <Section title="Metadata"/>
             <div className="flex flex-row items-baseline">

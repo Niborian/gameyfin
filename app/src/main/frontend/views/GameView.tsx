@@ -44,6 +44,7 @@ import VariantContentDto from "Frontend/generated/org/gameyfin/app/games/dto/Var
 import VariantLinkStatus from "Frontend/generated/org/gameyfin/app/games/entities/VariantLinkStatus";
 import VariantContentType from "Frontend/generated/org/gameyfin/app/games/entities/VariantContentType";
 import {editionPillLabels, variantDisplayLabel, VariantDisplay} from "Frontend/util/variantDisplay";
+import {LearnedBaseSplitSuggestion} from "Frontend/components/administration/LearnedBaseSplit";
 
 const VariantManagerModal = lazy(() => import("Frontend/components/general/modals/VariantManagerModal"));
 type ProviderOwner = {key: string; controller: AbortController};
@@ -497,6 +498,12 @@ export default function GameView() {
                             </div>
                         </div>
                     </div>
+                    {isAdmin(auth) && !auth.state.loading && !auth.state.initializing &&
+                        <LearnedBaseSplitSuggestion key={displayOwnerKey} gameId={game.id} revision={displayRevision}
+                            onApplied={updated => {
+                                gameState.state[updated.id] = updated;
+                                setDisplayRevision(value => value + 1);
+                            }}/>}
                     {editionLabels.length > 0 && <div aria-label="Edition details" className="flex flex-wrap items-center gap-2 max-w-3xl">
                         <span className="text-sm font-medium">Edition</span>
                         {editionLabels.map(label => <Chip key={label} size="md" variant="flat" color="secondary"

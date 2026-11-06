@@ -5,6 +5,7 @@ import io.mockk.just
 import io.mockk.mockk
 import io.mockk.Runs
 import io.mockk.verify
+import jakarta.persistence.EntityManager
 import org.gameyfin.app.config.ConfigProperties
 import org.gameyfin.app.config.ConfigService
 import org.gameyfin.app.core.filesystem.FilesystemService
@@ -27,6 +28,7 @@ import org.gameyfin.pluginapi.gamemetadata.Platform
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.springframework.test.util.ReflectionTestUtils
 import java.nio.file.Path
 import java.time.Instant
 import java.util.Optional
@@ -52,8 +54,10 @@ class GameVariantGroupingServiceTest {
         ignoredPathRepository = mockk()
         filesystemService = mockk()
         configService = mockk()
+        every { gameRepository.lockForVariantEdit(any()) } returns 1L
         every { configService.get(ConfigProperties.Libraries.Scan.ReleaseMarkerAliases) } returns emptyArray()
         service = GameVariantGroupingService(gameRepository, ignoredPathRepository, filesystemService, configService)
+        ReflectionTestUtils.setField(service, "entityManager", mockk<EntityManager>(relaxUnitFun = true))
     }
 
     @Test
@@ -78,6 +82,27 @@ class GameVariantGroupingServiceTest {
         assertEquals(2L, suggestions.single().sourceGameId)
         assertEquals("Normal", suggestions.single().suggestedVariantName)
         assertEquals("2025.07.25", suggestions.single().suggestedVariantVersion)
+    }
+
+    @Test
+    fun `automatic grouping preserves a reviewed source variant`(@TempDir tempDir: Path) {
+        val library = createLibrary()
+        val plugin = PluginManagementEntry("igdb")
+        val targetPath = tempDir.resolve("Craftopia.v1.3.rar").createFile()
+        val sourcePath = tempDir.resolve("Craftopia.v1.4.rar").createFile()
+        val target = createGame(1L, library, targetPath.toString(), plugin, "123")
+        val source = createGame(2L, library, sourcePath.toString(), plugin, "123")
+        source.variants.add(createBaseVariant(source, 10L, sourcePath.toString()))
+        every { gameRepository.findAllByLibraryId(1L) } returns listOf(target, source)
+        every { gameRepository.findById(1L) } returns Optional.of(target)
+        every { gameRepository.findById(2L) } returns Optional.of(source)
+        every { gameRepository.flush() } just Runs
+        every { filesystemService.calculateFileSize(any()) } returns 2048L
+
+        assertTrue(service.getGroupingSuggestions(1L).single().autoGroup)
+        assertEquals(0, service.autoGroupExactMatches(library))
+        verify(exactly = 0) { gameRepository.delete(any<Game>()) }
+        assertFalse(source.variants.single().scanManaged)
     }
 
     @Test

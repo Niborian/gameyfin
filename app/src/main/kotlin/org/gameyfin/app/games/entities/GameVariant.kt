@@ -92,5 +92,9 @@ class GameVariant(
     var quarantinePath: String? = null,
 
     @OneToMany(mappedBy = "variant", cascade = [ALL], orphanRemoval = true, fetch = FetchType.EAGER)
-    var contents: MutableList<VariantContent> = mutableListOf()
+    var contents: MutableList<VariantContent> = mutableListOf(),
+
+    @Version
+    @Column(nullable = false)
+    var rowVersion: Long? = null
 )

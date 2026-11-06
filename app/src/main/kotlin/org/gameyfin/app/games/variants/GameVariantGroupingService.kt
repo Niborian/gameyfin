@@ -1,5 +1,7 @@
 package org.gameyfin.app.games.variants
 
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
 import org.gameyfin.app.core.filesystem.FilesystemService
 import org.gameyfin.app.config.ConfigProperties
 import org.gameyfin.app.config.ConfigService
@@ -35,6 +37,9 @@ class GameVariantGroupingService(
     private val configService: ConfigService,
     private val releaseNameSuggestionService: ReleaseNameSuggestionService = ReleaseNameSuggestionService()
 ) {
+    @PersistenceContext
+    private lateinit var entityManager: EntityManager
+
     private val trailingVersionPattern =
         Regex("""(?i)(?:^|[\s._-])v?(\d+(?:\.\d+)*(?:[-+_][a-z0-9._-]+)?)$""")
 
@@ -54,7 +59,12 @@ class GameVariantGroupingService(
 
         if (exactTargets.size != 1) return null
 
-        val target = exactTargets.single()
+        val matchedTarget = exactTargets.single()
+        if (releaseSuggestion(Path.of(matchedTarget.metadata.path), aliases) != null) return null
+        val targetId = matchedTarget.id ?: return null
+        gameRepository.lockForVariantEdit(targetId) ?: return null
+        val target = reloadGame(targetId) ?: return null
+        if (confidence(candidate, target).confidence != 100) return null
         if (releaseSuggestion(Path.of(target.metadata.path), aliases) != null) return null
         val variantMetadata = variantMetadataFromCandidate(candidate, target, discovery)
         addOrUpdateExternalVariant(target, variantMetadata)
@@ -68,43 +78,56 @@ class GameVariantGroupingService(
         val libraryId = library.id ?: return 0
         var grouped = 0
         val groupedSources = mutableSetOf<Long>()
+        val aliases = configuredReleaseAliases()
+        val suggestions = buildSuggestions(gameRepository.findAllByLibraryId(libraryId), includeAutoGroups = true)
+            .filter { it.autoGroup }
+        val lockedIds = suggestions.flatMap { listOf(it.targetGameId, it.sourceGameId) }
+            .distinct().sorted().filter { gameRepository.lockForVariantEdit(it) != null }.toSet()
 
-        buildSuggestions(gameRepository.findAllByLibraryId(libraryId), includeAutoGroups = true)
-            .filter { it.confidence == 100 }
-            .forEach { suggestion ->
-                if (!groupedSources.add(suggestion.sourceGameId)) return@forEach
-                val target = gameRepository.findByIdOrNull(suggestion.targetGameId) ?: return@forEach
-                val source = gameRepository.findByIdOrNull(suggestion.sourceGameId) ?: return@forEach
-                if (target.library.id != source.library.id) return@forEach
+        for (suggestion in suggestions) {
+            if (suggestion.targetGameId !in lockedIds || suggestion.sourceGameId !in lockedIds) continue
+            if (suggestion.sourceGameId in groupedSources) continue
+            // The suggestion search may already have loaded these entities before the locks.
+            // Flush earlier group edits before refreshing their current selections.
+            gameRepository.flush()
+            val target = reloadGame(suggestion.targetGameId) ?: continue
+            val source = reloadGame(suggestion.sourceGameId) ?: continue
+            if (target.library.id != source.library.id || confidence(source, target).confidence != 100) continue
+            if (target.metadata.path != suggestion.targetPath || source.metadata.path != suggestion.sourcePath) continue
+            if (releaseSuggestion(Path.of(source.metadata.path), aliases) != null) continue
+            // Grouping replaces the source game with a broad BASE entry. Preserve reviewed splits.
+            if (source.variants.any { !it.scanManaged }) continue
 
-                groupManagedSourceIntoTarget(
-                    target = target,
-                    source = source,
-                    variantName = suggestion.suggestedVariantName,
-                    version = suggestion.suggestedVariantVersion,
-                    contentName = "Base game",
-                    contentType = VariantContentType.BASE,
-                    required = true,
-                    defaultSelected = true,
-                    tags = emptySet(),
-                    steamAppId = null,
-                    launchArgs = null,
-                    patchInfo = null
-                )
-                grouped++
-            }
+            groupManagedSourceIntoTarget(
+                target = target,
+                source = source,
+                variantName = suggestion.suggestedVariantName,
+                version = suggestion.suggestedVariantVersion,
+                contentName = "Base game",
+                contentType = VariantContentType.BASE,
+                required = true,
+                defaultSelected = true,
+                tags = emptySet(),
+                steamAppId = null,
+                launchArgs = null,
+                patchInfo = null
+            )
+            groupedSources.add(suggestion.sourceGameId)
+            grouped++
+        }
 
         return grouped
     }
 
     @Transactional
     fun groupGameAsVariant(targetGameId: Long, request: GroupGameAsVariantRequestDto): Game {
+        require(targetGameId != request.sourceGameId) { "Source and target game must be different" }
+        lockGroupingGames(targetGameId, request.sourceGameId)
         val target = gameRepository.findByIdOrNull(targetGameId)
             ?: throw IllegalArgumentException("Target game $targetGameId not found")
         val source = gameRepository.findByIdOrNull(request.sourceGameId)
             ?: throw IllegalArgumentException("Source game ${request.sourceGameId} not found")
 
-        require(target.id != source.id) { "Source and target game must be different" }
         require(target.library.id == source.library.id) { "Source and target game must be in the same library" }
 
         val defaults = variantMetadataFromCandidate(source, target, DiscoveredGameVariants(Path.of(source.metadata.path), emptyList()))
@@ -126,11 +149,25 @@ class GameVariantGroupingService(
 
     @Transactional
     fun attachVariantContent(targetGameId: Long, request: AttachVariantContentRequestDto): Game {
-        val target = gameRepository.findByIdOrNull(targetGameId)
-            ?: throw IllegalArgumentException("Target game $targetGameId not found")
         require(request.entries.isNotEmpty()) { "At least one content entry is required" }
 
         val sourceRootPath = request.sourceRootPath.ifBlank { request.entries.first().path }
+        val entryPaths = request.entries.flatMap { requestedPaths(it.path, it.paths) }
+        val target: Game
+        val duplicateSource: Game?
+        if (request.replaceContentId != null) {
+            target = findGameForVariantEdit(targetGameId)
+            duplicateSource = null
+        } else {
+            val initialTarget = requireNotNull(gameRepository.findByIdOrNull(targetGameId)) { "Target game $targetGameId not found" }
+            val initialSource = findAttachSource(initialTarget, request.sourceGameId, sourceRootPath, entryPaths)
+            val sourceId = initialSource?.id
+            lockGroupingGames(targetGameId, sourceId)
+            target = requireNotNull(reloadGame(targetGameId)) { "Target game $targetGameId not found" }
+            initialSource?.let(entityManager::refresh)
+            duplicateSource = findAttachSource(target, request.sourceGameId, sourceRootPath, entryPaths)
+            require(duplicateSource?.id == sourceId) { "The matching source game changed; reload before attaching" }
+        }
         val replacing = request.replaceContentId?.let { contentId ->
             require(request.sourceGameId == null && request.targetVariantIds.isNullOrEmpty()) {
                 "Replacing content must target one existing variant, not another game or shared variants"
@@ -143,12 +180,11 @@ class GameVariantGroupingService(
                 "The original BASE selection changed; reload before replacing it"
             }
             require(root.isDirectory()) { "Only a directory selection can be split into children" }
-            val paths = request.entries.flatMap { requestedPaths(it.path, it.paths) }
-            require(paths.isNotEmpty() && paths.all {
+            require(entryPaths.isNotEmpty() && entryPaths.all {
                 val child = Path.of(it).toAbsolutePath().normalize()
                 child != root && child.startsWith(root) && child.toRealPath().startsWith(root.toRealPath())
             }) { "Replacement files must remain inside the original directory" }
-            val normalizedPaths = paths.map { Path.of(it).toAbsolutePath().normalize() }
+            val normalizedPaths = entryPaths.map { Path.of(it).toAbsolutePath().normalize() }
             val retainedPaths = variant.contents.filter { it !== content }.flatMap { it.effectivePaths() }
                 .map { Path.of(it).toAbsolutePath().normalize() }
             require(normalizedPaths.withIndex().none { (index, path) ->
@@ -160,13 +196,6 @@ class GameVariantGroupingService(
             }
             content
         }
-        val duplicateSource = if (replacing != null) null else findAttachSource(
-            target = target,
-            sourceGameId = request.sourceGameId,
-            sourceRootPath = sourceRootPath,
-            entryPaths = request.entries.flatMap { requestedPaths(it.path, it.paths) }
-        )
-
         val sourceWasRemoved = duplicateSource != null
         if (duplicateSource != null) {
             removeSourceGame(target, duplicateSource)
@@ -225,8 +254,7 @@ class GameVariantGroupingService(
 
     @Transactional
     fun setDefaultVariant(targetGameId: Long, variantId: Long): Game {
-        val target = gameRepository.findByIdOrNull(targetGameId)
-            ?: throw IllegalArgumentException("Target game $targetGameId not found")
+        val target = findGameForVariantEdit(targetGameId)
         val selected = findVariant(target, variantId)
 
         target.variants.forEach { variant ->
@@ -311,8 +339,7 @@ class GameVariantGroupingService(
         contentId: Long,
         request: UpdateVariantContentRequestDto
     ): Game {
-        val target = gameRepository.findByIdOrNull(targetGameId)
-            ?: throw IllegalArgumentException("Target game $targetGameId not found")
+        val target = findGameForVariantEdit(targetGameId)
         val requestedPaths = requestedPaths(request.path, request.paths)
         require(requestedPaths.isNotEmpty()) { "Content path is required" }
         val variant = findVariant(target, variantId)
@@ -342,8 +369,7 @@ class GameVariantGroupingService(
 
     @Transactional
     fun deleteVariantContent(targetGameId: Long, variantId: Long, contentId: Long): Game {
-        val target = gameRepository.findByIdOrNull(targetGameId)
-            ?: throw IllegalArgumentException("Target game $targetGameId not found")
+        val target = findGameForVariantEdit(targetGameId)
         val variant = findVariant(target, variantId)
         val content = findContent(variant, contentId)
 
@@ -465,6 +491,21 @@ class GameVariantGroupingService(
 
         return source
     }
+
+    private fun findGameForVariantEdit(gameId: Long): Game {
+        requireNotNull(gameRepository.lockForVariantEdit(gameId)) { "Target game $gameId not found" }
+        return requireNotNull(gameRepository.findByIdOrNull(gameId)) { "Target game $gameId not found" }
+    }
+
+    private fun lockGroupingGames(targetGameId: Long, sourceGameId: Long?) {
+        for (gameId in listOfNotNull(targetGameId, sourceGameId).sorted()) {
+            val role = if (gameId == targetGameId) "Target" else "Source"
+            requireNotNull(gameRepository.lockForVariantEdit(gameId)) { "$role game $gameId not found" }
+        }
+    }
+
+    private fun reloadGame(gameId: Long): Game? =
+        gameRepository.findByIdOrNull(gameId)?.also(entityManager::refresh)
 
     private fun findVariant(target: Game, variantId: Long): GameVariant {
         return target.variants.firstOrNull { it.id == variantId }

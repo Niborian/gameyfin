@@ -38,6 +38,7 @@ class LibraryGameProcessorTest {
         gameVariantDiscoveryService = mockk()
         gameVariantGroupingService = mockk()
         gameVariantService = mockk()
+        every { gameService.lockForVariantEdit(any()) } just Runs
 
         libraryGameProcessor = LibraryGameProcessor(
             gameService,
@@ -219,6 +220,7 @@ class LibraryGameProcessorTest {
         val game = createTestGame(1L, "/path/to/game")
 
         every { gameService.updateMetadata(game) } returns null
+        every { gameService.getById(1L) } returns game
 
         val result = libraryGameProcessor.processExistingGame(game)
 
@@ -293,6 +295,7 @@ class LibraryGameProcessorTest {
         val game = createTestGame(1L, "/path/to/game")
 
         every { gameService.updateMetadata(game) } returns null
+        every { gameService.getById(1L) } returns game
 
         libraryGameProcessor.processExistingGame(game)
 

@@ -114,8 +114,7 @@ class LearnedBaseSplitService(
 
     @Transactional
     fun decide(gameId: Long, revision: String, approve: Boolean): Game? {
-        val libraryId = jdbc.query("SELECT LIBRARY_ID FROM GAME WHERE ID = ? FOR UPDATE", { rs, _ -> rs.getLong(1) }, gameId)
-            .singleOrNull() ?: error("Game is no longer available")
+        val libraryId = games.lockForVariantEdit(gameId) ?: error("Game is no longer available")
         lockLibrary(libraryId)
         val game = games.findByIdOrNull(gameId) ?: error("Game is no longer available")
         val p = requireNotNull(proposal(game)) { "This suggestion changed. Reload it before deciding." }

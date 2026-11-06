@@ -739,6 +739,10 @@ class GameService(
         return mergedGame
     }
 
+    fun lockForVariantEdit(id: Long) {
+        requireNotNull(gameRepository.lockForVariantEdit(id)) { "Game with id $id not found" }
+    }
+
     fun getById(id: Long): Game {
         return gameRepository.findByIdOrNull(id) ?: throw IllegalArgumentException("Game with id $id not found")
     }

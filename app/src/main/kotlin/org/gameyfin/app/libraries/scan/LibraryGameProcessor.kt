@@ -65,6 +65,8 @@ class LibraryGameProcessor(
         // Note: GameService.update will load and save the managed entity inside this same transaction
         var updated: Game? = null
         try {
+            val gameId = requireNotNull(game.id)
+            gameService.lockForVariantEdit(gameId)
             val discovery = gameVariantDiscoveryService.discover(Path.of(game.metadata.path))
             updated = gameService.updateMetadata(game)
             if (updated != null) {
@@ -74,7 +76,7 @@ class LibraryGameProcessor(
                 updated.metadata.fileSize = filesystemService.calculateFileSize(updated.metadata.path)
                 // No explicit save needed; entity is managed in this transaction and will be flushed on commit
             }
-            val gameToSync = updated ?: game
+            val gameToSync = updated ?: gameService.getById(gameId)
             val synced = gameVariantService.syncVariants(gameToSync, discovery, game.library)
             return updated?.let { synced }
         } catch (e: Exception) {

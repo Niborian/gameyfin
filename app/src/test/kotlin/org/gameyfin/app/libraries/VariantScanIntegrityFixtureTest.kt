@@ -48,6 +48,7 @@ class VariantScanIntegrityFixtureTest {
         library.ignoredPaths.add(IgnoredPath(path = fixture.root.resolve("hardlinks").toString(), source = IgnoredPathUserSource(mockk())))
         every { repository.save(game) } returns game
         every { metadata.updateMetadata(game) } returns game
+        every { metadata.lockForVariantEdit(any()) } returns Unit
         every { grouping.autoGroupExactMatches(library) } returns 0
         every { core.addGamesToLibrary(emptyList(), library, false) } returns library
         every { libraryRepository.save(library) } returns library

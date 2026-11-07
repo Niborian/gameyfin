@@ -11,13 +11,39 @@ function fixture() {
     const source = fs.readFileSync(path.resolve(__dirname, '../app/src/main/frontend/util/middleware.ts'), 'utf8');
     const compiled = ts.transpileModule(source, {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}});
     const warnings: unknown[] = [], toasts: any[] = [], module = {exports: {} as any};
-    vm.runInNewContext(compiled.outputText, {module, exports: module.exports, TypeError,
+    vm.runInNewContext(compiled.outputText, {module, exports: module.exports, TypeError, Request, performance,
         console: {warn: (...args: unknown[]) => warnings.push(args)},
-        require(name: string) {return name === '@heroui/react' ? {addToast: (value: unknown) => toasts.push(value)} : {};}
+        require(name: string) {
+            if (name === '@heroui/react') return {addToast: (value: unknown) => toasts.push(value)};
+            if (name === 'react') return {createElement: (type: string, props: unknown, text: string) => ({type, props, text})};
+            return {};
+        }
     });
     return {middleware: module.exports.ErrorHandlingMiddleware, warnings, toasts};
 }
-const context = {endpoint: 'LibraryEndpoint', method: 'getAll', params: {private: 'PRIVATE_SENTINEL'}};
+const context = {endpoint: 'LibraryEndpoint', method: 'getAll', params: {private: 'PRIVATE_SENTINEL'},
+    get request() {return new Request('https://fixture.invalid/HILLA/LibraryEndpoint/getAll', {method: 'POST', body: '{}'});}};
+
+test('RPC redirect stops without replay and offers one sign-in while preserving the page', async () => {
+    const f = fixture();
+    let calls = 0;
+    const next = async (received: any) => {
+        calls++;
+        assert.equal(received.request.redirect, 'manual');
+        assert.equal(received.request.method, 'POST');
+        assert.equal(await received.request.text(), '{}');
+        return {type: 'opaqueredirect'};
+    };
+    for (let i = 0; i < 2; i++) {
+        const request = new Request(context.request.url, {method: 'POST', body: '{}'});
+        await assert.rejects(f.middleware({...context, request}, next), /redirected to sign-in/);
+    }
+    assert.equal(calls, 2, 'each explicit operation runs once; middleware must not replay');
+    assert.equal(f.toasts.length, 1);
+    assert.equal(f.toasts[0].endContent.props.target, '_blank');
+    assert.equal(f.toasts[0].endContent.props.href, '/loginredirect');
+    assert.equal(f.warnings.length, 0);
+});
 test('transport failure preserves exact error and never logs parameters message or URL', async () => {
     const f = fixture(), error = new TypeError('PRIVATE_SENTINEL https://private.invalid/?token=PRIVATE_SENTINEL');
     await assert.rejects(f.middleware(context, async () => {throw error;}), (e: unknown) => e === error);
@@ -57,7 +83,7 @@ test('ordinary structured endpoint error keeps existing toast and response contr
 });
 test('user-info unauthorized response stays quiet and unexpected successful HTML is diagnosed without reading it', async () => {
     const f = fixture(), denied = new Response('PRIVATE_SENTINEL', {status: 401, headers: {'Content-Type': 'text/html'}});
-    assert.equal(await f.middleware({endpoint: 'UserEndpoint', method: 'getUserInfo'}, async () => denied), denied);
+    assert.equal(await f.middleware({...context, endpoint: 'UserEndpoint', method: 'getUserInfo'}, async () => denied), denied);
     assert.equal(denied.bodyUsed, false); assert.equal(f.warnings.length, 0); assert.equal(f.toasts.length, 0);
     const ok = new Response('PRIVATE_SENTINEL', {headers: {'Content-Type': 'text/html'}});
     assert.equal(await f.middleware(context, async () => ok), ok);
@@ -66,7 +92,7 @@ test('user-info unauthorized response stays quiet and unexpected successful HTML
 });
 test('invalid identifier values are not emitted in diagnostics', async () => {
     const f = fixture();
-    await assert.rejects(f.middleware({endpoint: 'PRIVATE_SENTINEL/?token=x', method: 'PRIVATE_SENTINEL/?x'}, async () => {throw new TypeError();}));
+    await assert.rejects(f.middleware({...context, endpoint: 'PRIVATE_SENTINEL/?token=x', method: 'PRIVATE_SENTINEL/?x'}, async () => {throw new TypeError();}));
     assert(!JSON.stringify(f.warnings).includes('PRIVATE_SENTINEL'));
     assert(JSON.stringify(f.warnings).includes('[invalid]'));
 });

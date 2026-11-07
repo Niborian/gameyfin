@@ -1,5 +1,23 @@
 import {Middleware, MiddlewareContext, MiddlewareNext} from '@vaadin/hilla-frontend';
 import {addToast} from "@heroui/react";
+import {createElement} from "react";
+
+const SESSION_NOTICE_INTERVAL_MS = 60_000;
+let lastSessionNotice = -Infinity;
+
+export function offerSessionSignIn() {
+    const now = performance.now();
+    if (now - lastSessionNotice < SESSION_NOTICE_INTERVAL_MS) return;
+    lastSessionNotice = now;
+    addToast({
+        title: 'Sign in to continue',
+        description: 'Gameyfin needs a fresh sign-in. Your current page will stay open.',
+        color: 'warning',
+        endContent: createElement('a', {
+            href: '/loginredirect', target: '_blank', rel: 'noopener noreferrer', className: 'underline'
+        }, 'Sign in')
+    });
+}
 
 export const ErrorHandlingMiddleware: Middleware = async function (
     context: MiddlewareContext,
@@ -14,11 +32,17 @@ export const ErrorHandlingMiddleware: Middleware = async function (
     });
     let originalResponse: Response;
     try {
-        originalResponse = await next(context);
+        // RPCs expect JSON. Stop at the proxy redirect instead of fetching an SSO page as JSON.
+        originalResponse = await next({...context, request: new Request(context.request, {redirect: 'manual'})});
     } catch (error) {
         // Expected lifecycle cancellation is not evidence of transport loss.
         if (error instanceof TypeError) diagnose('transport');
         throw error;
+    }
+    if (originalResponse.type === 'opaqueredirect') {
+        offerSessionSignIn();
+        // Stop this operation. The caller can try again after the user signs in.
+        throw new Error('Gameyfin request redirected to sign-in');
     }
     const jsonResponse = /\bapplication\/(?:[a-z0-9.-]+\+)?json\b/i.test(originalResponse.headers.get('Content-Type') ?? '');
     if (originalResponse.ok && !jsonResponse) diagnose('non-json-response');
